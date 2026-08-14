@@ -1,0 +1,26 @@
+# Each matrix cell is warmed up independently before formal collection.
+warmup_rounds: 2
+rounds: 10
+
+# The benchmark runs every input/output/request-batch combination.
+input_lengths: [128, 512, 2048, 8192]
+output_lengths: [1, 32, 128]
+request_batch_sizes: [1, 4, 8]
+
+# Repeated and truncated at token-ID level to create exact input lengths.
+seed_prompt: "Please summarize the benefits of open source software."
+
+# Fixed measurement semantics. Changing these values is rejected.
+temperature: 0.0
+ignore_eos: true
+seed: 0
+
+# vLLM engine options.
+tensor_parallel_size: 1
+gpu_memory_utilization: 0.9
+dtype: auto
+trust_remote_code: false
+enforce_eager: false
+
+# Optional. Keep null to use the model default.
+max_model_len: null
