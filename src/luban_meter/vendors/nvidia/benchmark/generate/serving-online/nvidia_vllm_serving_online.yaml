@@ -1,0 +1,24 @@
+# OpenAI-compatible completion service.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 120
+
+# Every input/output/rate combination is an independent measured Case.
+warmup: 2
+rounds: 100
+input_lengths: [128, 512, 2048]
+output_lengths: [1, 32, 128]
+request_rates: [1.0, 4.0, 16.0]
+
+# Safety cap for simultaneous client requests. Requests that cannot start at
+# their scheduled time expose the delay through request_view.dispatch_delay.
+max_concurrency: 128
+
+# Encoded by the service /tokenize endpoint, then repeated and truncated at
+# token-ID level to construct each exact input length.
+seed_prompt: "Please summarize the benefits of open source software."
+
+# Fixed exact-length semantics. Changing these values is rejected.
+temperature: 0.0
+ignore_eos: true
+seed: 0
