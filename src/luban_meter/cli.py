@@ -31,11 +31,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="Run one local Benchmark")
     run.add_argument("--module", required=True)
-    run.add_argument("--vendor", required=True)
     run.add_argument(
         "--benchmark",
         required=True,
-        help="Benchmark directory name under vendors/<vendor>/benchmark/<module>",
+        help="Benchmark directory name under benchmark/<module>",
     )
     run.add_argument(
         "--config",
@@ -48,12 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--output", type=Path, default=Path("runs"))
     run.add_argument("--timeout", type=int, default=3600)
 
-    suite = commands.add_parser("suite", help="Run one vendor Suite")
-    suite.add_argument("--vendor", required=True)
+    suite = commands.add_parser("suite", help="Run one Benchmark Suite")
     suite.add_argument(
         "--suite",
         required=True,
-        help="Logical Suite name under vendors/<vendor>/suites",
+        help="Logical Suite name under suite/definitions",
     )
     suite.add_argument("--model-path", type=Path, help="Model weights host path")
     suite.add_argument("--model-name", help="Logical or served model name")
@@ -81,7 +79,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         request = RunRequest(
             run_id=create_run_id(args.module),
             module=args.module,
-            vendor=args.vendor,
             benchmark=args.benchmark,
             config=args.config,
             model_path=args.model_path,
@@ -108,8 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "suite":
         request = SuiteRequest(
-            suite_id=create_run_id(f"{args.vendor}-{args.suite}"),
-            vendor=args.vendor,
+            suite_id=create_run_id(args.suite),
             suite=args.suite,
             model_path=args.model_path,
             model_name=args.model_name,
@@ -118,7 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             fail_fast=args.fail_fast,
         )
         try:
-            definition = SuiteLoader().load(args.vendor, args.suite)
+            definition = SuiteLoader().load(args.suite)
             result = SuiteRunner(CoreEngine(BenchmarkRegistry())).run(
                 request,
                 definition,

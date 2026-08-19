@@ -27,7 +27,6 @@ class CommandResult:
 class RunRequest:
     run_id: str
     module: str
-    vendor: str
     benchmark: str
     config: Path
     model_path: Path | None
@@ -38,10 +37,9 @@ class RunRequest:
 
 @dataclass(frozen=True)
 class BenchmarkSpec:
-    """Convention-resolved vendor Benchmark implementation."""
+    """Convention-resolved Benchmark implementation."""
 
     module: str
-    vendor: str
     benchmark: str
     benchmark_entry: Path
     result_handler: Path
@@ -68,7 +66,6 @@ class BenchmarkResult:
     run_id: str
     status: str
     module: str
-    vendor: str
     benchmark: str
     config: str
     model: Mapping[str, Any] = field(default_factory=dict)

@@ -15,9 +15,8 @@ class CliTest(unittest.TestCase):
             run_id="test-run",
             status="success",
             module="generate",
-            vendor="ascend",
             benchmark="ttft",
-            config="configs/benchmarks/ascend-ttft.yaml",
+            config="configs/benchmarks/ttft.yaml",
         )
         with patch("luban_meter.cli.CoreEngine") as engine_type:
             engine_type.return_value.run.return_value = result
@@ -27,12 +26,10 @@ class CliTest(unittest.TestCase):
                         "run",
                         "--module",
                         "generate",
-                        "--vendor",
-                        "ascend",
                         "--benchmark",
                         "ttft",
                         "--config",
-                        "configs/benchmarks/ascend-ttft.yaml",
+                        "configs/benchmarks/ttft.yaml",
                         "--model-path",
                         "/models/Qwen3-8B",
                         "--model-name",
@@ -44,11 +41,10 @@ class CliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(request.model_path.as_posix(), "/models/Qwen3-8B")
         self.assertEqual(request.model_name, "Qwen3-8B")
-        self.assertEqual(request.vendor, "ascend")
         self.assertEqual(request.benchmark, "ttft")
         self.assertEqual(
             request.config.as_posix(),
-            "configs/benchmarks/ascend-ttft.yaml",
+            "configs/benchmarks/ttft.yaml",
         )
 
 

@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import BinaryIO
 
-from luban_meter.vendors.nvidia.benchmark.generate.common.token_counting import (
+from luban_meter.benchmark.generate.common.token_counting import (
     token_usage,
 )
 

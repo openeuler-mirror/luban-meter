@@ -1,4 +1,4 @@
-"""Data objects for one vendor-scoped Suite."""
+"""Data objects for one Benchmark Suite."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ class SuiteTask:
 @dataclass(frozen=True)
 class SuiteDefinition:
     name: str
-    vendor: str
     source: Path
     tasks: tuple[SuiteTask, ...]
 
@@ -26,7 +25,6 @@ class SuiteDefinition:
 @dataclass(frozen=True)
 class SuiteRequest:
     suite_id: str
-    vendor: str
     suite: str
     model_path: Path | None
     model_name: str | None
@@ -50,6 +48,5 @@ class SuiteResult:
     schema_version: str
     suite_id: str
     name: str
-    vendor: str
     status: str
     tasks: tuple[SuiteTaskResult, ...]

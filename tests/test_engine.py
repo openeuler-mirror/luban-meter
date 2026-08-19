@@ -15,7 +15,6 @@ class CoreEngineTest(unittest.TestCase):
             request = RunRequest(
                 run_id="generate-test-run",
                 module="generate",
-                vendor="ascend",
                 benchmark="missing-benchmark",
                 config=Path("missing-config.yaml"),
                 model_path=None,
@@ -31,7 +30,7 @@ class CoreEngineTest(unittest.TestCase):
             self.assertTrue(result_path.is_file())
             saved = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["status"], "failed")
-            self.assertEqual(saved["vendor"], "ascend")
+            self.assertNotIn("vendor", saved)
             self.assertEqual(saved["benchmark"], "missing-benchmark")
             self.assertEqual(saved["metrics"], {})
             self.assertEqual(saved["environment"], {})

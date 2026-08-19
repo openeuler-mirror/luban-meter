@@ -45,7 +45,6 @@ class HostExecutorTest(unittest.TestCase):
             request = RunRequest(
                 run_id="environment-inheritance-test",
                 module="generate",
-                vendor="ascend",
                 benchmark="ttft",
                 config=root / "config.yaml",
                 model_path=None,
@@ -55,7 +54,6 @@ class HostExecutorTest(unittest.TestCase):
             run = ResolvedRun(
                 request=request,
                 benchmark=BenchmarkSpec(
-                    vendor="ascend",
                     module="generate",
                     benchmark="ttft",
                     benchmark_entry=benchmark,

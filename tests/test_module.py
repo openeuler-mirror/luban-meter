@@ -7,12 +7,10 @@ from luban_meter.core.registry import BenchmarkRegistry
 
 
 class BenchmarkRegistryTest(unittest.TestCase):
-    def test_resolves_vendor_script_and_user_config(self) -> None:
+    def test_resolves_benchmark_and_user_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            tool_dir = (
-                root / "vendors" / "ascend" / "benchmark" / "generate" / "ttft"
-            )
+            tool_dir = root / "benchmark" / "generate" / "ttft"
             tool_dir.mkdir(parents=True)
             (tool_dir / "benchmark.py").write_text("", encoding="utf-8")
             (tool_dir / "result.py").write_text("", encoding="utf-8")
@@ -22,11 +20,10 @@ class BenchmarkRegistryTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = BenchmarkRegistry(root / "vendors")
+            registry = BenchmarkRegistry(root / "benchmark")
             request = RunRequest(
                 run_id="generate-test",
                 module="generate",
-                vendor="ascend",
                 benchmark="ttft",
                 config=config,
                 model_path=None,
@@ -36,8 +33,11 @@ class BenchmarkRegistryTest(unittest.TestCase):
 
             resolved = registry.resolve(request)
 
-            self.assertEqual(registry.list_benchmarks("generate"), ("ascend/ttft",))
-            self.assertEqual(resolved.benchmark.vendor, "ascend")
+            self.assertEqual(
+                tuple(name for name, _ in registry.modules()),
+                ("generate", "inference"),
+            )
+            self.assertEqual(registry.list_benchmarks("generate"), ("ttft",))
             self.assertEqual(resolved.benchmark.benchmark, "ttft")
             self.assertEqual(resolved.parameters["rounds"], 100)
             self.assertEqual(resolved.parameters["warmup"], 10)

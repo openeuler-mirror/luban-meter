@@ -37,25 +37,19 @@ def process(raw_result):
 
 
 class SuiteTest(unittest.TestCase):
-    def test_loads_and_runs_vendor_suite_sequentially(self) -> None:
+    def test_loads_and_runs_suite_sequentially(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            vendors_dir = root / "vendors"
-            suites_dir = vendors_dir / "ascend" / "suites"
+            benchmark_dir = root / "benchmark"
+            suites_dir = root / "suite" / "definitions"
             configs_dir = suites_dir / "configs"
             configs_dir.mkdir(parents=True)
 
             for module, benchmark, value in (
                 ("generate", "ttft", 10),
-                ("operation", "matmul", 20),
+                ("inference", "accuracy", 20),
             ):
-                tool_dir = (
-                    vendors_dir
-                    / "ascend"
-                    / "benchmark"
-                    / module
-                    / benchmark
-                )
+                tool_dir = benchmark_dir / module / benchmark
                 tool_dir.mkdir(parents=True)
                 (tool_dir / "benchmark.py").write_text(
                     BENCHMARK_SOURCE,
@@ -77,18 +71,17 @@ class SuiteTest(unittest.TestCase):
                 "    module: generate\n"
                 "    benchmark: ttft\n"
                 "    config: configs/ttft.yaml\n"
-                "  - name: matmul\n"
-                "    module: operation\n"
-                "    benchmark: matmul\n"
-                "    config: configs/matmul.yaml\n",
+                "  - name: accuracy\n"
+                "    module: inference\n"
+                "    benchmark: accuracy\n"
+                "    config: configs/accuracy.yaml\n",
                 encoding="utf-8",
             )
 
-            registry = BenchmarkRegistry(vendors_dir)
-            definition = SuiteLoader(vendors_dir).load("ascend", "basic")
+            registry = BenchmarkRegistry(benchmark_dir)
+            definition = SuiteLoader(suites_dir).load("basic")
             request = SuiteRequest(
-                suite_id="ascend-basic-test",
-                vendor="ascend",
+                suite_id="basic-test",
                 suite="basic",
                 model_path=None,
                 model_name=None,
@@ -98,7 +91,10 @@ class SuiteTest(unittest.TestCase):
             result = SuiteRunner(CoreEngine(registry)).run(request, definition)
 
             self.assertEqual(result.status, "success")
-            self.assertEqual([task.name for task in result.tasks], ["ttft", "matmul"])
+            self.assertFalse(hasattr(result, "vendor"))
+            self.assertEqual(
+                [task.name for task in result.tasks], ["ttft", "accuracy"]
+            )
             self.assertTrue(all(task.status == "success" for task in result.tasks))
             for task in result.tasks:
                 task_result = json.loads(Path(task.result).read_text(encoding="utf-8"))
@@ -108,8 +104,7 @@ class SuiteTest(unittest.TestCase):
 
     def test_rejects_duplicate_task_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            vendors_dir = Path(directory) / "vendors"
-            suites_dir = vendors_dir / "ascend" / "suites"
+            suites_dir = Path(directory) / "suite" / "definitions"
             suites_dir.mkdir(parents=True)
             (suites_dir / "bad.yaml").write_text(
                 "tasks:\n"
@@ -125,12 +120,11 @@ class SuiteTest(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ConfigurationError, "must be unique"):
-                SuiteLoader(vendors_dir).load("ascend", "bad")
+                SuiteLoader(suites_dir).load("bad")
 
     def test_rejects_non_string_suite_name(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            vendors_dir = Path(directory) / "vendors"
-            suites_dir = vendors_dir / "ascend" / "suites"
+            suites_dir = Path(directory) / "suite" / "definitions"
             suites_dir.mkdir(parents=True)
             (suites_dir / "bad.yaml").write_text(
                 "name: 123\n"
@@ -143,13 +137,13 @@ class SuiteTest(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ConfigurationError, "non-empty string"):
-                SuiteLoader(vendors_dir).load("ascend", "bad")
+                SuiteLoader(suites_dir).load("bad")
 
     def test_fail_fast_marks_remaining_tasks_as_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            vendors_dir = root / "vendors"
-            suites_dir = vendors_dir / "ascend" / "suites"
+            benchmark_dir = root / "benchmark"
+            suites_dir = root / "suite" / "definitions"
             suites_dir.mkdir(parents=True)
             (suites_dir / "fail-fast.yaml").write_text(
                 "tasks:\n"
@@ -164,11 +158,10 @@ class SuiteTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = BenchmarkRegistry(vendors_dir)
-            definition = SuiteLoader(vendors_dir).load("ascend", "fail-fast")
+            registry = BenchmarkRegistry(benchmark_dir)
+            definition = SuiteLoader(suites_dir).load("fail-fast")
             request = SuiteRequest(
-                suite_id="ascend-fail-fast-test",
-                vendor="ascend",
+                suite_id="fail-fast-test",
                 suite="fail-fast",
                 model_path=None,
                 model_name=None,

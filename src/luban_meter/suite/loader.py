@@ -1,4 +1,4 @@
-"""Load a Suite from one vendor's bundled suites directory."""
+"""Load a bundled Benchmark Suite."""
 
 from __future__ import annotations
 
@@ -16,17 +16,16 @@ _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class SuiteLoader:
-    def __init__(self, vendors_dir: Path | None = None) -> None:
-        self._vendors_dir = vendors_dir or Path(__file__).parents[1] / "vendors"
+    def __init__(self, suites_dir: Path | None = None) -> None:
+        self._suites_dir = (
+            suites_dir or Path(__file__).parent / "definitions"
+        )
 
-    def load(self, vendor: str, suite: str) -> SuiteDefinition:
-        self._validate_name("vendor", vendor)
+    def load(self, suite: str) -> SuiteDefinition:
         self._validate_name("suite", suite)
-        source = self._vendors_dir / vendor / "suites" / f"{suite}.yaml"
+        source = self._suites_dir / f"{suite}.yaml"
         if not source.is_file():
-            raise ConfigurationError(
-                f"suite does not exist for vendor {vendor}: {source}"
-            )
+            raise ConfigurationError(f"suite does not exist: {source}")
 
         data = self._read_yaml(source)
         name = data.get("name", suite)
@@ -46,7 +45,6 @@ class SuiteLoader:
             raise ConfigurationError(f"suite task names must be unique: {source}")
         return SuiteDefinition(
             name=name,
-            vendor=vendor,
             source=source,
             tasks=tasks,
         )

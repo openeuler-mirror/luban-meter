@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from luban_meter.vendors.nvidia.benchmark.generate.common.statistics import (
+from luban_meter.benchmark.generate.common.statistics import (
     scalar,
     summarize,
 )

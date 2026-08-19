@@ -25,9 +25,10 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 luban_meter = [
-  "vendors/**/benchmark.py",
-  "vendors/**/result.py",
-  "vendors/**/*.yaml",
+  "benchmark/**/benchmark.py",
+  "benchmark/**/result.py",
+  "benchmark/**/*.yaml",
+  "suite/definitions/*.yaml",
 ]
 
 [tool.pytest.ini_options]

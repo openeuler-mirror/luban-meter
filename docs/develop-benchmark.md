@@ -1,108 +1,53 @@
-# LuBan-Meter Benchmark 脚本开发指南
+# Benchmark 脚本开发指南
 
-## 1. 开发目标
+## 1. 目录选择
 
-一个 Benchmark 脚本由以下内容组成：
+先根据评测目标选择模块：
 
-```text
-benchmark.py
-result.py
-config.example.yaml
-```
-
-三者分别负责：
-
-| 文件 | 职责 |
+| 模块 | 用途 |
 |---|---|
-| `benchmark.py` | 调用厂商技术栈、执行测试、输出原始 JSON |
-| `result.py` | 将原始数据整理成最终指标 |
-| `config.example.yaml` | 告诉用户该脚本可以设置哪些参数 |
+| `generate` | 生成式推理时延、吞吐量、负载和引擎阶段性能 |
+| `inference` | 基于在线推理服务的模型任务效果与质量评测 |
 
-一次测试通过以下参数选择脚本：
+当前不开发算子层 Benchmark。
 
-```text
-module + vendor + benchmark
-```
-
-用户通过 `--config` 提供本次测试参数。
-
-## 2. 选择功能模块
-
-当前功能模块：
-
-| 模块 | 适合的测试 |
-|---|---|
-| `generate` | TTFT、TPOT、吞吐量、并发生成等大模型生成测试 |
-| `inference` | 模型端到端推理性能测试 |
-| `operation` | MatMul、Attention、通信算子等算子测试 |
-
-例如，开发 Ascend TTFT 脚本时使用：
+新增脚本必须放在：
 
 ```text
-module = generate
-vendor = ascend
-benchmark = ttft
-```
-
-## 3. 创建脚本目录
-
-目录格式：
-
-```text
-src/luban_meter/vendors/<vendor>/benchmark/<module>/<benchmark>/
+src/luban_meter/benchmark/<module>/<benchmark>/
 ├── benchmark.py
 ├── result.py
 └── config.example.yaml
 ```
 
-Ascend TTFT：
+脚本身份由以下两个名称确定：
 
 ```text
-src/luban_meter/vendors/ascend/benchmark/generate/ttft/
-├── benchmark.py
-├── result.py
-└── config.example.yaml
+module + benchmark
 ```
 
-NVIDIA TTFT：
+名称只允许小写字母、数字、连字符和下划线，并且必须以字母或数字开头。
+
+## 2. 设计原则
+
+1. **按测试场景组织脚本**：一次采集可复用的原始事实，再计算多个指标；
+2. **统一脚本复用于不同硬件**：不得按硬件品牌复制同语义实现；
+3. **差异通过配置表达**：服务地址、模型名、并行度和引擎参数写入配置；
+4. **引擎专属能力显式命名**：例如 `vllm-engine-stage`；
+5. **采集与计算分离**：硬件或服务调用位于 `benchmark.py`，纯数据处理位于
+   `result.py`；
+6. **结果可审计**：保留原始记录、参数、日志、失败原因和统计边界。
+
+## 3. 自动发现
+
+当以下两个文件同时存在时，`BenchmarkRegistry` 自动发现脚本：
 
 ```text
-src/luban_meter/vendors/nvidia/benchmark/generate/ttft/
-├── benchmark.py
-├── result.py
-└── config.example.yaml
+benchmark/<module>/<benchmark>/benchmark.py
+benchmark/<module>/<benchmark>/result.py
 ```
 
-`vendor` 和 `benchmark` 名称使用以下字符：
-
-```text
-小写字母、数字、下划线、连字符
-```
-
-合法名称示例：
-
-```text
-ascend
-nvidia
-metax
-ttft
-online-serve
-matmul_fp16
-```
-
-厂商目录中存在 `benchmark/<module>/<benchmark>/benchmark.py` 和 `result.py` 后，
-框架会自动发现该脚本。
-
-`benchmark` 应按测试场景命名，例如 `serving-online`，不建议为能从同一批数据
-计算的 TTFT、TPOT、ITL 和 E2EL 分别创建脚本。场景共享代码可放在：
-
-```text
-benchmark/<module>/common/
-```
-
-`common/` 中不放置 `benchmark.py` 和 `result.py`，因此不会被发现为可执行场景。
-
-查看发现结果：
+验证：
 
 ```bash
 luban-meter benchmarks list
@@ -111,127 +56,85 @@ luban-meter benchmarks list
 输出示例：
 
 ```text
-generate    ascend/ttft,nvidia/ttft    Large-model generation benchmarks
-inference   -                           Model inference benchmarks
-operation   -                           Operator performance benchmarks
+generate    serving-online,vllm-engine-stage    Large-model generation benchmarks
+inference   mmlu                               Online-service model evaluation benchmarks
 ```
 
-## 4. 编写参数模板
+## 4. 配置文件
 
-脚本开发者决定该 Benchmark 需要哪些参数，并在 `config.example.yaml` 中提供
-可直接复制的示例。
-
-TTFT 示例：
+配置必须是 YAML Mapping，由 Core 加载后写入请求的 `parameters`：
 
 ```yaml
-# 测试请求数
-rounds: 100
-
-# 正式测试前的预热请求数
-warmup: 10
-
-# 并发请求数
-concurrency: 1
-
-# 输入和输出 Token 长度
-input_length: 1024
-output_length: 128
-
-# 已启动的推理服务地址
 service_url: http://127.0.0.1:8000
-
-# 单请求超时
 request_timeout: 120
+rounds: 10
 ```
 
-用户复制模板：
+Benchmark 必须主动校验：
+
+- 必填字段是否存在；
+- 类型、范围和列表是否有效；
+- 模型长度、批量和并发是否超出边界；
+- 固定语义参数是否被错误覆盖；
+- 服务或引擎能力是否满足测试要求。
+
+无效配置应抛出带字段名与原因的异常，禁止静默使用含义不同的默认值。
+
+## 5. benchmark.py 协议
+
+框架使用以下命令执行脚本：
 
 ```bash
-cp \
-  src/luban_meter/vendors/ascend/benchmark/generate/ttft/config.example.yaml \
-  configs/benchmarks/ascend-ttft.yaml
+python benchmark.py --request <request.json> --output <raw_result.json>
 ```
 
-框架会检查：
+参数入口：
 
-1. 配置文件存在；
-2. YAML 顶层是键值映射。
+```python
+import argparse
+from pathlib import Path
 
-字段类型、必填字段、取值范围和字段组合由 `benchmark.py` 校验。
 
-Ascend 与 NVIDIA 可以根据各自调用方式定义不同的配置字段。
-
-## 5. benchmark.py 的执行协议
-
-框架使用启动 `luban-meter` 的当前 Python 执行：
-
-```text
-<current-python> benchmark.py
-  --request <run_dir>/request.json
-  --output <run_dir>/raw/raw_result.json
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--request", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser.parse_args()
 ```
 
-因此 `benchmark.py` 必须接收两个参数：
-
-```text
---request
---output
-```
-
-### 5.1 request.json
-
-框架生成的请求文件包含两部分：
+请求结构：
 
 ```json
 {
-  "request": {
-    "run_id": "generate-20260731T120000Z-abcd1234",
-    "module": "generate",
-    "vendor": "ascend",
-    "benchmark": "ttft",
-    "config": "configs/benchmarks/ascend-ttft.yaml",
-    "model_path": "/data/models/Qwen3-8B",
-    "model_name": "Qwen3-8B",
-    "output_dir": "runs",
-    "timeout": 3600
-  },
-  "parameters": {
-    "rounds": 100,
-    "warmup": 10,
-    "concurrency": 1,
-    "input_length": 1024,
-    "output_length": 128,
-    "service_url": "http://127.0.0.1:8000",
-    "request_timeout": 120
-  }
+  "run_id": "generate-...",
+  "module": "generate",
+  "benchmark": "serving-online",
+  "config": ".../serving-online.yaml",
+  "model_path": null,
+  "model_name": "Qwen3-8B",
+  "output_dir": "runs",
+  "timeout": 3600,
+  "parameters": {}
 }
 ```
 
-脚本从：
+请求中不包含硬件厂商字段。脚本应依据服务协议或显式引擎能力工作，而不是根据硬件
+品牌分支。
 
-- `request` 读取模型、数据集和本次 Run 的公共信息；
-- `parameters` 读取开发者在配置模板中定义的测试参数。
-
-### 5.2 raw_result.json
-
-执行成功时写入：
+成功输出至少包含：
 
 ```json
 {
   "schema_version": "luban-meter.raw/v1",
   "status": "success",
-  "metrics": {
-    "ttft_samples_ms": [81.2, 79.8, 83.4]
-  },
-  "metadata": {
-    "successful_requests": 3,
-    "failed_requests": 0
-  },
+  "environment": {},
+  "metrics": {},
+  "metadata": {},
   "artifacts": {}
 }
 ```
 
-结构化失败结果：
+失败输出：
 
 ```json
 {
@@ -241,424 +144,118 @@ Ascend 与 NVIDIA 可以根据各自调用方式定义不同的配置字段。
   "metadata": {},
   "artifacts": {},
   "error": {
-    "type": "ConfigurationError",
-    "message": "rounds must be greater than 0"
+    "type": "RuntimeError",
+    "message": "service request failed"
   }
 }
 ```
 
-`schema_version` 固定为：
+即使捕获异常，也应写出失败 JSON，便于框架保留上下文；未捕获异常仍会由 Core
+转换为标准失败结果。
 
-```text
-luban-meter.raw/v1
-```
-
-## 6. benchmark.py 开发模板
-
-下面的模板完成参数读取、校验、厂商调用入口和标准结果输出：
-
-```python
-from __future__ import annotations
-
-import argparse
-import json
-from collections.abc import Mapping
-from pathlib import Path
-from typing import Any
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--request", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    return parser.parse_args()
-
-
-def load_request(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    request = payload.get("request")
-    parameters = payload.get("parameters")
-    if not isinstance(request, Mapping):
-        raise ValueError("request must be an object")
-    if not isinstance(parameters, Mapping):
-        raise ValueError("parameters must be an object")
-    return dict(request), dict(parameters)
-
-
-def positive_integer(parameters: dict[str, Any], name: str) -> int:
-    value = parameters.get(name)
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer")
-    return value
-
-
-def non_negative_integer(parameters: dict[str, Any], name: str) -> int:
-    value = parameters.get(name)
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
-    return value
-
-
-def run_vendor_benchmark(
-    request: dict[str, Any],
-    parameters: dict[str, Any],
-) -> dict[str, Any]:
-    rounds = positive_integer(parameters, "rounds")
-    warmup = non_negative_integer(parameters, "warmup")
-    service_url = parameters.get("service_url")
-    if not isinstance(service_url, str) or not service_url:
-        raise ValueError("service_url must be a non-empty string")
-
-    # 在此处实现当前厂商的 vLLM 调用和 TTFT 计时。
-    # 返回值应来自真实测试过程。
-    ttft_samples_ms = call_vendor_vllm(
-        service_url=service_url,
-        model_name=request.get("model_name"),
-        model_path=request.get("model_path"),
-        rounds=rounds,
-        warmup=warmup,
-        parameters=parameters,
-    )
-
-    return {
-        "schema_version": "luban-meter.raw/v1",
-        "status": "success",
-        "metrics": {
-            "ttft_samples_ms": ttft_samples_ms,
-        },
-        "metadata": {
-            "successful_requests": len(ttft_samples_ms),
-            "vendor": request.get("vendor"),
-        },
-        "artifacts": {},
-    }
-
-
-def call_vendor_vllm(
-    *,
-    service_url: str,
-    model_name: Any,
-    model_path: Any,
-    rounds: int,
-    warmup: int,
-    parameters: dict[str, Any],
-) -> list[float]:
-    """由脚本开发者实现厂商专属请求和首 Token 计时。"""
-    raise NotImplementedError
-
-
-def write_result(path: Path, result: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
-def main() -> int:
-    args = parse_args()
-    try:
-        request, parameters = load_request(args.request)
-        raw_result = run_vendor_benchmark(request, parameters)
-    except Exception as error:
-        raw_result = {
-            "schema_version": "luban-meter.raw/v1",
-            "status": "failed",
-            "metrics": {},
-            "metadata": {},
-            "artifacts": {},
-            "error": {
-                "type": type(error).__name__,
-                "message": str(error),
-            },
-        }
-
-    write_result(args.output, raw_result)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-厂商差异集中在 `call_vendor_vllm()` 中。例如：
-
-- Ascend 脚本使用 Ascend 环境中的 vLLM 接口；
-- NVIDIA 脚本使用 NVIDIA 环境中的 vLLM 接口；
-- 算子脚本可以直接调用 PyTorch、厂商算子库或测试命令。
-
-当脚本写出结构化失败 JSON 并返回 `0` 时，ResultManager 会保留其中的
-`error`。进程启动或运行阶段直接退出时，框架会记录退出码，并将标准错误保存
-到 `stderr.log`。
-
-## 7. TTFT 计时原则
-
-TTFT 表示从请求发出到收到第一个输出 Token 的时间：
-
-```text
-TTFT = 第一个 Token 到达时间 - 请求发出时间
-```
-
-推荐使用单调时钟：
-
-```python
-from time import perf_counter
-
-started = perf_counter()
-
-for event in streaming_response:
-    token = parse_first_token(event)
-    if token is not None:
-        ttft_ms = (perf_counter() - started) * 1000
-        break
-```
-
-开发脚本时应明确：
-
-- 请求是否使用流式返回；
-- 计时起点位于 HTTP 请求发送前还是 SDK 调用前；
-- 第一个有效 Token 的判定方法；
-- 预热请求是否排除在正式样本之外；
-- 请求失败、空响应和超时如何计数；
-- 输入 Token 长度如何构造和验证。
-
-同一指标在不同厂商脚本中建议使用相同单位和名称，例如：
-
-```text
-ttft_samples_ms
-ttft_mean_ms
-ttft_p50_ms
-ttft_p90_ms
-ttft_p99_ms
-```
-
-## 8. result.py 开发协议
+## 6. result.py 协议
 
 `result.py` 必须定义：
 
 ```python
 def process(raw_result):
-    ...
-```
-
-输入是 `raw_result.json` 解析后的字典，返回值是一个 Mapping。
-
-TTFT 示例：
-
-```python
-from __future__ import annotations
-
-from collections.abc import Mapping
-from typing import Any
-
-
-def percentile(samples: list[float], ratio: float) -> float:
-    ordered = sorted(samples)
-    index = round((len(ordered) - 1) * ratio)
-    return ordered[index]
-
-
-def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
-    metrics = raw_result.get("metrics")
-    if not isinstance(metrics, Mapping):
-        raise ValueError("raw metrics must be an object")
-
-    samples = metrics.get("ttft_samples_ms")
-    if not isinstance(samples, list) or not samples:
-        raise ValueError("ttft_samples_ms must be a non-empty list")
-
-    values = [float(value) for value in samples]
     return {
-        "metrics": {
-            "ttft_mean_ms": sum(values) / len(values),
-            "ttft_p50_ms": percentile(values, 0.50),
-            "ttft_p90_ms": percentile(values, 0.90),
-            "ttft_p99_ms": percentile(values, 0.99),
-        },
-        "metadata": {
-            "sample_count": len(values),
-        },
+        "status": "success",
+        "environment": raw_result.get("environment", {}),
+        "metrics": raw_result["metrics"],
+        "metadata": raw_result.get("metadata", {}),
     }
 ```
 
-执行关系：
+它负责：
+
+- 校验原始记录的结构和数量；
+- 拒绝非法时间线、Token 数或测试 Case；
+- 从同一批原始样本计算 Mean、P50、P90、P99 等统计量；
+- 将指标按 Request、Service、Engine 或 Task 视角分组；
+- 输出明确的单位和样本数。
+
+`result.py` 应尽量只依赖 Python 标准库或 Benchmark 公共工具，不重新调用模型、
+服务或硬件运行时。
+
+## 7. Generate Benchmark 指南
+
+生成性能脚本应明确观察边界：
+
+- 在线客户端：包含 HTTP、API Server、排队、Prefill、Decode 和流式传输；
+- Engine 内部：由稳定的引擎时间戳定义，不包含完整在线链路。
+
+改变输入长度、输出长度、Request Rate、Batch Size、缓存或精度时，应建立独立
+Case，禁止将不同条件的样本混合统计。
+
+在线服务优先使用标准 HTTP 协议，使同一 Benchmark 可在不同硬件环境的兼容服务上
+直接复用。只有必须访问引擎内部字段的场景才建立引擎专属 Benchmark。
+
+## 8. Inference Benchmark 指南
+
+`inference` 通过在线推理服务评测模型任务效果，建议每个 Benchmark 封装一类任务
+协议或数据集族，例如 `mmlu`、`ceval`、`summarization`。
+
+一次运行通常包含：
 
 ```text
-厂商环境中的 Python
-└── benchmark.py
-    └── raw_result.json
-
-LuBan-Meter 主进程
-└── result.py::process()
-    └── result.json
+读取固定数据集
+→ 构造确定性 Prompt
+→ 调用在线推理服务
+→ 保存逐样本输入、原始输出和参考答案
+→ 解析答案
+→ 计算 Accuracy/F1/EM/ROUGE 等指标
 ```
 
-因此 `result.py` 适合使用 Python 标准库进行纯数据处理。厂商 SDK 和硬件调用
-集中在 `benchmark.py`。
+必须记录：
 
-ResultManager 会：
+- 数据集名称、版本、Split 和样本数量；
+- Prompt 模板及版本；
+- 解码参数；
+- 原始模型输出与解析结果；
+- 无法解析、服务失败和超时样本；
+- 评分规则及指标实现版本。
 
-1. 检查原始结果是 JSON Object；
-2. 检查 `schema_version`；
-3. 检查 `status`；
-4. 对成功结果加载同目录的 `result.py`；
-5. 调用 `process(raw_result)`；
-6. 合并原始和处理后的 `metadata`；
-7. 对结构化失败结果保留 `error`；
-8. 写出最终 `result.json`。
+禁止只保存聚合分数而丢失逐样本审计信息。
 
-## 9. 准备运行环境
+## 9. Suite
 
-框架不读取环境配置文件，也不主动设置环境变量。开发和运行厂商脚本前：
-
-1. 激活已经安装厂商 SDK、vLLM 和依赖的 Python 环境；
-2. 在 `~/.bashrc` 中配置必要变量，或在当前 Shell 中执行 `export`；
-3. 在同一个 Shell 中启动 `luban-meter`。
-
-Benchmark 子进程使用当前 Python，并继承当前工作目录和环境变量。
-
-## 10. 执行脚本
-
-准备用户配置后执行：
-
-```bash
-luban-meter run \
-  --module generate \
-  --vendor ascend \
-  --benchmark ttft \
-  --config configs/benchmarks/ascend-ttft.yaml \
-  --model-path /data/models/Qwen3-8B \
-  --model-name Qwen3-8B \
-  --output runs
-```
-
-框架生成：
+多个 Benchmark 顺序执行时，在以下目录添加 YAML：
 
 ```text
-runs/<run_id>/
-├── request.json
-├── raw/
-│   ├── raw_result.json
-│   ├── stdout.log
-│   ├── stderr.log
-│   └── artifacts/
-└── result.json
+src/luban_meter/suite/definitions/generation-basic.yaml
 ```
-
-排查执行问题时，依次查看：
-
-```text
-result.json
-raw/raw_result.json
-raw/stderr.log
-raw/stdout.log
-```
-
-## 11. 脚本测试
-
-### 11.1 测试参数校验
-
-至少覆盖：
-
-- 完整配置；
-- 缺少必填字段；
-- 错误字段类型；
-- 数值超出范围；
-- 空响应和请求超时。
-
-### 11.2 测试结果处理器
-
-为 `result.py` 准备固定的原始数据：
-
-```json
-{
-  "schema_version": "luban-meter.raw/v1",
-  "status": "success",
-  "metrics": {
-    "ttft_samples_ms": [10.0, 12.0, 14.0]
-  },
-  "metadata": {},
-  "artifacts": {}
-}
-```
-
-验证平均值、分位数、单位和样本数量。
-
-### 11.3 工程测试
-
-```bash
-pytest -q
-ruff check src tests
-luban-meter benchmarks list
-```
-
-### 11.4 端到端验收
-
-端到端测试至少确认：
-
-1. `benchmarks list` 能发现 `vendor/benchmark`；
-2. Benchmark 使用启动框架的当前 Python；
-3. `export` 设置的环境变量能被 Benchmark 子进程读取；
-4. 用户 YAML 参数出现在 `request.json` 的 `parameters` 中；
-5. `raw_result.json` 使用 `luban-meter.raw/v1`；
-6. `result.py` 能生成预期指标；
-7. `result.json` 中的模块、厂商、脚本、模型和参数正确；
-8. `stdout.log` 和 `stderr.log` 可以定位失败原因。
-
-## 12. 将多个脚本编排为 Suite
-
-同一厂商下需要顺序执行多个 Benchmark 时，在厂商的 `suites` 目录添加 YAML：
-
-```text
-src/luban_meter/vendors/ascend/suites/generation-basic.yaml
-```
-
-示例：
 
 ```yaml
 name: generation-basic
 tasks:
-  - name: ttft
+  - name: online
     module: generate
-    benchmark: ttft
-    config: configs/ttft.yaml
-  - name: throughput
+    benchmark: serving-online
+    config: configs/serving-online.yaml
+
+  - name: engine
     module: generate
-    benchmark: throughput
-    config: configs/throughput.yaml
-    timeout: 1800
+    benchmark: vllm-engine-stage
+    config: configs/vllm-engine-stage.yaml
 ```
 
-`config` 相对于 Suite YAML 所在目录解析。Suite 本身不再声明厂商，厂商由
-`--vendor` 和所在目录共同确定。每个任务仍调用现有单任务执行链，并生成独立的
-`result.json`；Suite 只负责顺序调度和生成 `suite_result.json` 索引。
+Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
+`CoreEngine` 独立生成 `result.json`。
 
-运行：
+## 10. 测试要求
 
-```bash
-luban-meter suite \
-  --vendor ascend \
-  --suite generation-basic \
-  --model-path /data/models/Qwen3-8B \
-  --model-name Qwen3-8B \
-  --output runs
-```
+提交 Benchmark 前至少验证：
 
-## 13. 开发检查清单
-
-提交厂商 Benchmark 脚本前检查：
-
-- [ ] 目录为 `vendors/<vendor>/benchmark/<module>/<benchmark>/`
-- [ ] 厂商名和脚本名符合命名规则
-- [ ] `benchmark.py` 接收 `--request` 和 `--output`
-- [ ] `config.example.yaml` 包含注释、默认值和单位
-- [ ] 配置参数在 `benchmark.py` 中完成校验
-- [ ] 正式样本与预热样本分开
-- [ ] 时间、吞吐量、显存等指标标注单位
-- [ ] 原始结果使用 `luban-meter.raw/v1`
-- [ ] `result.py` 定义 `process(raw_result)`
-- [ ] `result.py` 返回 `metrics` 和 `metadata`
-- [ ] 如需保留部分失败指标，返回可选 `status` 和 `error`
-- [ ] 执行失败可以在 JSON 或日志中定位
-- [ ] `benchmarks list` 能发现新脚本
-- [ ] 单元测试、静态检查和端到端测试通过
+- [ ] 目录为 `benchmark/<module>/<benchmark>/`；
+- [ ] 模块为 `generate` 或 `inference`；
+- [ ] `benchmark.py` 接收 `--request` 和 `--output`；
+- [ ] `result.py` 定义 `process(raw_result)`；
+- [ ] 成功和失败均符合 `luban-meter.raw/v1`；
+- [ ] 配置字段有类型、范围和边界校验；
+- [ ] 指标单位、样本数和观察边界明确；
+- [ ] `result.json` 中的模块、脚本、模型和参数正确；
+- [ ] 不按硬件品牌复制脚本或引入路由分支；
+- [ ] `ruff check src tests` 通过；
+- [ ] `pytest -q` 通过；
+- [ ] 在目标运行环境完成真实冒烟测试。

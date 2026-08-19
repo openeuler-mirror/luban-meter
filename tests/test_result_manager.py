@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from luban_meter.benchmark.generate.common.streaming import (
+    collect_completion_stream,
+)
 from luban_meter.core.models import (
     BenchmarkSpec,
     RawRunArtifacts,
@@ -13,18 +16,15 @@ from luban_meter.core.models import (
     RunRequest,
 )
 from luban_meter.result.manager import ResultManager
-from luban_meter.vendors.nvidia.benchmark.generate.common.streaming import (
-    collect_completion_stream,
-)
 
 ROOT = Path(__file__).parents[1]
 SERVING_RESULT_HANDLER = (
     ROOT
-    / "src/luban_meter/vendors/nvidia/benchmark/generate/serving-online/result.py"
+    / "src/luban_meter/benchmark/generate/serving-online/result.py"
 )
 SERVING_BENCHMARK_ENTRY = (
     ROOT
-    / "src/luban_meter/vendors/nvidia/benchmark/generate/serving-online/benchmark.py"
+    / "src/luban_meter/benchmark/generate/serving-online/benchmark.py"
 )
 
 
@@ -74,7 +74,6 @@ class ResultManagerTest(unittest.TestCase):
             request = RunRequest(
                 run_id="generate-result-test",
                 module="generate",
-                vendor="ascend",
                 benchmark="ttft",
                 config=root / "ttft.yaml",
                 model_path=None,
@@ -84,7 +83,6 @@ class ResultManagerTest(unittest.TestCase):
             run = ResolvedRun(
                 request=request,
                 benchmark=BenchmarkSpec(
-                    vendor="ascend",
                     module="generate",
                     benchmark="ttft",
                     benchmark_entry=benchmark,
@@ -102,7 +100,7 @@ class ResultManagerTest(unittest.TestCase):
             result = ResultManager().process(run, artifacts)
 
             self.assertEqual(result.status, "success")
-            self.assertEqual(result.vendor, "ascend")
+            self.assertFalse(hasattr(result, "vendor"))
             self.assertEqual(result.benchmark, "ttft")
             self.assertEqual(result.metrics["mean_ms"], 12.0)
             self.assertEqual(result.environment["runtime"]["name"], "test")
@@ -110,7 +108,7 @@ class ResultManagerTest(unittest.TestCase):
             self.assertEqual(result.metadata["source"], "test")
 
 
-class NvidiaStreamingCollectionTest(unittest.TestCase):
+class StreamingCollectionTest(unittest.TestCase):
     def test_skips_empty_events_and_reads_usage(self) -> None:
         stream = io.BytesIO(
             b'data: {"choices": [{"text": ""}]}\n\n'
@@ -139,7 +137,7 @@ class NvidiaStreamingCollectionTest(unittest.TestCase):
             collect_completion_stream(stream, clock=lambda: 10.0)
 
 
-class NvidiaServingMetricsTest(unittest.TestCase):
+class ServingMetricsTest(unittest.TestCase):
     def test_calculates_all_request_and_service_metrics(self) -> None:
         raw_result = {
             "metrics": {
@@ -188,7 +186,7 @@ class NvidiaServingMetricsTest(unittest.TestCase):
         }
 
         processor = load_module(
-            "nvidia_serving_result", SERVING_RESULT_HANDLER
+            "serving_result", SERVING_RESULT_HANDLER
         ).process
         result = processor(raw_result)
         case = result["metrics"]["cases"][0]
@@ -246,10 +244,10 @@ class FakeJsonResponse(io.BytesIO):
         self.close()
 
 
-class NvidiaServingCollectionTest(unittest.TestCase):
+class ServingCollectionTest(unittest.TestCase):
     def test_collects_complete_serving_scenario(self) -> None:
         benchmark = load_module(
-            "nvidia_serving_benchmark", SERVING_BENCHMARK_ENTRY
+            "serving_benchmark", SERVING_BENCHMARK_ENTRY
         )
         parameters = {
             "service_url": "http://127.0.0.1:8000",
@@ -283,7 +281,7 @@ class NvidiaServingCollectionTest(unittest.TestCase):
         ):
             raw_result = benchmark.run_benchmark(request, parameters)
         result = load_module(
-            "nvidia_serving_result_complete", SERVING_RESULT_HANDLER
+            "serving_result_complete", SERVING_RESULT_HANDLER
         ).process(raw_result)
 
         cases = result["metrics"]["cases"]
@@ -310,7 +308,7 @@ class NvidiaServingCollectionTest(unittest.TestCase):
 
     def test_rejects_a_response_with_the_wrong_exact_token_count(self) -> None:
         benchmark = load_module(
-            "nvidia_serving_benchmark_mismatch", SERVING_BENCHMARK_ENTRY
+            "serving_benchmark_mismatch", SERVING_BENCHMARK_ENTRY
         )
         now = benchmark.time.perf_counter()
         with patch.object(

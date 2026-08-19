@@ -20,8 +20,8 @@ class UnknownModuleError(BenchmarkToolkitError):
 
 
 class UnknownBenchmarkError(BenchmarkToolkitError):
-    def __init__(self, module: str, vendor: str, benchmark: str) -> None:
-        super().__init__(f"unknown benchmark for {module}: {vendor}/{benchmark}")
+    def __init__(self, module: str, benchmark: str) -> None:
+        super().__init__(f"unknown benchmark for {module}: {benchmark}")
 
 
 class ExecutionError(BenchmarkToolkitError):

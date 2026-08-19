@@ -1,4 +1,4 @@
-"""Metric aggregation shared by NVIDIA generative Benchmarks."""
+"""Metric aggregation shared by generative Benchmarks."""
 
 from __future__ import annotations
 
