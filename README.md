@@ -1,6 +1,6 @@
 # LuBan-Meter
 
-面向多硬件厂商的模块化 AI Benchmark 工具集。
+面向异构 AI 硬件环境的模块化 Benchmark 工具集。
 
 ## 文档
 
@@ -8,18 +8,13 @@
 - [使用说明](docs/usage.md)
 - [Benchmark 脚本开发指南](docs/develop-benchmark.md)
 - [生成式推理指标说明](docs/metrics.md)
+- [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
 
 ## 当前范围
 
-LuBan-Meter 当前只在宿主机直接执行 Benchmark：
-
-- 用户提前准备可用的厂商 Python、vLLM、驱动和运行时环境；
-- 运行前由用户激活对应 Python 环境；
-- 必需的厂商环境变量通过 `~/.bashrc` 或 `export` 设置；
-- 框架负责选择脚本、加载配置、执行测试和输出结果。
-
-框架使用启动 `luban-meter` 的当前 Python 执行 Benchmark，并继承当前
-Shell 环境，不再读取单独的环境配置文件。
+LuBan-Meter 复用用户已经准备好的 Python、驱动、推理引擎、模型和在线服务环境，
+负责 Benchmark 发现、配置加载、任务执行、指标计算和结果落盘。框架不安装或切换
+硬件运行时，Benchmark 使用启动 `luban-meter` 的当前 Python，并继承当前 Shell 环境。
 
 要求：
 
@@ -27,12 +22,32 @@ Shell 环境，不再读取单独的环境配置文件。
 Python >= 3.12
 ```
 
-## 核心设计
+## 目录与分类
 
-单任务由四个核心参数确定：
+公共架构不再按硬件厂商复制脚本。Benchmark 直接按评测目标分类：
 
 ```text
-module + vendor + benchmark + config
+src/luban_meter/
+├── benchmark/
+│   ├── generate/                 # 生成式推理性能评测
+│   │   ├── common/
+│   │   ├── serving-online/
+│   │   └── vllm-engine-stage/
+│   └── inference/                # 基于在线推理服务的模型效果评测
+├── core/
+├── execution/
+├── result/
+└── suite/
+    └── definitions/              # 可选的多任务 Suite YAML
+```
+
+当前不建设算子层 Benchmark。硬件差异由运行时环境和配置体现，不进入公共 CLI、
+目录层级或结果协议。
+
+单任务由三个核心参数确定：
+
+```text
+module + benchmark + config
 ```
 
 执行流程：
@@ -40,97 +55,68 @@ module + vendor + benchmark + config
 ```text
 CLI
 → Core Engine
-→ 按 module/vendor/benchmark 选择厂商脚本
-→ Host Execution
+→ benchmark/<module>/<benchmark>/benchmark.py
 → raw_result.json
-→ ResultManager
+→ result.py
 → result.json
 ```
 
-厂商 Benchmark 脚本和 Suite 使用固定目录：
+每个 Benchmark 目录遵循统一协议：
 
 ```text
-src/luban_meter/vendors/<vendor>/
-├── benchmark/<module>/<benchmark>/
-│   ├── benchmark.py
-│   ├── result.py
-│   └── config.example.yaml
-└── suites/
-    └── <suite>.yaml
+benchmark/<module>/<benchmark>/
+├── benchmark.py
+├── result.py
+└── config.example.yaml
 ```
 
-例如，NVIDIA 生成式推理按测试场景组织：
+## 已实现 Benchmark
 
-```text
-src/luban_meter/vendors/nvidia/
-├── benchmark/generate/
-│   ├── common/             # 流式解析、token 校验和统计聚合
-│   ├── serving-online/     # 完整在线服务压测
-│   │   ├── benchmark.py
-│   │   ├── result.py
-│   │   └── nvidia_vllm_serving_online.yaml
-│   └── vllm-engine-stage/  # vLLM Prefill/Decode 引擎阶段测试
-│       ├── benchmark.py
-│       ├── result.py
-│       └── nvidia_vllm_engine_stage.yaml
-└── suites/
-```
+`generate/serving-online` 通过 OpenAI-compatible HTTP 流式接口遍历精确输入长度、
+输出长度和固定请求速率矩阵，输出 TTFT、ITL、TPOT、E2EL、吞吐量、调度偏差、
+并发和成功/失败请求统计。
 
-在线场景遍历精确输入长度、输出长度和固定请求速率矩阵，每个 Case 一次采集
-完整请求时间线，同时计算用户视角和服务视角指标；
-引擎阶段场景一次加载模型并遍历输入、输出和请求批量矩阵，计算 Prefill、
-Decode 与内部 TTFT 指标，并在指标前记录 KV Cache 静态容量环境。
-不同厂商可以使用不同的调用方式和配置字段。框架按照目录发现脚本，
-新增目录后即可被模块发现。
+`generate/vllm-engine-stage` 直接调用 vLLM Engine，遍历输入长度、输出长度和请求
+批量矩阵，输出内部 TTFT、Prefill/Decode 时延与吞吐量、Engine Execution Latency，
+并记录 KV Cache 静态容量环境。
 
-## 测试参数
-
-框架不设置 Case。脚本开发者在 `config.example.yaml` 中说明需要的参数，
-并在 `benchmark.py` 中完成字段校验。
-
-用户复制模板并填写自己的测试场景，例如：
-
-```yaml
-rounds: 100
-warmup: 10
-concurrency: 1
-input_length: 1024
-output_length: 128
-service_url: http://127.0.0.1:8000
-```
+`inference` 用于后续通过在线推理服务开展 Accuracy、F1、EM、ROUGE 等模型任务
+效果评测，目前只保留模块入口，尚未实现具体 Benchmark。
 
 ## CLI 示例
+
+查看模块和已发现的 Benchmark：
+
+```bash
+luban-meter benchmarks list
+```
+
+运行在线生成服务性能测试：
 
 ```bash
 luban-meter run \
   --module generate \
-  --vendor ascend \
-  --benchmark ttft \
-  --config configs/benchmarks/ascend-ttft.yaml \
-  --model-path /data/models/Qwen3-8B \
-  --model-name Qwen3-8B
+  --benchmark serving-online \
+  --config src/luban_meter/benchmark/generate/serving-online/serving_online.yaml \
+  --model-name <served-model-name>
 ```
 
-`--benchmark` 是受厂商目录管理的逻辑脚本名，不是任意 Python 文件路径。
+运行 vLLM Engine 阶段测试：
 
-同一厂商环境中顺序执行多个脚本：
+```bash
+CUDA_VISIBLE_DEVICES=0 luban-meter run \
+  --module generate \
+  --benchmark vllm-engine-stage \
+  --config src/luban_meter/benchmark/generate/vllm-engine-stage/vllm_engine_stage.yaml \
+  --model-path /data/models/<model>
+```
+
+运行 Suite：
 
 ```bash
 luban-meter suite \
-  --vendor ascend \
-  --suite full-benchmark \
-  --model-path /data/models/Qwen3-8B \
-  --model-name Qwen3-8B
-```
-
-Suite 文件位于 `vendors/ascend/suites/full-benchmark.yaml`。Suite 中的每个
-任务只能调用 `vendors/ascend/benchmark/` 下的脚本，每个任务独立输出
-`result.json`，框架不比较任务结果。
-
-查看模块和已发现的厂商脚本：
-
-```bash
-luban-meter benchmarks list
+  --suite generation-basic \
+  --model-path /data/models/<model>
 ```
 
 ## 安装与验证
@@ -141,5 +127,3 @@ luban-meter benchmarks list
 pytest -q
 ruff check src tests
 ```
-
-真实厂商 Benchmark 脚本和 Suite 可按照上述目录约定继续添加。

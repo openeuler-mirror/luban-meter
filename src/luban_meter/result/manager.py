@@ -183,7 +183,6 @@ class ResultManager:
             run_id=request.run_id,
             status=status,
             module=request.module,
-            vendor=request.vendor,
             benchmark=request.benchmark,
             config=str(request.config),
             model={

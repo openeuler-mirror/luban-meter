@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from luban_meter.vendors.nvidia.benchmark.generate.common.streaming import (
+from luban_meter.benchmark.generate.common.streaming import (
     collect_completion_stream,
 )
 
@@ -481,7 +481,6 @@ def run_benchmark(
         "metrics": {"cases": cases},
         "metadata": {
             "measurement": "client_streaming_serving_exact_length_fixed_rate",
-            "vendor": "nvidia",
             "protocol": "openai_compatible_completions",
             "service_url": service_url,
             "model": model,
@@ -505,7 +504,6 @@ def failure_result(error: Exception) -> dict[str, Any]:
         "metrics": {},
         "metadata": {
             "measurement": "client_streaming_serving_exact_length_fixed_rate",
-            "vendor": "nvidia",
             "protocol": "openai_compatible_completions",
         },
         "artifacts": {},

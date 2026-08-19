@@ -378,7 +378,6 @@ def run_benchmark(
         "metrics": {"cases": cases},
         "metadata": {
             "measurement": "vllm_engine_stage",
-            "vendor": "nvidia",
             "engine": "vllm",
             "model": model_reference(request),
             "max_model_len": max_model_len,
@@ -399,7 +398,6 @@ def failure_result(error: Exception) -> dict[str, Any]:
         "metrics": {},
         "metadata": {
             "measurement": "vllm_engine_stage",
-            "vendor": "nvidia",
             "engine": "vllm",
         },
         "artifacts": {},

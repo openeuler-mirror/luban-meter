@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from luban_meter.core.engine import CoreEngine
-from luban_meter.core.errors import ConfigurationError
 from luban_meter.core.models import RunRequest
 from luban_meter.suite.models import (
     SuiteDefinition,
@@ -24,11 +23,6 @@ class SuiteRunner:
         request: SuiteRequest,
         definition: SuiteDefinition,
     ) -> SuiteResult:
-        if request.vendor != definition.vendor:
-            raise ConfigurationError(
-                f"suite vendor mismatch: {request.vendor} != {definition.vendor}"
-            )
-
         suite_dir = request.output_dir / request.suite_id
         tasks_dir = suite_dir / "tasks"
         write_json_atomic(
@@ -54,7 +48,6 @@ class SuiteRunner:
             run_request = RunRequest(
                 run_id=run_id,
                 module=task.module,
-                vendor=request.vendor,
                 benchmark=task.benchmark,
                 config=task.config,
                 model_path=request.model_path,
@@ -82,7 +75,6 @@ class SuiteRunner:
             schema_version="luban-meter.suite-result/v1",
             suite_id=request.suite_id,
             name=definition.name,
-            vendor=request.vendor,
             status=status,
             tasks=tuple(task_results),
         )
