@@ -25,6 +25,8 @@ LuBan-Meter 当前已经具备以下基础能力：
 - 将一次运行划分为原始数据采集和指标处理两个阶段；
 - 输出 `raw_result.json`、`result.json` 和 Suite 汇总结果；
 - 保存运行身份、参数、指标、环境、产物和错误信息。
+- 可配置 SLO（TTFT、TPOT、E2EL）与 Goodput 有效吞吐量计算；
+- P99 熔断机制，Case 超阈值时自动跳过后续 Case。
 
 当前已经实现两个 `generate` Benchmark：
 
@@ -38,7 +40,6 @@ LuBan-Meter 当前已经具备以下基础能力：
 
 当前计划主要包括：
 
-- 增加可配置 SLO 和 Goodput；
 - 补充 Queue、Scheduler 和 KV Cache 等服务端运行指标；
 - 增加 GPU 利用率、显存峰值、功耗和温度等设备数据采集；
 - 增加超时、OOM 和长时间稳定性测试；

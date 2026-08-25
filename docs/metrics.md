@@ -308,6 +308,117 @@ average_concurrency = sum(all_request_duration) / benchmark_duration
 `failed_requests`。比较吞吐量时必须检查失败数量，不能以降低成功率换取更高的
 表面吞吐量。顶层 Benchmark 状态根据全部 Case 的请求共同确定。
 
+### 4.6 SLO 与 Goodput
+
+SLO（Service Level Objective）是服务质量的量化边界。LuBan-Meter 在在线服务
+Benchmark 中支持可选的 SLO 配置块，用于两个目的：
+
+1. **熔断**：执行期 Case 级 P99 E2EL 超过阈值时，停止后续 Case；
+2. **Goodput**：区分“有量无质”和“有效产出”，只统计满足 SLO 的成功请求吞吐。
+
+#### SLO 配置
+
+SLO 块在 `serving_online.yaml` 中以 `slo` 字段配置，可选：
+
+```yaml
+slo:
+  p99_ms: 2000    # 熔断阈值：Case 级 P99 E2EL
+  ttft_ms: 500    # Goodput 维度：首 Token 延迟
+  tpot_ms: 50     # Goodput 维度：每 Token 生成时间
+  e2el_ms: 8000   # Goodput 维度：端到端延迟
+```
+
+| 字段 | 用途 | 单位 |
+|---|---|---|
+| `p99_ms` | 熔断判定 | `ms` |
+| `ttft_ms` | Goodput 判定 | `ms` |
+| `tpot_ms` | Goodput 判定 | `ms/token` |
+| `e2el_ms` | Goodput 判定 | `ms` |
+
+SLO 块整体可选。省略时既不触发熔断，也不计算 Goodput。配置了 SLO 块时至少
+需要一个阈值字段。
+
+#### 熔断机制
+
+熔断在 `benchmark.py` 的 Case 循环中执行：
+
+1. 每个 Case 完成后，从成功请求的 E2EL 样本计算 P99；
+2. 若 P99 超过 `p99_ms` 阈值，设置 `circuit_breaker` 并跳过后续全部 Case；
+3. 当前 Case 的结果正常输出，不中断；
+4. 后续被跳过的 Case 不执行，只记录维度信息。
+
+P99 计算复用 `common/statistics.py` 的 `percentile(samples, 0.99)` 函数，与
+现有统计字段保持一致。成功样本数少于 10 时不计算 P99，避免小样本统计不稳定。
+
+熔断结果记录在 `metadata.circuit_breaker`：
+
+| 字段 | 含义 |
+|---|---|
+| `triggered` | 是否触发 |
+| `threshold_p99_ms` | 配置的阈值 |
+| `actual_p99_ms` | 触发时的实际 P99 |
+| `triggered_at_case` | 触发位置（input/output/rate） |
+| `remaining_cases_skipped` | 被跳过的 Case 数 |
+
+被跳过的 Case 列表记录在 `metadata.skipped_cases`。
+
+#### Goodput 计算
+
+Goodput 在 `result.py` 的 `process_case()` 中计算。SLO 配置从
+`metadata.slo_config` 读取，逐请求判定。
+
+**判定逻辑**（AND 关系）：
+
+一个成功请求被判定为 SLO-satisfied，当且仅当所有已配置维度均满足阈值：
+
+- `ttft_ms` 配置时：`TTFT <= ttft_ms`；
+- `tpot_ms` 配置时且 `output_tokens > 1` 时：`TPOT <= tpot_ms`；
+- `e2el_ms` 配置时：`E2EL <= e2el_ms`。
+
+任一维度违反，该请求记为 SLO-violated。TPOT 仅在 `output_tokens > 1` 时
+判定，因为单 Token 输出没有 Decode 阶段，TPOT 未定义。
+
+**输出字段**：
+
+Goodput 结果输出在 `metrics.cases[].service_view.goodput`：
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `status` | 适用性状态：`applicable` 或 `not_applicable` | — |
+| `slo_config` | 配置的 SLO 阈值（含 None 维度） | — |
+| `applicable_dimensions` | 实际生效的维度列表 | — |
+| `not_applicable_dimensions` | 不适用维度列表（如全部单 Token 时 TPOT 不适用） | — |
+| `slo_satisfied_count` | 满足 SLO 的成功请求数 | `request` |
+| `slo_violated_count` | 违反 SLO 的成功请求数 | `request` |
+| `slo_satisfied_rate` | 满足率 | `ratio` |
+| `goodput_request_throughput` | 满足 SLO 的请求吞吐 | `req/s` |
+| `goodput_output_token_throughput` | 满足 SLO 的输出 Token 吞吐 | `token/s` |
+
+当 `status` 为 `not_applicable` 时，仅输出 `status`、`reason`、`slo_config`、
+`applicable_dimensions` 和 `not_applicable_dimensions`，不包含统计字段。
+
+```text
+goodput_request_throughput = slo_satisfied_count / benchmark_duration
+goodput_output_token_throughput = sum(satisfied output_tokens) / benchmark_duration
+```
+
+Goodput 与 `request_throughput` 的区别：
+
+- `request_throughput` 统计全部成功请求；
+- `goodput_request_throughput` 只统计满足 SLO 的成功请求。
+
+当所有请求均满足 SLO 时两者相等；否则 Goodput 低于 request throughput，
+反映出“有量无质”的差距。
+
+#### 向后兼容性
+
+SLO 块省略时：
+
+- `metadata` 中不出现 `slo_config` 和 `circuit_breaker`；
+- `service_view` 中不出现 `goodput` 字段；
+- 所有 Case 正常执行；
+- 结果与未引入 SLO 前完全一致。
+
 ## 5. Engine 阶段指标
 
 Engine 测试直接创建 vLLM `LLM`，对输入长度、输出长度和请求 Batch 大小做
@@ -573,7 +684,9 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
   推导的 Service View；
 - `vllm-engine-stage` 的 Engine Request/Batch Metrics；
 - 通用 Mean、P50、P90、P99、Min、Max 和 Stddev；
-- Engine KV Cache 容量环境信息。
+- Engine KV Cache 容量环境信息；
+- SLO 配置与熔断机制（Case 级 P99 E2EL 超阈值时跳过后续 Case）；
+- Goodput 计算（满足 SLO 的有效请求吞吐，区分有量无质与有效产出）。
 
 当前尚未实现或不应从现有字段推断：
 
