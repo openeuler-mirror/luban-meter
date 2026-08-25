@@ -49,7 +49,142 @@ def object_list(value: Any, name: str) -> list[Mapping[str, Any]]:
     return list(value)
 
 
-def process_case(raw_case: Mapping[str, Any]) -> tuple[dict[str, Any], int, int]:
+def compute_goodput(
+    *,
+    successful: list[Mapping[str, Any]],
+    duration_seconds: float,
+    slo_config: Mapping[str, float],
+) -> dict[str, Any]:
+    """Compute Goodput: throughput of successful requests that satisfy SLO.
+
+    SLO is an AND-relation across all applicable thresholds. A request is
+    counted as SLO-satisfied only when every applicable dimension is within
+    its threshold.
+
+    Applicability rules:
+    - ttft_ms and e2el_ms apply to all requests.
+    - tpot_ms only applies when output_tokens > 1 (TPOT is undefined when
+      there is no decode phase). If all requests in the case have
+      output_tokens == 1, tpot_ms is marked as not_applicable in the result.
+    - When no dimension is applicable (e.g. only tpot_ms configured and all
+      requests are single-token, or no successful requests), the function
+      returns a not_applicable status.
+    """
+    ttft_threshold = slo_config.get("ttft_ms")
+    tpot_threshold = slo_config.get("tpot_ms")
+    e2el_threshold = slo_config.get("e2el_ms")
+
+    if not successful:
+        return {
+            "status": "not_applicable",
+            "reason": "no successful requests to evaluate",
+            "slo_config": {
+                "ttft_ms": ttft_threshold,
+                "tpot_ms": tpot_threshold,
+                "e2el_ms": e2el_threshold,
+            },
+            "applicable_dimensions": [],
+            "not_applicable_dimensions": [],
+        }
+
+    all_single_token = all(
+        token_count(record, "output_tokens") == 1 for record in successful
+    )
+    tpot_applicable = tpot_threshold is not None and not all_single_token
+    any_dimension_applicable = (
+        ttft_threshold is not None
+        or e2el_threshold is not None
+        or tpot_applicable
+    )
+    if not any_dimension_applicable:
+        return {
+            "status": "not_applicable",
+            "reason": "tpot_ms is the only configured dimension and all "
+            "requests have output_tokens == 1 (TPOT undefined)",
+            "slo_config": {
+                "ttft_ms": ttft_threshold,
+                "tpot_ms": tpot_threshold,
+                "e2el_ms": e2el_threshold,
+            },
+            "applicable_dimensions": [],
+            "not_applicable_dimensions": (
+                ["tpot_ms"] if tpot_threshold is not None else []
+            ),
+        }
+
+    slo_satisfied: list[Mapping[str, Any]] = []
+    slo_violated: list[Mapping[str, Any]] = []
+    for record in successful:
+        ttft_ms = numeric(record, "ttft_ms")
+        e2el_ms = numeric(record, "e2el_ms")
+        output_tokens = token_count(record, "output_tokens")
+
+        violated = False
+        if ttft_threshold is not None and ttft_ms > ttft_threshold:
+            violated = True
+        if not violated and tpot_applicable and output_tokens > 1:
+            decode_duration_ms = e2el_ms - ttft_ms
+            if decode_duration_ms > 0:
+                tpot_ms = decode_duration_ms / (output_tokens - 1)
+                if tpot_ms > tpot_threshold:
+                    violated = True
+        if e2el_threshold is not None and e2el_ms > e2el_threshold:
+            violated = True
+
+        if violated:
+            slo_violated.append(record)
+        else:
+            slo_satisfied.append(record)
+
+    satisfied_count = len(slo_satisfied)
+    violated_count = len(slo_violated)
+    total_satisfied_output_tokens = sum(
+        token_count(record, "output_tokens") for record in slo_satisfied
+    )
+    satisfied_rate = (
+        satisfied_count / (satisfied_count + violated_count)
+        if (satisfied_count + violated_count) > 0
+        else 0.0
+    )
+
+    applicable_dimensions = []
+    if ttft_threshold is not None:
+        applicable_dimensions.append("ttft_ms")
+    if tpot_applicable:
+        applicable_dimensions.append("tpot_ms")
+    if e2el_threshold is not None:
+        applicable_dimensions.append("e2el_ms")
+
+    not_applicable_dimensions = []
+    if tpot_threshold is not None and not tpot_applicable:
+        not_applicable_dimensions.append("tpot_ms")
+
+    goodput: dict[str, Any] = {
+        "status": "applicable",
+        "slo_config": {
+            "ttft_ms": ttft_threshold,
+            "tpot_ms": tpot_threshold,
+            "e2el_ms": e2el_threshold,
+        },
+        "applicable_dimensions": applicable_dimensions,
+        "not_applicable_dimensions": not_applicable_dimensions,
+        "slo_satisfied_count": scalar(satisfied_count, "request"),
+        "slo_violated_count": scalar(violated_count, "request"),
+        "slo_satisfied_rate": scalar(satisfied_rate, "ratio", precision=4),
+        "goodput_request_throughput": scalar(
+            satisfied_count / duration_seconds, "req/s"
+        ),
+        "goodput_output_token_throughput": scalar(
+            total_satisfied_output_tokens / duration_seconds, "token/s"
+        ),
+    }
+    return goodput
+
+
+def process_case(
+    raw_case: Mapping[str, Any],
+    slo_config: Mapping[str, float] | None = None,
+) -> tuple[dict[str, Any], int, int]:
     input_length = positive_token_count(raw_case, "input_length")
     output_length = positive_token_count(raw_case, "output_length")
     request_rate = positive_numeric(raw_case, "request_rate")
@@ -172,6 +307,18 @@ def process_case(raw_case: Mapping[str, Any]) -> tuple[dict[str, Any], int, int]
             "token/s",
         ),
     }
+    if slo_config is not None:
+        goodput_slo = {
+            k: v
+            for k, v in slo_config.items()
+            if k in ("ttft_ms", "tpot_ms", "e2el_ms")
+        }
+        if goodput_slo:
+            service_view["goodput"] = compute_goodput(
+                successful=successful,
+                duration_seconds=duration_seconds,
+                slo_config=goodput_slo,
+            )
     if failed_count == 0:
         request_outcome = "all_success"
     elif successful_count == 0:
@@ -200,11 +347,18 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
     if not raw_cases:
         raise ValueError("raw cases must not be empty")
 
+    raw_metadata = raw_result.get("metadata")
+    slo_config: Mapping[str, float] | None = None
+    if isinstance(raw_metadata, Mapping):
+        raw_slo = raw_metadata.get("slo_config")
+        if isinstance(raw_slo, Mapping):
+            slo_config = raw_slo
+
     cases: list[dict[str, Any]] = []
     total_successful = 0
     total_failed = 0
     for raw_case in raw_cases:
-        case, successful, failed = process_case(raw_case)
+        case, successful, failed = process_case(raw_case, slo_config)
         cases.append(case)
         total_successful += successful
         total_failed += failed

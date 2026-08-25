@@ -22,3 +22,27 @@ seed_prompt: "Please summarize the benefits of open source software."
 temperature: 0.0
 ignore_eos: true
 seed: 0
+
+# Optional Service Level Objective block.
+#
+#   p99_ms   — Circuit breaker threshold. After each Case, if the Case's P99
+#              E2EL exceeds this value, subsequent Cases are skipped.
+#              Requires at least 10 successful samples; otherwise it is
+#              not triggered to avoid statistically unstable P99.
+#
+#   ttft_ms  — Goodput dimension: requests with TTFT above this value are
+#              counted as SLO-violated.
+#   tpot_ms  — Goodput dimension: requests with TPOT above this value are
+#              counted as SLO-violated. Skipped for output_tokens == 1.
+#   e2el_ms  — Goodput dimension: requests with E2EL above this value are
+#              counted as SLO-violated.
+#
+# A request is SLO-satisfied only when ALL configured dimensions are within
+# their thresholds (AND relation). The slo block is optional; when omitted,
+# Goodput is not computed and circuit breaker is disabled.
+#
+# slo:
+#   p99_ms: 2000
+#   ttft_ms: 500
+#   tpot_ms: 50
+#   e2el_ms: 8000

@@ -147,7 +147,7 @@ input_lengths × output_lengths × request_batch_sizes
 | 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 未实现 | 模型生成质量 |
 | 生成推理性能 | TTFT、ITL、TPOT、E2EL、Prefill/Decode | 已实现 | 覆盖在线客户端和 vLLM推理引擎两个观察边界 |
 | 服务能力 | request/s、token/s、负载速率、并发 | 已实现 | 支持精确输入/输出长度和固定 Request Rate 矩阵 |
-| Goodput | 满足 SLO 的有效吞吐 | 未实现 | 需要新增可配置 TTFT、TPOT、E2EL SLO 判定（设置高质量门槛） |
+| Goodput | 满足 SLO 的有效吞吐 | 已实现 | 支持可配置 TTFT、TPOT、E2EL SLO 判定（设置高质量门槛） |
 | 缓存指标 | KV 容量、使用率、命中率、Eviction | 部分实现 | 当前只有 vllm推理引擎启动的参数设置KV Cache 静态容量信息 |
 | 设备资源 | GPU利用率、显存、带宽、功耗、能耗 | 未实现 | 需要独立 Device Collector |
 | 服务内部 | Queue Time、Scheduler Time、KV实际使用率 | 未实现 | 需要接入 vLLM `/metrics` 等服务端数据源，调用服务端接口采取数据 |
@@ -194,7 +194,6 @@ input_lengths × output_lengths × request_batch_sizes
 
 ### 第一优先级：补齐生成服务关键能力
 
-- 实现可配置 SLO 与 Goodput；
 - 接入 vLLM 服务端指标，补充 Queue、Scheduler 和 KV Cache 实际使用情况；
 - 增加 GPU 利用率、显存峰值、功耗和温度等 Device Collector；
 - 增加超时、OOM 和长时间稳定性测试；

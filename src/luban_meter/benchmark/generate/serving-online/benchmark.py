@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from luban_meter.benchmark.generate.common.statistics import percentile
 from luban_meter.benchmark.generate.common.streaming import (
     collect_completion_stream,
 )
@@ -123,6 +124,38 @@ def fixed_value(parameters: Mapping[str, Any], name: str, expected: Any) -> Any:
     if type(value) is not type(expected) or value != expected:
         raise ValueError(f"{name} must be {expected!r} for exact-length cases")
     return value
+
+
+def optional_positive_number(
+    parameters: Mapping[str, Any], name: str
+) -> float | None:
+    value = parameters.get(name)
+    if value is None:
+        return None
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(float(value))
+        or value <= 0
+    ):
+        raise ValueError(f"{name} must be a positive number")
+    return float(value)
+
+
+def slo_config(parameters: Mapping[str, Any]) -> dict[str, float] | None:
+    raw = parameters.get("slo")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("slo must be an object")
+    config: dict[str, float] = {}
+    for name in ("p99_ms", "ttft_ms", "tpot_ms", "e2el_ms"):
+        threshold = optional_positive_number(raw, name)
+        if threshold is not None:
+            config[name] = threshold
+    if not config:
+        raise ValueError("slo must contain at least one threshold")
+    return config
 
 
 def request_headers(api_key: str) -> dict[str, str]:
@@ -332,6 +365,30 @@ def execute_request(
     }
 
 
+def case_p99_e2el_ms(case: Mapping[str, Any]) -> float | None:
+    """Compute P99 E2EL from successful requests in a case.
+
+    Returns None when fewer than 10 successful samples are available, because
+    P99 is statistically unstable for small sample sizes.
+    """
+    successful = [
+        record
+        for record in case.get("requests", [])
+        if isinstance(record, Mapping) and record.get("status") == "success"
+    ]
+    if len(successful) < 10:
+        return None
+    e2el_values = [
+        float(record["e2el_ms"])
+        for record in successful
+        if isinstance(record.get("e2el_ms"), (int, float))
+        and not isinstance(record.get("e2el_ms"), bool)
+    ]
+    if len(e2el_values) < 10:
+        return None
+    return round(percentile(e2el_values, 0.99), 3)
+
+
 def run_case(
     *,
     input_length: int,
@@ -443,6 +500,8 @@ def run_benchmark(
     fixed_value(parameters, "ignore_eos", True)
     fixed_value(parameters, "seed", 0)
 
+    slo = slo_config(parameters)
+
     model = request.get("model_name")
     if not isinstance(model, str) or not model:
         model = discover_model(service_url, api_key, timeout)
@@ -457,11 +516,34 @@ def run_benchmark(
                     f"exceeds service max_model_len {max_model_len}"
                 )
 
-    cases = [
-        run_case(
-            input_length=input_length,
-            output_length=output_length,
-            request_rate=request_rate,
+    p99_threshold = slo.get("p99_ms") if slo is not None else None
+    circuit_breaker: dict[str, Any] | None = None
+    skipped_cases: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+
+    # Build a flat list of all case specs for deterministic iteration.
+    all_specs: list[dict[str, Any]] = [
+        {"input_length": il, "output_length": ol, "request_rate": rr}
+        for il in input_lengths
+        for ol in output_lengths
+        for rr in request_rates
+    ]
+    for idx, spec in enumerate(all_specs):
+        if circuit_breaker is not None:
+            skipped_cases.append(
+                {
+                    "input_length": spec["input_length"],
+                    "output_length": spec["output_length"],
+                    "request_rate": spec["request_rate"],
+                    "skipped_reason": "circuit_breaker_triggered",
+                }
+            )
+            continue
+
+        case = run_case(
+            input_length=spec["input_length"],
+            output_length=spec["output_length"],
+            request_rate=spec["request_rate"],
             seed_tokens=seed_tokens,
             warmup=warmup,
             rounds=rounds,
@@ -471,28 +553,50 @@ def run_benchmark(
             api_key=api_key,
             timeout=timeout,
         )
-        for input_length in input_lengths
-        for output_length in output_lengths
-        for request_rate in request_rates
-    ]
+        cases.append(case)
+
+        if p99_threshold is not None:
+            actual_p99 = case_p99_e2el_ms(case)
+            if actual_p99 is not None and actual_p99 > p99_threshold:
+                circuit_breaker = {
+                    "triggered": True,
+                    "threshold_p99_ms": p99_threshold,
+                    "actual_p99_ms": actual_p99,
+                    "triggered_at_case": {
+                        "input_length": spec["input_length"],
+                        "output_length": spec["output_length"],
+                        "request_rate": spec["request_rate"],
+                    },
+                    "remaining_cases_skipped": 0,
+                }
+
+    if circuit_breaker is not None:
+        circuit_breaker["remaining_cases_skipped"] = len(skipped_cases)
+
+    metadata: dict[str, Any] = {
+        "measurement": "client_streaming_serving_exact_length_fixed_rate",
+        "protocol": "openai_compatible_completions",
+        "service_url": service_url,
+        "model": model,
+        "max_model_len": max_model_len,
+        "rounds_per_case": rounds,
+        "warmup_requests_per_case": warmup,
+        "case_count": len(cases),
+        "max_concurrency": max_concurrency,
+        "temperature": 0.0,
+        "ignore_eos": True,
+        "seed": 0,
+    }
+    if slo is not None:
+        metadata["slo_config"] = slo
+    if circuit_breaker is not None:
+        metadata["circuit_breaker"] = circuit_breaker
+        metadata["skipped_cases"] = skipped_cases
     return {
         "schema_version": "luban-meter.raw/v1",
         "status": "success",
         "metrics": {"cases": cases},
-        "metadata": {
-            "measurement": "client_streaming_serving_exact_length_fixed_rate",
-            "protocol": "openai_compatible_completions",
-            "service_url": service_url,
-            "model": model,
-            "max_model_len": max_model_len,
-            "rounds_per_case": rounds,
-            "warmup_requests_per_case": warmup,
-            "case_count": len(cases),
-            "max_concurrency": max_concurrency,
-            "temperature": 0.0,
-            "ignore_eos": True,
-            "seed": 0,
-        },
+        "metadata": metadata,
         "artifacts": {},
     }
 
