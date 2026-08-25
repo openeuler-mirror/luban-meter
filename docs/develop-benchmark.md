@@ -57,7 +57,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-stage    Large-model generation benchmarks
-inference   mmlu                               Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k                  Online-service model evaluation benchmarks
 ```
 
 ## 4. 配置文件
@@ -194,7 +194,9 @@ Case，禁止将不同条件的样本混合统计。
 ## 8. Inference Benchmark 指南
 
 `inference` 通过在线推理服务评测模型任务效果，建议每个 Benchmark 封装一类任务
-协议或数据集族，例如 `mmlu`、`ceval`、`summarization`。
+协议或数据集族，例如 `ceval`、`gsm8k`、`summarization`。当前已端到端实现
+`ceval`、`cmmlu` 和 `gsm8k`，协议细节参见
+[Inference 评测指标说明](inference.md)。
 
 一次运行通常包含：
 
@@ -217,6 +219,10 @@ Case，禁止将不同条件的样本混合统计。
 - 评分规则及指标实现版本。
 
 禁止只保存聚合分数而丢失逐样本审计信息。
+
+多个数据集共用的在线服务调用、数据集加载、Prompt 渲染、答案解析和指标计算
+逻辑放在 `benchmark/inference/common/`；数据集官方格式到本地 jsonl 的转换脚本
+放在 `benchmark/inference/scripts/`，Benchmark 运行时只读取本地数据集文件。
 
 ## 9. Suite
 

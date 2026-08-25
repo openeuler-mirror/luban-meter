@@ -19,7 +19,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-stage    Large-model generation benchmarks
-inference   -                                   Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
 ```
 
 `generate` 测量生成式推理性能；`inference` 用于基于在线推理服务的模型效果评测。
@@ -211,3 +211,31 @@ ruff check src tests
 pytest -q
 python -m luban_meter benchmarks list
 ```
+
+## 10. inference 模型任务效果测试
+
+`inference` Benchmark 基于本地数据集调用在线推理服务。运行前先用离线准备脚本
+将官方数据集转换为本地 jsonl 格式（运行时不下载数据）：
+
+```bash
+python src/luban_meter/benchmark/inference/scripts/prepare_ceval.py \
+  --source /path/to/ceval --out data/ceval
+python src/luban_meter/benchmark/inference/scripts/prepare_cmmlu.py \
+  --source /path/to/cmmlu --out data/cmmlu
+python src/luban_meter/benchmark/inference/scripts/prepare_gsm8k.py \
+  --source /path/to/gsm8k --out data/gsm8k
+```
+
+运行示例（C-Eval 选择题 Accuracy，ppl 模式）：
+
+```bash
+luban-meter run \
+  --module inference \
+  --benchmark ceval \
+  --config src/luban_meter/benchmark/inference/ceval/ceval.yaml \
+  --model-name <name>
+```
+
+当前可用 Benchmark：`ceval`、`cmmlu`（选择题 Accuracy，支持 ppl/gen 两种评测
+模式）和 `gsm8k`（数学题 Exact Match，gen 模式）。配置字段、评测模式和指标口径
+参见 [Inference 评测指标说明](inference.md)。

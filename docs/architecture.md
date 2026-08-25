@@ -80,7 +80,11 @@ src/luban_meter/
 │   │       ├── result.py
 │   │       └── vllm_engine_stage.yaml
 │   └── inference/
-│       └── __init__.py
+│       ├── common/
+│       ├── scripts/
+│       ├── ceval/
+│       ├── cmmlu/
+│       └── gsm8k/
 ├── core/
 │   ├── engine.py
 │   ├── registry.py
@@ -115,7 +119,7 @@ benchmark/<module>/<benchmark>/
 
 ```text
 generate    serving-online,vllm-engine-stage
-inference   -
+inference   ceval,cmmlu,gsm8k
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
@@ -137,12 +141,17 @@ inference   -
 ### inference
 
 回答“在线推理服务返回的模型结果是否正确或质量如何”，通过 HTTP 服务执行标准
-数据集和任务，主要规划：
+数据集和任务。已实现：
 
-- MMLU、C-Eval Accuracy；
-- 问答 EM、F1；
-- 摘要 ROUGE；
-- 代码生成 Pass@k；
+- C-Eval、CMMLU 选择题 Accuracy（ppl logprob 打分与 gen 生成抽取两种模式）；
+- GSM8K 数学题 Exact Match。
+
+后续规划：
+
+- 问答 EM、F1（SQuAD）；
+- 摘要 ROUGE（LCSTS）；
+- 代码生成 Pass@k（HumanEval）；
+- 语言建模 Perplexity（WikiText）；
 - 任务级端到端时延。
 
 `inference` 不直接加载硬件专属模型接口；首选统一的在线推理服务协议，使同一套

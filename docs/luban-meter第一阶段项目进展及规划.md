@@ -28,7 +28,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | vLLM Engine 阶段测试 | 已完成 | 实现 `vllm-engine-stage` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
-| 模型任务精度评测 | 待建设 | 架构已预留 `inference`，尚未实现 Accuracy、F1、ROUGE 等脚本 |
+| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）和 gsm8k（Exact Match），指标计算层已具备 F1、ROUGE、Pass@k、Perplexity 能力，其余数据集待接入 |
 | 设备和服务内部监控 | 待建设 | GPU 利用率、显存、功耗、服务端队列和 KV Cache 实际使用率尚未采集 |
 
 ## 三、总体架构方案
@@ -55,7 +55,7 @@ src/luban_meter/
 ├── suite/                        # 多个 Benchmark 顺序编排
 └── benchmark/
     ├── generate/                 # 自回归生成引擎与在线服务性能
-    └── inference/                # 基于在线服务的模型任务效果评测（规划）
+    └── inference/                # 基于在线服务的模型任务效果评测（已部分落地）
 ```
 
 架构方案具有以下特点：
@@ -135,6 +135,41 @@ input_lengths × output_lengths × request_batch_sizes
 在线 TTFT 与 Engine Internal TTFT 的时间边界不同，只能在相同条件下做趋势对照或
 辅助定位额外开销，不能当作同一个指标直接比较。
 
+### 4.4 模型任务效果评测：`inference` 模块（已部分落地）
+
+`inference` 与 `generate` 的分工是：`generate` 测量“生成得快不快、稳不稳”，
+`inference` 测量“模型答得好不好”——用标准数据集样本调用在线推理服务，将输出
+与参考答案对比计算正确性指标。当前已实现的内容包括：
+
+1. **公共层 `inference/common/`**：
+
+   - `client.py`：OpenAI-compatible 在线服务调用，支持 `/v1/chat/completions`
+     和带 `echo + logprobs` 的 `/v1/completions`；
+   - `dataset.py`：本地 json/jsonl 数据集加载与确定性采样；
+   - `prompts.py` / `parsers.py`：Prompt 模板渲染（带版本号）与答案解析；
+   - `metrics.py`：Accuracy、Token F1、ROUGE-N/L、Pass@k、Perplexity 指标计算
+     （其中 Token F1、ROUGE、Pass@k、Perplexity 计算能力已具备，数据集评测待接入）；
+   - `choice.py` / `choice_result.py`：四选一题目通用评测流程。
+
+2. **已实现三个 Benchmark**：
+
+   - `ceval`：C-Eval 选择题 Accuracy，支持 ppl（按选项 logprob 打分，续写 Token
+     长度归一化）和 gen（生成后抽取字母）两种评测模式；
+   - `cmmlu`：CMMLU 选择题 Accuracy，复用 choice 协议，验证协议在同族数据集间
+     的泛化；
+   - `gsm8k`：GSM8K 数学题，gen 模式生成后经数值抽取与参考答案做 Exact Match 判分。
+
+3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；离线准备脚本位于
+   `inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k），将官方
+   数据转换为统一 jsonl 格式。逐样本记录 Prompt、原始输出、解析结果、判定、耗时
+   与 Token 数，元数据记录评测模式、Prompt 版本、解码参数和评分器版本，保证分数
+   可复现、可审计。
+
+`inference` 与 `generate` 共用同一条 `benchmark.py → raw_result.json →
+result.py → result.json` 执行链路和结果协议，指标按
+`metrics.task_view.<benchmark>` 组织，详细协议参见
+[Inference 评测指标说明](inference.md)。
+
 ## 五、对照 LLM 评价指标体系的覆盖情况
 
 参考 LLM 评价指标概览，完整评测可分为模型效果、语言模型自身指标、生成质量、
@@ -142,7 +177,7 @@ input_lengths × output_lengths × request_batch_sizes
 
 | 指标类别 | 代表指标 | 当前覆盖 | 说明 |
 |---|---|---|---|
-| 模型效果 | Accuracy、Precision、Recall、F1、EM、Pass@k | 未实现 | 规划由 `inference` 按任务和数据集实现 |
+| 模型效果 | Accuracy、Precision、Recall、F1、EM、Pass@k | 部分实现 | `inference` 已实现 ceval、cmmlu、gsm8k 的 Accuracy/EM；Token F1、Pass@k 等计算能力已具备，数据集评测待接入 |
 | 语言模型自身 | Cross-Entropy Loss、Perplexity | 未实现 | 需要模型与标准语料评测 |
 | 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 未实现 | 模型生成质量 |
 | 生成推理性能 | TTFT、ITL、TPOT、E2EL、Prefill/Decode | 已实现 | 覆盖在线客户端和 vLLM推理引擎两个观察边界 |
@@ -185,6 +220,8 @@ input_lengths × output_lengths × request_batch_sizes
 - Benchmark 自动发现和标准目录协议；
 - `raw_result.json` 与 `result.json` 两阶段结果协议；
 - 通用在线服务测试和 vLLM Engine 阶段测试；
+- `inference` 模块首批模型任务效果评测（ceval、cmmlu、gsm8k）与公共评测层、
+  数据集离线准备脚本；
 - 精确输入/输出 Token 长度与开放式固定 Request Rate 负载矩阵；
 - Request View、Service View、Engine Request/Batch Metrics 指标分层；
 - 通用统计聚合、状态管理、日志和结果归档；
@@ -205,10 +242,20 @@ input_lengths × output_lengths × request_batch_sizes
 
 ### 第二优先级：建设 `inference` 模块
 
-- 建设完整模型任务级评测，统一采集任务结果、端到端延迟和模型核心执行时间；
-- 首批支持 MMLU/C-Eval 等 Accuracy 任务以及摘要类 ROUGE 任务；
-- 按任务扩展 F1、EM、Pass@k、Perplexity 等指标；
-- 基于之前的框架，对接脚本执行接口，开发属于模型生成结果评测的架构体系。
+已完成部分：
+
+- 建成 `inference/common/` 公共层（在线服务调用、数据集加载、Prompt 渲染、
+  答案解析、指标计算），统一采集逐样本任务结果、端到端延迟和 Token 数；
+- 基于现有框架对接脚本执行接口，形成模型生成结果评测的目录与结果协议；
+- 首批落地 ceval、cmmlu（Accuracy）和 gsm8k（Exact Match），ppl/gen 双评测
+  模式打通在线 logprobs 链路；
+- 指标计算层已具备 Token F1、ROUGE、Pass@k、Perplexity 能力。
+
+剩余工作：
+
+- 补齐 HumanEval（Pass@1 + 沙箱执行）、SQuAD（EM、Token F1）、摘要类（LCSTS
+  ROUGE）和语言建模（WikiText Perplexity）任务；
+- 建设 `inference` 任务的 Suite 编排与跨运行汇总报告。
 
 `inference` 统一通过在线推理服务调用模型，优先复用 OpenAI-compatible HTTP 接口；
 数据集、Prompt、答案解析和评分逻辑不按硬件环境复制。

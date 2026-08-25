@@ -6,8 +6,8 @@ request_timeout: 120
 # Every input/output/rate combination is an independent measured Case.
 warmup: 2
 rounds: 100
-input_lengths: [128, 512, 2048]
-output_lengths: [1, 32, 128]
+input_lengths: [128, 512, 2048]	 
+output_lengths: [1, 32, 128]	 
 request_rates: [1.0, 4.0, 16.0]
 
 # Safety cap for simultaneous client requests. Requests that cannot start at
