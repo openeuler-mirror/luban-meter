@@ -214,8 +214,10 @@ python -m luban_meter benchmarks list
 
 ## 10. inference 模型任务效果测试
 
-`inference` Benchmark 基于本地数据集调用在线推理服务。运行前先用离线准备脚本
-将官方数据集转换为本地 jsonl 格式（运行时不下载数据）：
+`inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
+`cmmlu`、`gsm8k` 的样例数据集，位于
+`src/luban_meter/benchmark/inference/data/`，开箱即用。若需替换为完整官方
+数据集，先用离线准备脚本将官方格式转换为本地 jsonl（运行时不下载数据）：
 
 ```bash
 python src/luban_meter/benchmark/inference/scripts/prepare_ceval.py \
@@ -225,6 +227,11 @@ python src/luban_meter/benchmark/inference/scripts/prepare_cmmlu.py \
 python src/luban_meter/benchmark/inference/scripts/prepare_gsm8k.py \
   --source /path/to/gsm8k --out data/gsm8k
 ```
+
+配置中的 `dataset_path` 为相对路径时按以下顺序解析：先相对当前工作目录
+（CWD），未命中时回退到包内置的 `benchmark/inference/data/` 目录。因此默认
+配置不指定 `dataset_path` 即使用内置样例数据，从 `/tmp` 等任意目录运行也可
+正常加载。
 
 运行示例（C-Eval 选择题 Accuracy，ppl 模式）：
 
@@ -237,5 +244,8 @@ luban-meter run \
 ```
 
 当前可用 Benchmark：`ceval`、`cmmlu`（选择题 Accuracy，支持 ppl/gen 两种评测
-模式）和 `gsm8k`（数学题 Exact Match，gen 模式）。配置字段、评测模式和指标口径
-参见 [Inference 评测指标说明](inference.md)。
+模式）和 `gsm8k`（数学题 Exact Match，gen 模式）。其中 ppl / loss 模式依赖
+`/v1/completions` 的 `echo + logprobs` 回显，且仅允许 `prompt_format=base`
+（对话格式层会注入特殊 Token 破坏 ppl 续写打分，组合 ppl + chat 会被配置校验
+拒绝）；gen 模式可使用 chat 或 base 传输。配置字段、评测模式和指标口径参见
+[Inference 评测指标说明](inference.md)。

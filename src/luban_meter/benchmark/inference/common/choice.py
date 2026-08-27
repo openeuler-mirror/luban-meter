@@ -95,6 +95,11 @@ def validate_choice_parameters(
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
     }
     fixed_value(parameters, "temperature", 0.0)
+    if config["eval_mode"] == "ppl" and config["prompt_format"] == "chat":
+        raise ValueError(
+            "eval_mode=ppl requires prompt_format=base: chat-template "
+            "logprob scoring is not implemented"
+        )
     if not config["dataset_path"]:
         raise ValueError("dataset_path must not be empty")
     if config["few_shot"] > 0 and not config["few_shot_path"]:
@@ -109,17 +114,28 @@ def score_choices(
     """Mean continuation logprob per choice via echo+logprobs scoring.
 
     Returns the per-letter scores and the total scoring latency in ms.
+
+    ``/v1/completions`` is called with ``echo=true`` and ``max_tokens=1`` so the
+    returned logprobs cover every prompt token followed by exactly one newly
+    generated token. The continuation is located via the full-text token offsets
+    -- ``tokenize(prompt)`` vs ``tokenize(prompt + continuation)`` -- and only the
+    continuation slice ``[prompt_count:full_count]`` is scored, which drops the
+    trailing generated token. Tokenizing the continuation in isolation is
+    intentionally avoided: it can disagree with the prompt+continuation boundary.
     """
     scores: dict[str, float] = {}
     latency_ms = 0.0
+    prompt_count = len(client.tokenize(prompt))
     for letter, choice in zip(CHOICE_LETTERS, choices):
         continuation = f" {letter}. {choice}"
-        token_count = len(client.tokenize(continuation))
+        full_count = len(client.tokenize(prompt + continuation))
         response = client.completion_logprobs(prompt + continuation)
         latency_ms += response.get("latency_ms") or 0.0
         logprobs = response["token_logprobs"]
         scored = [
-            value for value in logprobs[-token_count:] if value is not None
+            value
+            for value in logprobs[prompt_count:full_count]
+            if value is not None
         ]
         if not scored:
             raise ServiceError(f"no logprobs returned for choice {letter}")

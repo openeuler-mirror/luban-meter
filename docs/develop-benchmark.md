@@ -223,6 +223,9 @@ Case，禁止将不同条件的样本混合统计。
 多个数据集共用的在线服务调用、数据集加载、Prompt 渲染、答案解析和指标计算
 逻辑放在 `benchmark/inference/common/`；数据集官方格式到本地 jsonl 的转换脚本
 放在 `benchmark/inference/scripts/`，Benchmark 运行时只读取本地数据集文件。
+样例数据集随包内置在 `benchmark/inference/data/`；`common/dataset.py` 的
+`resolve_data_path()` 对相对路径先按 CWD 解析，未命中时回退到包内置目录，使
+默认配置无需额外准备即可从任意工作目录运行。
 
 ## 9. Suite
 

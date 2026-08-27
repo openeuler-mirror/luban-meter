@@ -82,6 +82,7 @@ src/luban_meter/
 │   └── inference/
 │       ├── common/
 │       ├── scripts/
+│       ├── data/                 # 随包内置样例数据集（ceval/cmmlu/gsm8k jsonl）
 │       ├── ceval/
 │       ├── cmmlu/
 │       └── gsm8k/
@@ -143,8 +144,12 @@ inference   ceval,cmmlu,gsm8k
 回答“在线推理服务返回的模型结果是否正确或质量如何”，通过 HTTP 服务执行标准
 数据集和任务。已实现：
 
-- C-Eval、CMMLU 选择题 Accuracy（ppl logprob 打分与 gen 生成抽取两种模式）；
+- C-Eval、CMMLU 选择题 Accuracy（ppl logprob 打分与 gen 生成抽取两种模式；ppl
+  模式仅允许 `prompt_format=base`，组合 ppl + chat 会被配置校验拒绝）；
 - GSM8K 数学题 Exact Match。
+
+数据集默认随包内置在 `benchmark/inference/data/`，相对路径优先按 CWD 解析，
+未命中时回退到包内置数据，使同一份脚本可从任意目录运行。
 
 后续规划：
 

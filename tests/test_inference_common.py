@@ -136,6 +136,25 @@ def test_dataset_loading_and_sampling(tmp_path: Path) -> None:
     assert [record["id"] for record in few_shot] == ["1", "3"]
 
 
+def test_resolve_data_path_falls_back_to_bundled_package_data(tmp_path: Path) -> None:
+    """Default relative dataset paths resolve to bundled package data."""
+    from luban_meter.benchmark.inference.common.dataset import resolve_data_path
+
+    # Absolute paths are returned verbatim.
+    absolute = tmp_path / "abs.jsonl"
+    absolute.write_text("{}", encoding="utf-8")
+    assert resolve_data_path(absolute) == absolute
+
+    # A default YAML relative path resolves to the bundled package data dir.
+    bundled = resolve_data_path("data/ceval/val.jsonl")
+    assert bundled.is_file()
+    assert resolve_data_path(bundled) == bundled
+
+    # A missing relative path keeps its original form so load_records raises.
+    missing = resolve_data_path("data/does/not/exist.jsonl")
+    assert missing == Path("data/does/not/exist.jsonl")
+
+
 def test_parameter_validation() -> None:
     assert positive_integer({"a": 3}, "a", 1) == 3
     with pytest.raises(ValueError):

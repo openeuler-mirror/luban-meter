@@ -145,7 +145,8 @@ input_lengths × output_lengths × request_batch_sizes
 
    - `client.py`：OpenAI-compatible 在线服务调用，支持 `/v1/chat/completions`
      和带 `echo + logprobs` 的 `/v1/completions`；
-   - `dataset.py`：本地 json/jsonl 数据集加载与确定性采样；
+   - `dataset.py`：本地 json/jsonl 数据集加载、确定性采样与 `resolve_data_path`
+     相对路径解析（CWD → 包内置数据回退）；
    - `prompts.py` / `parsers.py`：Prompt 模板渲染（带版本号）与答案解析；
    - `metrics.py`：Accuracy、Token F1、ROUGE-N/L、Pass@k、Perplexity 指标计算
      （其中 Token F1、ROUGE、Pass@k、Perplexity 计算能力已具备，数据集评测待接入）；
@@ -153,17 +154,22 @@ input_lengths × output_lengths × request_batch_sizes
 
 2. **已实现三个 Benchmark**：
 
-   - `ceval`：C-Eval 选择题 Accuracy，支持 ppl（按选项 logprob 打分，续写 Token
-     长度归一化）和 gen（生成后抽取字母）两种评测模式；
+   - `ceval`：C-Eval 选择题 Accuracy，支持 ppl（`echo + logprobs` 回显后按
+     `tokenize(prompt)` 与 `tokenize(prompt+续写)` 得到的偏移 `[p:f)` 切片、
+     明确排除末尾生成 Token，并对续写 Token 对数概率取均值归一化；仅允许
+     `prompt_format=base`）和 gen（生成后抽取字母）两种评测模式；
    - `cmmlu`：CMMLU 选择题 Accuracy，复用 choice 协议，验证协议在同族数据集间
      的泛化；
    - `gsm8k`：GSM8K 数学题，gen 模式生成后经数值抽取与参考答案做 Exact Match 判分。
 
-3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；离线准备脚本位于
+3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；ceval/cmmlu/gsm8k
+   的样例数据集随包内置在 `inference/data/`，相对 `dataset_path` 未命中时回退
+   到该内置目录，使默认配置可从任意工作目录开箱即用；离线准备脚本位于
    `inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k），将官方
-   数据转换为统一 jsonl 格式。逐样本记录 Prompt、原始输出、解析结果、判定、耗时
-   与 Token 数，元数据记录评测模式、Prompt 版本、解码参数和评分器版本，保证分数
-   可复现、可审计。
+   数据转换为统一 jsonl 格式。ppl / loss 模式仅允许 `prompt_format=base`，
+   组合 ppl + chat 会被 `validate_choice_parameters` 校验拒绝。逐样本记录 Prompt、
+   原始输出、解析结果、判定、耗时与 Token 数，元数据记录评测模式、Prompt 版本、
+   解码参数和评分器版本，保证分数可复现、可审计。
 
 `inference` 与 `generate` 共用同一条 `benchmark.py → raw_result.json →
 result.py → result.json` 执行链路和结果协议，指标按

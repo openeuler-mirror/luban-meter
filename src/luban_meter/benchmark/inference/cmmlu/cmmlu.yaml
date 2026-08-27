@@ -15,7 +15,7 @@ few_shot: 5
 # Evaluation protocol. eval_mode chooses how answers are obtained;
 # prompt_format chooses chat or plain-text transport.
 eval_mode: ppl          # ppl | gen
-prompt_format: chat     # chat | base
+prompt_format: base    # base | chat (ppl+chat is not supported)
 prompt_version: cmmlu-v1
 
 # Generation parameters for gen mode. Ignored by ppl mode.

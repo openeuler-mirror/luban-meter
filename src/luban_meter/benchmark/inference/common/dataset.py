@@ -7,10 +7,32 @@ import random
 from pathlib import Path
 from typing import Any
 
+# Root for bundled sample datasets. A relative ``dataset_path`` such as
+# ``data/ceval/val.jsonl`` falls back to ``<inference_dir>/data/ceval/val.jsonl``
+# so the default YAML configs work from both a source checkout and a wheel
+# install, independent of the process working directory.
+_BUNDLED_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_data_path(path: str | Path) -> Path:
+    """Resolve a dataset path.
+
+    Absolute paths and existing CWD-relative paths are used verbatim. Other
+    relative paths fall back to the bundled package data directory so default
+    configs resolve stably regardless of the install layout.
+    """
+    file = Path(path)
+    if file.is_absolute() or file.is_file():
+        return file
+    packaged = _BUNDLED_ROOT / file
+    if packaged.is_file():
+        return packaged
+    return file
+
 
 def load_records(path: str | Path) -> list[dict[str, Any]]:
     """Load dataset records from a local json or jsonl file."""
-    file = Path(path)
+    file = resolve_data_path(path)
     if not file.is_file():
         raise FileNotFoundError(f"dataset file not found: {file}")
     if file.suffix == ".jsonl":

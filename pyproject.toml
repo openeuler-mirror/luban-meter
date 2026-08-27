@@ -28,6 +28,8 @@ luban_meter = [
   "benchmark/**/benchmark.py",
   "benchmark/**/result.py",
   "benchmark/**/*.yaml",
+  "benchmark/inference/data/**/*.jsonl",
+  "benchmark/inference/data/**/*.json",
   "suite/definitions/*.yaml",
 ]
 

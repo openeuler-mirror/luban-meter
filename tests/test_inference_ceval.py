@@ -68,13 +68,14 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
         "dataset_path": str(dataset),
         "max_samples": 2,
         "few_shot": 0,
+        "prompt_format": "base",
     }
 
 
 def test_validate_parameters(tmp_path: Path) -> None:
     config = ceval.validate_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "ppl"
-    assert config["prompt_format"] == "chat"
+    assert config["prompt_format"] == "base"
     with pytest.raises(ValueError):
         ceval.validate_parameters(
             {**base_parameters(tmp_path), "temperature": 1.0}
@@ -83,19 +84,41 @@ def test_validate_parameters(tmp_path: Path) -> None:
         ceval.validate_parameters({**base_parameters(tmp_path), "eval_mode": "x"})
     with pytest.raises(ValueError):
         ceval.validate_parameters({**base_parameters(tmp_path), "few_shot": 3})
+    with pytest.raises(ValueError):
+        ceval.validate_parameters(
+            {**base_parameters(tmp_path), "prompt_format": "chat"}
+        )
+
+
+def _build_echo_logprobs(full_prompt: str) -> list[Any]:
+    """Realistic ``echo=true, max_tokens=1`` logprobs payload.
+
+    The fake tokenizer yields one token per character. Continuation tokens carry
+    the per-letter score and the trailing generated token is set to a distinct
+    sentinel (``-99.0``) so tests can confirm it is excluded from the score.
+    """
+    marker = "答案："
+    idx = full_prompt.rfind(marker)
+    prompt_count = idx + len(marker) if idx >= 0 else 0
+    continuation = full_prompt[prompt_count:].strip()
+    letter = continuation[0] if continuation else "A"
+    score = -0.1 if letter == "B" else -2.0
+    full_count = len(full_prompt)
+    token_logprobs: list[Any] = [None] + [-1.0] * (full_count - 1)
+    for position in range(prompt_count, full_count):
+        token_logprobs[position] = score
+    token_logprobs.append(-99.0)  # generated token; must be excluded
+    return token_logprobs
 
 
 class FakeClient:
-    """Returns deterministic logprobs so choice B always wins."""
+    """Realistic echo+logprobs fake so choice B always wins."""
 
     def tokenize(self, text: str) -> list[int]:
-        return [0, 1, 2]
+        return list(range(len(text)))
 
-    def completion_logprobs(self, prompt: str) -> dict[str, Any]:
-        continuation = prompt.rsplit("答案：", 1)[-1].strip()
-        letter = continuation[0]
-        score = -0.1 if letter == "B" else -2.0
-        token_logprobs = [None, -1.0, -1.0, -1.0, score, score, score]
+    def completion_logprobs(self, full_prompt: str) -> dict[str, Any]:
+        token_logprobs = _build_echo_logprobs(full_prompt)
         return {
             "tokens": ["t"] * len(token_logprobs),
             "token_logprobs": token_logprobs,
@@ -108,6 +131,7 @@ def test_score_choices_prefers_best_letter() -> None:
     )
     assert set(scores) == {"A", "B", "C", "D"}
     assert max(scores, key=scores.get) == "B"
+    # The generated token (-99.0) must be excluded; otherwise B would be ~-17.
     assert scores["B"] == pytest.approx(-0.1)
     assert latency_ms == 0.0
 
@@ -123,10 +147,7 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
             }
         elif self.path == "/v1/completions":
             prompt = body.get("prompt", "")
-            continuation = prompt.rsplit("答案：", 1)[-1].strip()
-            letter = continuation[0] if continuation else "A"
-            score = [-0.1] * 3 if letter == "B" else [-2.0] * 3
-            token_logprobs = [None, -1.0, -1.0, -1.0, *score]
+            token_logprobs = _build_echo_logprobs(prompt)
             response = {
                 "choices": [
                     {
@@ -140,7 +161,8 @@ class _FakeHandler(http.server.BaseHTTPRequestHandler):
                 "usage": {"prompt_tokens": len(token_logprobs)},
             }
         elif self.path == "/tokenize":
-            response = {"tokens": [1, 2, 3], "count": 3}
+            text = body.get("prompt", "")
+            response = {"tokens": list(range(len(text))), "count": len(text)}
         else:
             response = {}
         data = json.dumps(response).encode("utf-8")

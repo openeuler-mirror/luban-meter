@@ -67,7 +67,8 @@ luban-meter run --module inference --benchmark ceval \
       3. prompts.py 渲染任务内容层 Prompt；
       4. client.py 调用在线服务：
          - gen 模式  → /v1/chat/completions 或 /v1/completions；
-         - ppl 模式  → /v1/completions（echo + logprobs）；
+         - ppl 模式  → /v1/completions（echo=true、max_tokens=1、logprobs），仅允许
+           prompt_format=base；
          - loss 模式 → /v1/completions（echo + logprobs）；
       5. gen 模式输出经 parsers.py 提取答案；
       6. 逐样本原始记录写入 raw_result.json；
@@ -81,7 +82,7 @@ luban-meter run --module inference --benchmark ceval \
 src/luban_meter/benchmark/inference/
 ├── common/
 │   ├── client.py       # OpenAI-compatible 调用：chat、completion logprobs、tokenize
-│   ├── dataset.py      # 本地 json/jsonl 加载、确定性采样
+│   ├── dataset.py      # 本地 json/jsonl 加载、确定性采样、resolve_data_path 路径解析
 │   ├── parameters.py   # 配置参数校验
 │   ├── prompts.py      # Prompt 模板注册与渲染
 │   ├── parsers.py      # 答案提取与归一化
@@ -89,6 +90,7 @@ src/luban_meter/benchmark/inference/
 │   ├── choice.py       # 四选一题目通用采集流程（ppl/gen）
 │   └── choice_result.py # 四选一题目通用指标聚合
 ├── scripts/            # 数据集离线准备脚本：prepare_ceval/prepare_cmmlu/prepare_gsm8k
+├── data/               # 随包内置样例数据集 jsonl（ceval/cmmlu/gsm8k），相对路径未命中时回退到此
 ├── ceval/            benchmark.py + result.py + ceval.yaml      （已实现）
 ├── cmmlu/            benchmark.py + result.py + cmmlu.yaml      （已实现）
 ├── gsm8k/            benchmark.py + result.py + gsm8k.yaml      （已实现）
@@ -119,6 +121,9 @@ api_key: ""
 request_timeout: 60
 
 # Dataset loading and deterministic sampling.
+# Relative paths resolve against CWD first, then bundled package data
+# (luban_meter/benchmark/inference/data/), so the shipped defaults work
+# from both a source checkout and a wheel install.
 dataset_path: data/ceval/val.jsonl
 split: val
 max_samples: 200
@@ -128,9 +133,10 @@ few_shot_path: data/ceval/dev.jsonl
 few_shot: 5
 
 # Evaluation protocol. eval_mode chooses how answers are obtained;
-# prompt_format chooses chat or plain-text transport.
+# prompt_format chooses chat or plain-text transport. ppl requires
+# prompt_format=base: chat-template logprob scoring is not implemented.
 eval_mode: ppl          # ppl | gen
-prompt_format: chat     # chat | base
+prompt_format: base     # base | chat (ppl+chat is rejected)
 prompt_version: ceval-v1
 
 # Generation parameters for gen mode. Ignored by ppl mode.
@@ -149,7 +155,7 @@ temperature: 0.0
 | `service_url` | str | 在线推理服务地址 |
 | `api_key` | str | 可选 API Key |
 | `request_timeout` | number | 单请求超时秒数 |
-| `dataset_path` | str | 本地数据集文件（json/jsonl），不依赖第三方数据加载库 |
+| `dataset_path` | str | 本地数据集文件（json/jsonl），不依赖第三方数据加载库；相对路径先按 CWD 解析，再回退到包内置数据目录 |
 | `split` | str | 数据集分区，仅记录，不改变加载行为 |
 | `max_samples` | int | 样本上限，确定性截断 |
 | `shuffle` | bool | 是否先按 `seed` 打乱再截断，默认否 |
@@ -157,7 +163,7 @@ temperature: 0.0
 | `few_shot_path` | str | 示例来源文件（通常为 dev 分区），可选 |
 | `few_shot` | int | few-shot 示例数量，0 表示 zero-shot |
 | `eval_mode` | str | `ppl`、`gen` 或 `loss`（WikiText 专用） |
-| `prompt_format` | str | `chat` 走 `/v1/chat/completions`；`base` 走 `/v1/completions` 纯文本 |
+| `prompt_format` | str | `chat` 走 `/v1/chat/completions`；`base` 走 `/v1/completions` 纯文本。`ppl`/`loss` 仅允许 `base` |
 | `prompt_version` | str | Prompt 模板版本号，写入结果元数据 |
 | `max_tokens` | int | gen 模式最大生成 Token 数 |
 | `stop` | list | gen 模式停止序列 |
@@ -218,9 +224,10 @@ gen 模式答案提取规则（`common/parsers.py`）：
 
 1. 渲染：指令 + dev 分区同学科 few-shot 示例 + 题目 + 选项 + “答案：”；
 2. ppl 模式：对每个选项 X，拼接 `text = prompt + 选项续写文本`，调用
-   `/v1/completions` 且 `echo=true`；用 `/tokenize` 得到续写文本 Token 数 m，取
-   返回 logprobs 序列末尾 m 个 Token 的对数概率求和并除以 m，得到该选项的平均
-   对数概率 `s_X`；
+   `/v1/completions` 且 `echo=true`、`max_tokens=1`；用 `/tokenize` 分别得到
+   `prompt` 与 `prompt + 续写` 的 Token 数 `p` 与 `f`，取返回 logprobs 序列中
+   下标 `[p:f)` 的续写 Token 对数概率（明确排除末尾的 1 个生成 Token）求和
+   并除以 `f - p`，得到该选项的平均对数概率 `s_X`；
 3. 判定：`prediction = argmax s_X`，长度归一化避免偏向长选项；
 4. gen 模式（回退）：生成后经 `parsers.extract_choice` 提取字母；
 5. 逐样本：`correct = (prediction == answer)`。
@@ -366,13 +373,17 @@ few-shot 数、评测模式、`prompt_format`、解码参数和评分器版本�
 
 | 模式 | 接口 | 服务能力要求 | 适用任务 | 说明 |
 |---|---|---|---|---|
-| ppl | `/v1/completions` + `echo` + `logprobs` | 必须支持 prompt logprob 回显 | 选择题（C-Eval、CMMLU） | 按选项续写 Token 长度归一化 |
+| ppl | `/v1/completions` + `echo` + `logprobs` | 必须支持 prompt logprob 回显 | 选择题（C-Eval、CMMLU） | 按选项续写 Token 对数概率取均值归一化；仅允许 `prompt_format=base` |
 | gen | `/v1/chat/completions` 或 `/v1/completions` | 生成即可 | GSM8K、HumanEval、SQuAD、LCSTS | 依赖答案提取规则 |
 | loss | `/v1/completions` + `echo` + `logprobs` | 必须支持 prompt logprob 回显 | WikiText | 不能用生成模式替代 |
 
 `eval_mode` 与 `prompt_format`（chat/base）按配置组合；不同组合得到的分数不能
-混合比较。对话格式层的特殊 Token 由推理服务端按部署模型应用，Benchmark 客户端
-不感知。
+混合比较。其中 ppl 与 loss 模式基于 `echo` 回显的整段 `prompt+continuation`
+Token 序列做按偏移切片打分，对话格式层会注入特殊 Token 并改变 Token 边界，
+因此 ppl / loss 仅允许 `prompt_format=base`，组合 ppl + chat（或 loss + chat）
+会被 `validate_choice_parameters` 校验拒绝。gen 模式不依赖 Token 切片，可自由
+选择 chat 或 base。对话格式层的特殊 Token 由推理服务端按部署模型应用，
+Benchmark 客户端不感知。
 
 ## 9. 结果解释要求
 
@@ -397,7 +408,10 @@ few-shot 数、评测模式、`prompt_format`、解码参数和评分器版本�
 2. `ceval` 端到端（ppl + gen 双路径）；
 3. `cmmlu`、`gsm8k` 端到端；
 4. 数据集离线准备脚本 `inference/scripts/`（prepare_ceval、prepare_cmmlu、
-   prepare_gsm8k）。
+   prepare_gsm8k）；
+5. 随包内置样例数据集 `inference/data/`（ceval/cmmlu/gsm8k 的 jsonl），并由
+   `dataset.resolve_data_path()` 提供 CWD → 包内置的相对路径回退解析，使默认
+   配置从任意工作目录开箱即用。
 
 尚未实现，后续按以下顺序建设：
 
