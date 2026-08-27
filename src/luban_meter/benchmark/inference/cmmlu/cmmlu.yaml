@@ -1,0 +1,29 @@
+# OpenAI-compatible inference service.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 60
+
+# Dataset loading and deterministic sampling. Local json/jsonl files only.
+dataset_path: data/cmmlu/val.jsonl
+split: val
+max_samples: 200
+shuffle: false
+seed: 42
+few_shot_path: data/cmmlu/dev.jsonl
+few_shot: 5
+
+# Evaluation protocol. eval_mode chooses how answers are obtained;
+# prompt_format chooses chat or plain-text transport.
+eval_mode: ppl          # ppl | gen
+prompt_format: base    # base | chat (ppl+chat is not supported)
+prompt_version: cmmlu-v1
+
+# Generation parameters for gen mode. Ignored by ppl mode.
+max_tokens: 8
+stop: ["\n"]
+
+# Client-side safety cap for simultaneous requests.
+max_concurrency: 8
+
+# Fixed decoding semantics. Changing these values is rejected.
+temperature: 0.0

@@ -9,6 +9,7 @@
 - [架构说明](docs/architecture.md)
 - [Benchmark 脚本开发指南](docs/develop-benchmark.md)
 - [生成式推理指标说明](docs/metrics.md)
+- [Inference 评测指标说明](docs/inference.md)
 - [使用说明](docs/usage.md)
 - [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
 
@@ -34,7 +35,18 @@ LuBan-Meter 当前已经具备以下基础能力：
 - `vllm-engine-stage`：调用 vLLM Engine 采集内部阶段时间和吞吐数据。
 
 `benchmark/generate/common/` 当前提供流式响应处理、Token 计数和通用统计能力。
-`inference` 已建立模块入口，具体 Benchmark 将在后续阶段建设。
+
+`inference` 模块已部分落地，面向模型任务效果评测：
+
+- `inference/common/` 提供 OpenAI-compatible 在线服务调用（chat、completions +
+  echo logprobs）、本地数据集确定性加载、Prompt 模板渲染、答案解析和指标计算
+  （Accuracy、Token F1、ROUGE、Pass@k、Perplexity，其中后几类计算能力已具备，
+  数据集评测待接入）等公共能力；
+- 已实现三个 Benchmark：`ceval` 和 `cmmlu`（四选一题目 Accuracy，支持
+  ppl/logprob 打分和 gen 生成抽取两种评测模式）以及 `gsm8k`（生成模式 +
+  数值答案 Exact Match 判分）；
+- 数据集只使用本地 json/jsonl 文件，离线准备脚本位于
+  `benchmark/inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k）。
 
 ### 1.2 计划开发内容
 
@@ -45,9 +57,10 @@ LuBan-Meter 当前已经具备以下基础能力：
 - 增加超时、OOM 和长时间稳定性测试；
 - 完善 Engine forward 阶段测试；
 - 建设跨运行结果的汇总报告；
-- 建设 `inference` 下的模型任务级评测；
-- 首批支持 MMLU、C-Eval 和摘要类任务；
-- 逐步增加 Accuracy、ROUGE、F1、EM、Pass@k 和 Perplexity 等指标；
+- 继续建设 `inference` 下的模型任务级评测（已完成 ceval、cmmlu、gsm8k），
+  补齐 HumanEval、SQuAD、摘要类和语言建模（WikiText）任务；
+- 为新增数据集接入 Token F1、ROUGE、Pass@k 和 Perplexity 等指标的端到端评测；
+- 建设 `inference` 任务的 Suite 编排与跨运行汇总报告；
 - 后续扩展幻觉、事实一致性、安全拒答和 Prompt Injection 等评测。
 
 开始新任务前，应先检查对应能力是否已经存在，并以当前代码和专题文档为准确认实现
@@ -93,6 +106,11 @@ src/luban_meter/
 │   │   ├── serving-online/
 │   │   └── vllm-engine-stage/
 │   └── inference/
+│       ├── common/
+│       ├── scripts/
+│       ├── ceval/
+│       ├── cmmlu/
+│       └── gsm8k/
 ├── core/
 ├── execution/
 ├── result/
@@ -163,6 +181,10 @@ Benchmark 名称使用小写字母、数字、连字符或下划线，并以字�
 
 多个生成式 Benchmark 需要复用的流式解析、Token 计数和统计逻辑放在
 `benchmark/generate/common/`。只服务于单个场景的逻辑保留在对应 Benchmark 目录。
+
+多个 `inference` Benchmark 需要复用的在线服务调用、数据集加载、Prompt 渲染、
+答案解析和指标计算逻辑放在 `benchmark/inference/common/`；数据集离线准备脚本
+放在 `benchmark/inference/scripts/`，Benchmark 运行时只读取本地数据集文件。
 
 完整请求、原始结果和最终结果协议参见
 [Benchmark 脚本开发指南](docs/develop-benchmark.md)。

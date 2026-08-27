@@ -1,0 +1,28 @@
+# OpenAI-compatible inference service.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 60
+
+# Dataset loading and deterministic sampling. Local json/jsonl files only.
+dataset_path: data/gsm8k/test.jsonl
+split: test
+max_samples: 200
+shuffle: false
+seed: 42
+few_shot_path: data/gsm8k/few_shot.jsonl
+few_shot: 8
+
+# Evaluation protocol. GSM8K is generation-only; ppl is rejected.
+eval_mode: gen
+prompt_format: chat     # chat | base
+prompt_version: gsm8k-v1
+
+# Generation parameters.
+max_tokens: 512
+stop: []
+
+# Client-side safety cap for simultaneous requests.
+max_concurrency: 8
+
+# Fixed decoding semantics. Changing these values is rejected.
+temperature: 0.0
