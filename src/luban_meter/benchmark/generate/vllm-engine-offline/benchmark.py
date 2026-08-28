@@ -1,4 +1,4 @@
-"""Measure vLLM engine-stage prefill and decode performance."""
+"""Measure offline vLLM Engine prefill and decode performance."""
 
 from __future__ import annotations
 
@@ -9,9 +9,16 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+ENGINE_SLO_DIMENSIONS = (
+    "internal_ttft_ms",
+    "prefill_latency_ms",
+    "mean_decode_step_latency_ms",
+    "engine_execution_latency_ms",
+)
+
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="vLLM engine-stage benchmark")
+    parser = argparse.ArgumentParser(description="vLLM offline-engine benchmark")
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -98,10 +105,40 @@ def fixed_value(parameters: Mapping[str, Any], name: str, expected: Any) -> Any:
     return value
 
 
+def engine_slo_config(parameters: Mapping[str, Any]) -> dict[str, float] | None:
+    raw = parameters.get("engine_slo")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("engine_slo must be an object")
+
+    unsupported = [name for name in raw if name not in ENGINE_SLO_DIMENSIONS]
+    if unsupported:
+        names = ", ".join(sorted(repr(name) for name in unsupported))
+        raise ValueError(f"engine_slo contains unsupported thresholds: {names}")
+
+    config: dict[str, float] = {}
+    for name in ENGINE_SLO_DIMENSIONS:
+        if name not in raw or raw[name] is None:
+            continue
+        value = raw[name]
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(float(value))
+            or value <= 0
+        ):
+            raise ValueError(f"engine_slo.{name} must be a positive number")
+        config[name] = float(value)
+    if not config:
+        raise ValueError("engine_slo must contain at least one threshold")
+    return config
+
+
 def model_reference(request: Mapping[str, Any]) -> str:
     model = request.get("model_path") or request.get("model_name")
     if not isinstance(model, str) or not model:
-        raise ValueError("vllm-engine-stage requires --model-path or --model-name")
+        raise ValueError("vllm-engine-offline requires --model-path or --model-name")
     return model
 
 
@@ -109,7 +146,7 @@ def build_engine(request: Mapping[str, Any], parameters: Mapping[str, Any]) -> A
     try:
         from vllm import LLM
     except ImportError as exc:
-        raise RuntimeError("vLLM is required for vllm-engine-stage") from exc
+        raise RuntimeError("vLLM is required for vllm-engine-offline") from exc
 
     kwargs: dict[str, Any] = {
         "model": model_reference(request),
@@ -206,6 +243,7 @@ def metric_timestamp(metrics: Any, name: str) -> float:
     if (
         not isinstance(value, (int, float))
         or isinstance(value, bool)
+        or not math.isfinite(float(value))
         or value <= 0
     ):
         raise RuntimeError(f"vLLM RequestOutput.metrics.{name} is unavailable")
@@ -236,7 +274,7 @@ def collect_request_record(output: Any, request_index: int) -> dict[str, Any]:
     first_token_ts = metric_timestamp(metrics, "first_token_ts")
     last_token_ts = metric_timestamp(metrics, "last_token_ts")
     if not scheduled_ts <= first_token_ts <= last_token_ts:
-        raise RuntimeError("vLLM returned an invalid engine-stage timeline")
+        raise RuntimeError("vLLM returned an invalid engine-internal timeline")
     return {
         "request_index": request_index,
         "actual_prompt_tokens": len(prompt_token_ids),
@@ -276,7 +314,7 @@ def run_benchmark(
     try:
         from vllm import SamplingParams
     except ImportError as exc:
-        raise RuntimeError("vLLM is required for vllm-engine-stage") from exc
+        raise RuntimeError("vLLM is required for vllm-engine-offline") from exc
 
     warmup_rounds = non_negative_integer(parameters, "warmup_rounds", 2)
     rounds = positive_integer(parameters, "rounds", 10)
@@ -299,6 +337,7 @@ def run_benchmark(
     fixed_value(parameters, "temperature", 0.0)
     fixed_value(parameters, "ignore_eos", True)
     fixed_value(parameters, "seed", 0)
+    engine_slo = engine_slo_config(parameters)
 
     engine = build_engine(request, parameters)
     max_model_len = engine_max_model_len(engine)
@@ -371,22 +410,26 @@ def run_benchmark(
                     }
                 )
 
+    metadata: dict[str, Any] = {
+        "measurement": "vllm_engine_offline",
+        "engine": "vllm",
+        "model": model_reference(request),
+        "max_model_len": max_model_len,
+        "warmup_rounds_per_case": warmup_rounds,
+        "formal_rounds_per_case": rounds,
+        "prefix_caching": False,
+        "chunked_prefill": False,
+        "detokenize": False,
+    }
+    if engine_slo is not None:
+        metadata["engine_slo_config"] = engine_slo
+
     return {
         "schema_version": "luban-meter.raw/v1",
         "status": "success",
         "environment": {"kv_cache": kv_cache_environment(engine)},
         "metrics": {"cases": cases},
-        "metadata": {
-            "measurement": "vllm_engine_stage",
-            "engine": "vllm",
-            "model": model_reference(request),
-            "max_model_len": max_model_len,
-            "warmup_rounds_per_case": warmup_rounds,
-            "formal_rounds_per_case": rounds,
-            "prefix_caching": False,
-            "chunked_prefill": False,
-            "detokenize": False,
-        },
+        "metadata": metadata,
         "artifacts": {},
     }
 
@@ -397,7 +440,7 @@ def failure_result(error: Exception) -> dict[str, Any]:
         "status": "failed",
         "metrics": {},
         "metadata": {
-            "measurement": "vllm_engine_stage",
+            "measurement": "vllm_engine_offline",
             "engine": "vllm",
         },
         "artifacts": {},

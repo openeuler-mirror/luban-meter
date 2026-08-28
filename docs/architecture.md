@@ -75,10 +75,10 @@ src/luban_meter/
 │   │   │   ├── benchmark.py
 │   │   │   ├── result.py
 │   │   │   └── serving_online.yaml
-│   │   └── vllm-engine-stage/
+│   │   └── vllm-engine-offline/
 │   │       ├── benchmark.py
 │   │       ├── result.py
-│   │       └── vllm_engine_stage.yaml
+│   │       └── vllm_engine_offline.yaml
 │   └── inference/
 │       ├── common/
 │       ├── scripts/
@@ -119,13 +119,13 @@ benchmark/<module>/<benchmark>/
 `benchmark.py` 与 `result.py` 同时存在。列表命令直接返回 Benchmark 名称：
 
 ```text
-generate    serving-online,vllm-engine-stage
+generate    serving-online,vllm-engine-offline
 inference   ceval,cmmlu,gsm8k
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
 同语义配置，以保证比较边界一致；只有引擎专属能力才在名称中体现，例如
-`vllm-engine-stage`。
+`vllm-engine-offline`。
 
 ## 5. Generate 与 Inference 的边界
 
@@ -221,10 +221,10 @@ tasks:
     benchmark: serving-online
     config: configs/serving-online.yaml
 
-  - name: vllm-engine-stage
+  - name: vllm-engine-offline
     module: generate
-    benchmark: vllm-engine-stage
-    config: configs/vllm-engine-stage.yaml
+    benchmark: vllm-engine-offline
+    config: configs/vllm-engine-offline.yaml
 ```
 
 Suite 只编排任务，不改变运行环境，也不在任务间比较指标。
