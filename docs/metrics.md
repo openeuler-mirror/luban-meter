@@ -748,6 +748,8 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 - `serving-online` 的精确输入/输出长度、固定请求速率、Request View 与客户端
   推导的 Service View；
 - `vllm-engine-offline` 的 Engine Request/Batch Metrics；
+- `vllm-metrics` 的 vLLM 服务端 /metrics 指标采集与聚合，包括 KV Cache 使用率、
+  请求排队数、TTFT/TPOT/E2EL 延迟分解、Prefix Cache 命中率及瓶颈推断；
 - 通用 Mean、P50、P90、P99、Min、Max 和 Stddev；
 - Engine KV Cache 容量环境信息；
 - SLO 配置与熔断机制（Case 级 P99 E2EL 超阈值时跳过后续 Case）；
@@ -755,7 +757,6 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 
 当前尚未实现或不应从现有字段推断：
 
-- vLLM 服务端 Queue Time、Scheduler Time 和 KV Cache 实际使用率；
 - GPU 利用率、显存峰值、功耗和温度；
 - Prefill/Decode GPU Kernel 级时间；
 - 每个 Engine Decode Step 的独立延迟分布；
@@ -763,6 +764,5 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 - ROUGE、准确率等生成质量指标；
 - MFU。
 
-这些能力需要服务端 `/metrics`、设备监控或 profiler 等额外 Collector。新增后应
-放在独立的 `service_internal`、`device` 或 `quality` 结果分组中，不能用客户端
-推导值冒充服务端内部测量值。
+这些能力需要设备监控或 profiler 等额外 Collector。新增后应放在独立的
+`device` 或 `quality` 结果分组中，不能用客户端推导值冒充服务端内部测量值。

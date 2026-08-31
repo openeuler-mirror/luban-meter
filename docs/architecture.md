@@ -71,14 +71,20 @@ src/luban_meter/
 ├── benchmark/
 │   ├── generate/
 │   │   ├── common/
+│   │   │   ├── prometheus.py
+│   │   │   └── statistics.py
 │   │   ├── serving-online/
 │   │   │   ├── benchmark.py
 │   │   │   ├── result.py
 │   │   │   └── serving_online.yaml
-│   │   └── vllm-engine-offline/
+│   │   ├── vllm-engine-offline/
+│   │   │   ├── benchmark.py
+│   │   │   ├── result.py
+│   │   │   └── vllm_engine_offline.yaml
+│   │   └── vllm_metrics/
 │   │       ├── benchmark.py
 │   │       ├── result.py
-│   │       └── vllm_engine_offline.yaml
+│   │       └── vllm_metrics.yaml
 │   └── inference/
 │       ├── common/
 │       ├── scripts/
@@ -119,7 +125,7 @@ benchmark/<module>/<benchmark>/
 `benchmark.py` 与 `result.py` 同时存在。列表命令直接返回 Benchmark 名称：
 
 ```text
-generate    serving-online,vllm-engine-offline
+generate    serving-online,vllm-engine-offline,vllm-metrics
 inference   ceval,cmmlu,gsm8k
 ```
 

@@ -18,7 +18,7 @@ luban-meter benchmarks list
 当前模块：
 
 ```text
-generate    serving-online,vllm-engine-offline  Large-model generation benchmarks
+generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
 inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
 ```
 
@@ -110,7 +110,35 @@ CUDA_VISIBLE_DEVICES=0 luban-meter run \
 客户端排队，不能与 `serving-online` 的服务 Goodput 直接比较。字段定义和计算公式
 见 [生成式推理指标说明](metrics.md#55-engine-内部-slo-与-goodput)。
 
-## 6. Suite
+## 6. vLLM 服务端指标采集
+
+对正在运行的 vLLM 推理服务，通过 `/metrics` 端点采集 Prometheus 格式指标，
+用于瓶颈定位与服务容量评估：
+
+```bash
+luban-meter run \
+  --module generate \
+  --benchmark vllm-metrics \
+  --config src/luban_meter/benchmark/generate/vllm_metrics/vllm_metrics.yaml \
+  --model-name <served-model-name>
+```
+
+配置参数：
+
+```yaml
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 10.0
+collect_interval: 1.0
+collect_duration: 60.0
+```
+
+- `collect_interval`：每次 HTTP 请求 `/metrics` 的间隔（秒）
+- `collect_duration`：总采集时长（秒），到达后停止采集并聚合
+
+该 Benchmark 不发起推理请求，只读取服务端已有指标，适合接入已运行的 vLLM 服务。
+
+## 7. Suite
 
 Suite YAML 位于：
 
@@ -161,7 +189,7 @@ Suite 参数：
 | `--timeout` | 否 | 单任务默认超时 |
 | `--fail-fast` | 否 | 首个失败后停止调度 |
 
-## 7. 结果目录
+## 8. 结果目录
 
 单任务：
 
@@ -188,7 +216,7 @@ runs/<suite-id>/
 运行请求和最终结果不包含硬件厂商路由字段。硬件、驱动和引擎版本等事实后续统一
 写入 `environment`。
 
-## 8. 常见问题
+## 9. 常见问题
 
 ### Benchmark 不存在
 
@@ -209,7 +237,7 @@ benchmark/<module>/<benchmark>/result.py
 依次检查 `result.json.error`、`raw/stderr.log`、`raw/stdout.log` 和
 `raw/raw_result.json`。
 
-## 9. 开发验证
+## 10. 开发验证
 
 ```bash
 ruff check src tests
@@ -217,7 +245,7 @@ pytest -q
 python -m luban_meter benchmarks list
 ```
 
-## 10. inference 模型任务效果测试
+## 11. inference 模型任务效果测试
 
 `inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
 `cmmlu`、`gsm8k` 的样例数据集，位于
