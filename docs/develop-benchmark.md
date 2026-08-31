@@ -247,6 +247,11 @@ tasks:
     module: generate
     benchmark: vllm-engine-offline
     config: configs/vllm-engine-offline.yaml
+
+  - name: metrics
+    module: generate
+    benchmark: vllm-metrics
+    config: configs/vllm-metrics.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
