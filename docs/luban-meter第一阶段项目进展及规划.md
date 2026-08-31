@@ -25,7 +25,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | 支持单任务执行 | 已完成 | 通过 `module + benchmark + config` 定位并执行测试 |
 | 支持多任务编排 | 已完成 | Suite 顺序执行多个任务，每个任务独立输出结果 |
 | 在线服务生成性能测试 | 已完成 | 实现 `serving-online` 开放式固定 Request Rate 负载测试 |
-| vLLM Engine 阶段测试 | 已完成 | 实现 `vllm-engine-stage` Prefill、Decode 和内部 TTFT 测试 |
+| vLLM 离线引擎测试 | 已完成 | 实现 `vllm-engine-offline` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
 | 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）和 gsm8k（Exact Match），指标计算层已具备 F1、ROUGE、Pass@k、Perplexity 能力，其余数据集待接入 |
@@ -98,7 +98,7 @@ input_lengths × output_lengths × request_rates
 - 可靠性：成功请求数、失败请求数；
 - 统计结果：Mean、Median、P50、P90、P99、Min、Max、Stddev、Count。
 
-### 4.2 Engine 阶段 Benchmark：`vllm-engine-stage`
+### 4.2 离线 Engine Benchmark：`vllm-engine-offline`
 
 Engine 测试直接调用 vLLM Engine，不包含 HTTP 和网络，重点观察请求被引擎调度后
 的 Prefill、Decode 和 Token 处理能力，回答“引擎内部各阶段耗时如何”。
@@ -124,7 +124,7 @@ input_lengths × output_lengths × request_batch_sizes
 
 ### 4.3 两类测试的边界
 
-| 测试视角 | 在线服务 | Engine 阶段 |
+| 测试视角 | 在线服务 | 离线 Engine |
 |---|---|---|
 | 观察位置 | API 客户端 | vLLM Engine 内部时间戳 |
 | HTTP/网络 | 包含 | 不包含 |
@@ -188,7 +188,7 @@ result.py → result.json` 执行链路和结果协议，指标按
 | 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 未实现 | 模型生成质量 |
 | 生成推理性能 | TTFT、ITL、TPOT、E2EL、Prefill/Decode | 已实现 | 覆盖在线客户端和 vLLM推理引擎两个观察边界 |
 | 服务能力 | request/s、token/s、负载速率、并发 | 已实现 | 支持精确输入/输出长度和固定 Request Rate 矩阵 |
-| Goodput | 满足 SLO 的有效吞吐 | 已实现 | 支持可配置 TTFT、TPOT、E2EL SLO 判定（设置高质量门槛） |
+| Goodput | 满足 SLO 的有效吞吐 | 已实现 | 在线支持 TTFT、TPOT、E2EL SLO；离线 Engine 支持独立内部阈值和 Engine Goodput |
 | 缓存指标 | KV 容量、使用率、命中率、Eviction | 部分实现 | 当前只有 vllm推理引擎启动的参数设置KV Cache 静态容量信息 |
 | 设备资源 | GPU利用率、显存、带宽、功耗、能耗 | 未实现 | 需要独立 Device Collector |
 | 服务内部 | Queue Time、Scheduler Time、KV实际使用率 | 未实现 | 需要接入 vLLM `/metrics` 等服务端数据源，调用服务端接口采取数据 |
@@ -225,7 +225,7 @@ result.py → result.json` 执行链路和结果协议，指标按
 - 单任务与 Suite 共用 CoreEngine 的执行机制；
 - Benchmark 自动发现和标准目录协议；
 - `raw_result.json` 与 `result.json` 两阶段结果协议；
-- 通用在线服务测试和 vLLM Engine 阶段测试；
+- 通用在线服务测试和 vLLM 离线引擎测试；
 - `inference` 模块首批模型任务效果评测（ceval、cmmlu、gsm8k）与公共评测层、
   数据集离线准备脚本；
 - 精确输入/输出 Token 长度与开放式固定 Request Rate 负载矩阵；

@@ -33,7 +33,7 @@ src/luban_meter/
 │   ├── generate/                 # 生成式推理性能评测
 │   │   ├── common/
 │   │   ├── serving-online/
-│   │   └── vllm-engine-stage/
+│   │   └── vllm-engine-offline/
 │   └── inference/                # 基于在线推理服务的模型效果评测
 │       ├── common/               # 公共层：client / dataset / prompts / parsers / metrics / choice
 │       ├── scripts/              # 数据集离线准备脚本（官方格式 → 本地 jsonl）
@@ -83,9 +83,10 @@ benchmark/<module>/<benchmark>/
 输出长度和固定请求速率矩阵，输出 TTFT、ITL、TPOT、E2EL、吞吐量、调度偏差、
 并发和成功/失败请求统计。
 
-`generate/vllm-engine-stage` 直接调用 vLLM Engine，遍历输入长度、输出长度和请求
+`generate/vllm-engine-offline` 直接调用 vLLM Engine 进行离线推理，遍历输入长度、输出长度和请求
 批量矩阵，输出内部 TTFT、Prefill/Decode 时延与吞吐量、Engine Execution Latency，
-并记录 KV Cache 静态容量环境。
+并记录 KV Cache 静态容量环境；可选的 `engine_slo` 根据 Engine 内部时间线计算
+与在线服务边界分离的 Engine Goodput。
 
 `inference` 通过在线推理服务评测模型任务效果，已端到端实现 `ceval`、`cmmlu`（选择题
 Accuracy，支持 ppl / gen 两种评测模式）和 `gsm8k`（数学题 Exact Match，gen 模式）。
@@ -111,13 +112,13 @@ luban-meter run \
   --model-name <served-model-name>
 ```
 
-运行 vLLM Engine 阶段测试：
+运行 vLLM 离线引擎测试：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 luban-meter run \
   --module generate \
-  --benchmark vllm-engine-stage \
-  --config src/luban_meter/benchmark/generate/vllm-engine-stage/vllm_engine_stage.yaml \
+  --benchmark vllm-engine-offline \
+  --config src/luban_meter/benchmark/generate/vllm-engine-offline/vllm_engine_offline.yaml \
   --model-path /data/models/<model>
 ```
 

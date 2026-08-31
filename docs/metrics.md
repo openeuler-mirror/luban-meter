@@ -3,7 +3,7 @@
 本文定义 LuBan-Meter 生成式推理 Benchmark 的指标语义，覆盖：
 
 - 在线服务测试：从客户端和整个服务测试窗口观察性能；
-- Engine 阶段测试：直接读取推理引擎内部时间戳，观察 Prefill、Decode 和
+- 离线引擎测试：直接读取推理引擎内部时间戳，观察 Prefill、Decode 和
   Engine 执行性能。
 
 指标必须与测试视角、计时边界、负载参数和单位一起解释。名称相似但视角不同
@@ -34,7 +34,7 @@ LuBan-Meter 按“测试场景和采集边界”组织 Benchmark，不按最终�
 | 测试 | 当前 Benchmark | 观察位置 | 包含的主要开销 |
 |---|---|---|---|
 | 在线服务 | `serving-online` | OpenAI-compatible API 客户端 | HTTP、API Server、排队、调度、Prefill、Decode、流式传输 |
-| Engine 阶段 | `vllm-engine-stage` | vLLM Engine 内部 | Engine 排队/调度、Prefill、Decode；不包含 HTTP 和网络 |
+| 离线引擎 | `vllm-engine-offline` | vLLM Engine 内部 | Engine 排队/调度、Prefill、Decode；不包含 HTTP 和网络 |
 
 在线和 Engine 测试的结果用于回答不同问题：
 
@@ -419,7 +419,7 @@ SLO 块省略时：
 - 所有 Case 正常执行；
 - 结果与未引入 SLO 前完全一致。
 
-## 5. Engine 阶段指标
+## 5. 离线 Engine 指标
 
 Engine 测试直接创建 vLLM `LLM`，对输入长度、输出长度和请求 Batch 大小做
 笛卡尔积测试。每个 Case 独立预热，然后执行多个正式 Round。
@@ -582,7 +582,72 @@ aggregate_decode_token_throughput =
 这是 Batch 在 Decode 窗口内的总产出速率，不应与单 Sequence 的 Decode Rate
 混淆。
 
-### 5.5 KV Cache 环境信息
+### 5.5 Engine 内部 SLO 与 Goodput
+
+`vllm-engine-offline` 支持可选的 `engine_slo` 配置，用于判断固定矩阵 Case 中满足
+Engine 内部时延目标的有效处理能力。这里的 SLO 只描述 vLLM Engine 内部边界，
+不包含 HTTP、API Server、网络和客户端排队，不能当作在线服务 SLO。
+
+```yaml
+engine_slo:
+  internal_ttft_ms: 500
+  prefill_latency_ms: 500
+  mean_decode_step_latency_ms: 50
+  engine_execution_latency_ms: 8000
+```
+
+支持的阈值均为请求级最大允许值：
+
+| 字段 | 判定数据 | 适用范围 |
+|---|---|---|
+| `internal_ttft_ms` | `RequestOutput.metrics.first_token_latency` | 全部请求 |
+| `prefill_latency_ms` | `first_token_ts - scheduled_ts` | 全部请求 |
+| `mean_decode_step_latency_ms` | `(last_token_ts - first_token_ts) / (output_tokens - 1)` | `output_length > 1` |
+| `engine_execution_latency_ms` | `last_token_ts - scheduled_ts` | 全部请求 |
+
+请求只有在全部适用阈值均满足时才记为 Engine SLO-satisfied。输出长度为 1 时，
+`mean_decode_step_latency_ms` 标记为不适用；如果它是唯一配置的维度，该 Case 的
+Engine Goodput 状态为 `not_applicable`。
+
+Engine Goodput 的时间分母使用正式 Round 的 Engine 活跃窗口之和：
+
+```text
+round_engine_window = max(last_token_ts) - min(scheduled_ts)
+engine_active_duration = sum(round_engine_window)
+
+engine_goodput_request_throughput =
+    engine_slo_satisfied_count / engine_active_duration
+
+engine_goodput_output_token_throughput =
+    sum(satisfied output_tokens) / engine_active_duration
+```
+
+按 Round 求和可以排除两次同步 `LLM.generate()` 调用之间的 Python 间隔，并避免
+把不同 Round 的绝对时间戳跨度误当成 Engine 执行时间。该时间边界仍不同于在线
+Benchmark 使用的完整 Case 持续时间。
+
+结果输出在 `metrics.cases[].engine_goodput`：
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `measurement_boundary` | 固定为 `vllm_engine_internal` | — |
+| `duration_basis` | 固定为 `sum_of_formal_round_engine_windows` | — |
+| `engine_slo_config` | Engine 内部阈值 | — |
+| `applicable_dimensions` | 当前 Case 参与判定的维度 | — |
+| `not_applicable_dimensions` | 当前 Case 不适用的维度 | — |
+| `engine_active_duration` | 正式 Round Engine 活跃窗口总和 | `s` |
+| `evaluated_request_count` | 参与判定的请求数 | `request` |
+| `engine_slo_satisfied_count` | 满足全部适用阈值的请求数 | `request` |
+| `engine_slo_violated_count` | 至少违反一个阈值的请求数 | `request` |
+| `engine_slo_satisfied_rate` | 满足率 | `ratio` |
+| `engine_goodput_request_throughput` | 满足阈值的请求吞吐 | `req/s` |
+| `engine_goodput_output_token_throughput` | 满足阈值请求的输出 Token 吞吐 | `token/s` |
+
+省略 `engine_slo` 时，原始结果中不写入 `metadata.engine_slo_config`，最终 Case
+中也不出现 `engine_goodput`，保持与旧配置兼容。本功能不包含 P99 全局熔断；一个
+矩阵 Case 未达目标不会跳过其他输入长度、输出长度或 Batch Size。
+
+### 5.6 KV Cache 环境信息
 
 Engine 报告同时保存以下运行环境信息：
 
@@ -682,7 +747,7 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 
 - `serving-online` 的精确输入/输出长度、固定请求速率、Request View 与客户端
   推导的 Service View；
-- `vllm-engine-stage` 的 Engine Request/Batch Metrics；
+- `vllm-engine-offline` 的 Engine Request/Batch Metrics；
 - 通用 Mean、P50、P90、P99、Min、Max 和 Stddev；
 - Engine KV Cache 容量环境信息；
 - SLO 配置与熔断机制（Case 级 P99 E2EL 超阈值时跳过后续 Case）；

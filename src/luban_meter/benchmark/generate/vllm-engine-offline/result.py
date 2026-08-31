@@ -1,13 +1,23 @@
-"""Calculate vLLM engine-stage metrics from request timelines."""
+"""Calculate offline vLLM Engine metrics from request timelines."""
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from luban_meter.benchmark.generate.common.statistics import (
+    scalar,
     summarize,
 )
+
+ENGINE_SLO_DIMENSIONS = (
+    "internal_ttft_ms",
+    "prefill_latency_ms",
+    "mean_decode_step_latency_ms",
+    "engine_execution_latency_ms",
+)
+DECODE_SLO_DIMENSION = "mean_decode_step_latency_ms"
 
 
 def object_list(value: Any, name: str) -> list[Mapping[str, Any]]:
@@ -32,10 +42,133 @@ def positive_number(record: Mapping[str, Any], name: str) -> float:
     if (
         not isinstance(value, (int, float))
         or isinstance(value, bool)
+        or not math.isfinite(float(value))
         or value <= 0
     ):
         raise ValueError(f"{name} must be a positive number")
     return float(value)
+
+
+def validate_engine_slo_config(value: Any) -> dict[str, float]:
+    if not isinstance(value, Mapping):
+        raise TypeError("raw metadata.engine_slo_config must be an object")
+
+    unsupported = [name for name in value if name not in ENGINE_SLO_DIMENSIONS]
+    if unsupported:
+        names = ", ".join(sorted(repr(name) for name in unsupported))
+        raise ValueError(
+            f"raw metadata.engine_slo_config contains unsupported thresholds: {names}"
+        )
+
+    config = {
+        name: positive_number(value, name)
+        for name in ENGINE_SLO_DIMENSIONS
+        if name in value
+    }
+    if not config:
+        raise ValueError(
+            "raw metadata.engine_slo_config must contain at least one threshold"
+        )
+    return config
+
+
+def compute_engine_goodput(
+    *,
+    observations: list[Mapping[str, Any]],
+    engine_active_duration_seconds: float,
+    engine_slo_config: Mapping[str, float],
+) -> dict[str, Any]:
+    if not observations:
+        raise ValueError("engine Goodput requires request observations")
+    if (
+        not math.isfinite(engine_active_duration_seconds)
+        or engine_active_duration_seconds <= 0
+    ):
+        raise ValueError("engine Goodput duration must be positive")
+
+    decode_applicable = any(
+        observation.get(DECODE_SLO_DIMENSION) is not None
+        for observation in observations
+    )
+    applicable_dimensions = [
+        name
+        for name in ENGINE_SLO_DIMENSIONS
+        if name in engine_slo_config
+        and (name != DECODE_SLO_DIMENSION or decode_applicable)
+    ]
+    not_applicable_dimensions = (
+        [DECODE_SLO_DIMENSION]
+        if DECODE_SLO_DIMENSION in engine_slo_config and not decode_applicable
+        else []
+    )
+
+    common = {
+        "measurement_boundary": "vllm_engine_internal",
+        "duration_basis": "sum_of_formal_round_engine_windows",
+        "engine_slo_config": {
+            name: engine_slo_config[name]
+            for name in ENGINE_SLO_DIMENSIONS
+            if name in engine_slo_config
+        },
+        "applicable_dimensions": applicable_dimensions,
+        "not_applicable_dimensions": not_applicable_dimensions,
+        "engine_active_duration": scalar(
+            engine_active_duration_seconds, "s", precision=6
+        ),
+    }
+    if not applicable_dimensions:
+        return {
+            "status": "not_applicable",
+            "reason": "mean_decode_step_latency_ms is the only configured "
+            "dimension and output_length == 1",
+            **common,
+        }
+
+    satisfied: list[Mapping[str, Any]] = []
+    violated: list[Mapping[str, Any]] = []
+    for observation in observations:
+        request_violated = False
+        for name in applicable_dimensions:
+            value = observation.get(name)
+            if value is None and name == DECODE_SLO_DIMENSION:
+                continue
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or value <= 0
+            ):
+                raise ValueError(f"engine Goodput observation {name} must be positive")
+            if float(value) > engine_slo_config[name]:
+                request_violated = True
+                break
+        if request_violated:
+            violated.append(observation)
+        else:
+            satisfied.append(observation)
+
+    satisfied_count = len(satisfied)
+    violated_count = len(violated)
+    evaluated_count = satisfied_count + violated_count
+    satisfied_output_tokens = sum(
+        positive_integer(observation, "output_tokens") for observation in satisfied
+    )
+    return {
+        "status": "applicable",
+        **common,
+        "evaluated_request_count": scalar(evaluated_count, "request"),
+        "engine_slo_satisfied_count": scalar(satisfied_count, "request"),
+        "engine_slo_violated_count": scalar(violated_count, "request"),
+        "engine_slo_satisfied_rate": scalar(
+            satisfied_count / evaluated_count, "ratio", precision=4
+        ),
+        "engine_goodput_request_throughput": scalar(
+            satisfied_count / engine_active_duration_seconds, "req/s"
+        ),
+        "engine_goodput_output_token_throughput": scalar(
+            satisfied_output_tokens / engine_active_duration_seconds, "token/s"
+        ),
+    }
 
 
 def validate_environment(raw_result: Mapping[str, Any]) -> dict[str, Any]:
@@ -59,7 +192,10 @@ def validate_environment(raw_result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
+def process_case(
+    raw_case: Mapping[str, Any],
+    engine_slo_config: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     input_length = positive_integer(raw_case, "input_length")
     output_length = positive_integer(raw_case, "output_length")
     request_batch_size = positive_integer(raw_case, "request_batch_size")
@@ -76,6 +212,8 @@ def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
     engine_execution_latency: list[float] = []
     aggregate_prefill_rate: list[float] = []
     aggregate_decode_rate: list[float] = []
+    goodput_observations: list[dict[str, Any]] = []
+    engine_active_duration_seconds = 0.0
 
     for raw_round in rounds:
         requests = object_list(raw_round.get("requests"), "round requests")
@@ -120,6 +258,7 @@ def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
             prefill_rate.append(prompt_tokens / prefill_seconds)
             engine_execution_latency.append(execution_seconds * 1000)
 
+            mean_decode_step_ms: float | None = None
             if output_tokens > 1:
                 decode_seconds = last_token_ts - first_token_ts
                 if decode_seconds <= 0:
@@ -128,18 +267,32 @@ def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
                     )
                 follow_on_tokens = output_tokens - 1
                 decode_latency.append(decode_seconds * 1000)
-                mean_decode_step_latency.append(
-                    decode_seconds * 1000 / follow_on_tokens
-                )
+                mean_decode_step_ms = decode_seconds * 1000 / follow_on_tokens
+                mean_decode_step_latency.append(mean_decode_step_ms)
                 per_sequence_decode_rate.append(
                     follow_on_tokens / decode_seconds
                 )
                 round_decode_tokens += follow_on_tokens
 
+            goodput_observations.append(
+                {
+                    "output_tokens": output_tokens,
+                    "internal_ttft_ms": ttft_seconds * 1000,
+                    "prefill_latency_ms": prefill_seconds * 1000,
+                    "mean_decode_step_latency_ms": mean_decode_step_ms,
+                    "engine_execution_latency_ms": execution_seconds * 1000,
+                }
+            )
+
             round_prompt_tokens += prompt_tokens
             scheduled_times.append(scheduled_ts)
             first_token_times.append(first_token_ts)
             last_token_times.append(last_token_ts)
+
+        engine_window = max(last_token_times) - min(scheduled_times)
+        if engine_window <= 0:
+            raise ValueError("formal round engine window must be positive")
+        engine_active_duration_seconds += engine_window
 
         if output_length == 1:
             prefill_window = max(first_token_times) - min(scheduled_times)
@@ -155,7 +308,7 @@ def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
     expected_samples = len(rounds) * request_batch_size
     if len(internal_ttft) != expected_samples:
         raise ValueError("case request sample count is inconsistent")
-    return {
+    case_result = {
         "input_length": input_length,
         "output_length": output_length,
         "request_batch_size": request_batch_size,
@@ -183,6 +336,13 @@ def process_case(raw_case: Mapping[str, Any]) -> dict[str, Any]:
             ),
         },
     }
+    if engine_slo_config is not None:
+        case_result["engine_goodput"] = compute_engine_goodput(
+            observations=goodput_observations,
+            engine_active_duration_seconds=engine_active_duration_seconds,
+            engine_slo_config=engine_slo_config,
+        )
+    return case_result
 
 
 def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
@@ -194,8 +354,17 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("raw cases must not be empty")
 
     metadata = raw_result.get("metadata")
+    engine_slo_config: Mapping[str, float] | None = None
+    if isinstance(metadata, Mapping) and "engine_slo_config" in metadata:
+        engine_slo_config = validate_engine_slo_config(
+            metadata["engine_slo_config"]
+        )
     return {
         "environment": validate_environment(raw_result),
-        "metrics": {"cases": [process_case(case) for case in raw_cases]},
+        "metrics": {
+            "cases": [
+                process_case(case, engine_slo_config) for case in raw_cases
+            ]
+        },
         "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
     }

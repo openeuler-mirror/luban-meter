@@ -33,7 +33,7 @@ module + benchmark
 1. **按测试场景组织脚本**：一次采集可复用的原始事实，再计算多个指标；
 2. **统一脚本复用于不同硬件**：不得按硬件品牌复制同语义实现；
 3. **差异通过配置表达**：服务地址、模型名、并行度和引擎参数写入配置；
-4. **引擎专属能力显式命名**：例如 `vllm-engine-stage`；
+4. **引擎专属能力显式命名**：例如 `vllm-engine-offline`；
 5. **采集与计算分离**：硬件或服务调用位于 `benchmark.py`，纯数据处理位于
    `result.py`；
 6. **结果可审计**：保留原始记录、参数、日志、失败原因和统计边界。
@@ -56,7 +56,7 @@ luban-meter benchmarks list
 输出示例：
 
 ```text
-generate    serving-online,vllm-engine-stage    Large-model generation benchmarks
+generate    serving-online,vllm-engine-offline  Large-model generation benchmarks
 inference   ceval,cmmlu,gsm8k                  Online-service model evaluation benchmarks
 ```
 
@@ -245,8 +245,8 @@ tasks:
 
   - name: engine
     module: generate
-    benchmark: vllm-engine-stage
-    config: configs/vllm-engine-stage.yaml
+    benchmark: vllm-engine-offline
+    config: configs/vllm-engine-offline.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过

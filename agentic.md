@@ -26,13 +26,15 @@ LuBan-Meter 当前已经具备以下基础能力：
 - 将一次运行划分为原始数据采集和指标处理两个阶段；
 - 输出 `raw_result.json`、`result.json` 和 Suite 汇总结果；
 - 保存运行身份、参数、指标、环境、产物和错误信息。
-- 可配置 SLO（TTFT、TPOT、E2EL）与 Goodput 有效吞吐量计算；
+- 可配置在线 SLO（TTFT、TPOT、E2EL）与服务 Goodput 有效吞吐量计算；
+- 可配置 Engine 内部 SLO 与独立的 Engine Goodput 计算；
 - P99 熔断机制，Case 超阈值时自动跳过后续 Case。
 
 当前已经实现两个 `generate` Benchmark：
 
 - `serving-online`：通过 OpenAI-compatible HTTP 流式接口测试在线生成服务；
-- `vllm-engine-stage`：调用 vLLM Engine 采集内部阶段时间和吞吐数据。
+- `vllm-engine-offline`：调用 vLLM Engine 执行离线推理并采集内部阶段时间和吞吐数据，可按
+  Engine 内部 SLO 判定 Engine Goodput。
 
 `benchmark/generate/common/` 当前提供流式响应处理、Token 计数和通用统计能力。
 
@@ -104,7 +106,7 @@ src/luban_meter/
 │   ├── generate/
 │   │   ├── common/
 │   │   ├── serving-online/
-│   │   └── vllm-engine-stage/
+│   │   └── vllm-engine-offline/
 │   └── inference/
 │       ├── common/
 │       ├── scripts/

@@ -1,4 +1,4 @@
-# Each matrix cell is warmed up independently before formal collection.
+# Each offline matrix cell is warmed up independently before formal collection.
 warmup_rounds: 2
 rounds: 10
 
@@ -14,6 +14,19 @@ seed_prompt: "Please summarize the benefits of open source software."
 temperature: 0.0
 ignore_eos: true
 seed: 0
+
+# Optional vLLM Engine-internal SLO thresholds for Engine Goodput.
+#
+# These thresholds use RequestOutput.metrics timestamps and do not include
+# HTTP, API-server, network, or client-side queueing time. A request contributes
+# to Engine Goodput only when every applicable configured threshold is met.
+# mean_decode_step_latency_ms is not applicable when output_length == 1.
+#
+# engine_slo:
+#   internal_ttft_ms: 500
+#   prefill_latency_ms: 500
+#   mean_decode_step_latency_ms: 50
+#   engine_execution_latency_ms: 8000
 
 # vLLM engine options.
 tensor_parallel_size: 1

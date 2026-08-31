@@ -18,7 +18,7 @@ luban-meter benchmarks list
 当前模块：
 
 ```text
-generate    serving-online,vllm-engine-stage    Large-model generation benchmarks
+generate    serving-online,vllm-engine-offline  Large-model generation benchmarks
 inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
 ```
 
@@ -90,20 +90,25 @@ seed: 0
 `/tokenize` 构造精确长度输入，通过 `min_tokens = max_tokens` 固定输出长度，并以
 开放式固定 Request Rate 调度请求。
 
-## 5. vLLM Engine 阶段测试
+## 5. vLLM 离线引擎测试
 
 进入已安装 vLLM 的 Python 环境后执行：
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 luban-meter run \
   --module generate \
-  --benchmark vllm-engine-stage \
-  --config src/luban_meter/benchmark/generate/vllm-engine-stage/vllm_engine_stage.yaml \
+  --benchmark vllm-engine-offline \
+  --config src/luban_meter/benchmark/generate/vllm-engine-offline/vllm_engine_offline.yaml \
   --model-path /data/models/<model>
 ```
 
 该 Benchmark 直接调用 vLLM Engine，因此属于带引擎约束的实现；它不代表某个
 硬件厂商，能否运行由当前环境是否支持 vLLM 决定。
+
+如需判定满足 Engine 内部时延目标的有效吞吐，可在配置中增加 `engine_slo`。该
+结果只覆盖 vLLM Engine 内部调度至 Token 生成的时间窗口，不包含 HTTP、网络和
+客户端排队，不能与 `serving-online` 的服务 Goodput 直接比较。字段定义和计算公式
+见 [生成式推理指标说明](metrics.md#55-engine-内部-slo-与-goodput)。
 
 ## 6. Suite
 
@@ -124,10 +129,10 @@ tasks:
     config: configs/serving-online.yaml
     timeout: 1800
 
-  - name: engine-stage
+  - name: engine-offline
     module: generate
-    benchmark: vllm-engine-stage
-    config: configs/vllm-engine-stage.yaml
+    benchmark: vllm-engine-offline
+    config: configs/vllm-engine-offline.yaml
 ```
 
 相对 `config` 路径以 Suite YAML 所在目录为基准。运行命令：
