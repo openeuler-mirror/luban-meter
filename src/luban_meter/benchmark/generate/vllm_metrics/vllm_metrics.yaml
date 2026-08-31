@@ -1,0 +1,10 @@
+# vLLM Prometheus /metrics scraper configuration.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 10.0
+
+# Collect interval (seconds) between consecutive /metrics scrapes.
+collect_interval: 1.0
+
+# Total duration (seconds) to collect metrics.
+collect_duration: 60.0
