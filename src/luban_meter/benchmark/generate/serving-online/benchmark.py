@@ -15,6 +15,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from luban_meter.benchmark.generate.common.device_monitor import (
+    print_hardware_info,
+)
 from luban_meter.benchmark.generate.common.statistics import percentile
 from luban_meter.benchmark.generate.common.streaming import (
     collect_completion_stream,
@@ -469,6 +472,7 @@ def run_case(
 def run_benchmark(
     request: dict[str, Any], parameters: dict[str, Any]
 ) -> dict[str, Any]:
+    print_hardware_info()
     service_url = string_value(
         parameters, "service_url", "http://127.0.0.1:8000"
     ).rstrip("/")

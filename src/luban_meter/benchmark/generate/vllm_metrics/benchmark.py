@@ -12,6 +12,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from luban_meter.benchmark.generate.common.device_monitor import (
+    print_hardware_info,
+)
 from luban_meter.benchmark.generate.common.prometheus import (
     parse_prometheus_text,
 )
@@ -108,6 +111,7 @@ def scrape_metrics(
 def run_benchmark(
     request: dict[str, Any], parameters: dict[str, Any]
 ) -> dict[str, Any]:
+    print_hardware_info()
     service_url = string_value(
         parameters, "service_url", "http://127.0.0.1:8000"
     ).rstrip("/")
