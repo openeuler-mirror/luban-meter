@@ -1,0 +1,9 @@
+# Device monitoring configuration.
+# Collects GPU/NPU utilization, memory, power, and temperature
+# from available hardware monitoring tools.
+
+# Collect interval (seconds) between consecutive samples.
+collect_interval: 1.0
+
+# Total duration (seconds) to collect device metrics.
+collect_duration: 60.0

@@ -757,7 +757,6 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 
 当前尚未实现或不应从现有字段推断：
 
-- GPU 利用率、显存峰值、功耗和温度；
 - Prefill/Decode GPU Kernel 级时间；
 - 每个 Engine Decode Step 的独立延迟分布；
 - 跨节点网络和通信指标；

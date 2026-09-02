@@ -18,7 +18,7 @@ luban-meter benchmarks list
 当前模块：
 
 ```text
-generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
+generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor  Large-model generation benchmarks
 inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
 ```
 
@@ -55,6 +55,15 @@ luban-meter run \
 ```text
 src/luban_meter/benchmark/<module>/<benchmark>/benchmark.py
 src/luban_meter/benchmark/<module>/<benchmark>/result.py
+```
+
+所有 generate 模块的 Benchmark 在执行前会自动检测硬件并输出摘要信息，例如：
+
+```text
+[Device Monitor] Detected 8 x 910B2 (ascend) via npu-smi
+  [ascend] Device 0: 910B2
+  [ascend] Device 1: 910B2
+  ...
 ```
 
 ## 4. 在线生成服务测试
@@ -138,7 +147,46 @@ collect_duration: 60.0
 
 该 Benchmark 不发起推理请求，只读取服务端已有指标，适合接入已运行的 vLLM 服务。
 
-## 7. Suite
+## 7. 设备监控
+
+对当前主机的 GPU/NPU 设备进行周期性采样，采集利用率、显存占用、功耗和温度。
+设备检测与监控采集的核心逻辑位于 `common/device_monitor.py`，可供其他 Benchmark
+共享使用。
+
+运行方式：
+
+```bash
+luban-meter run \
+  --module generate \
+  --benchmark device-monitor \
+  --config src/luban_meter/benchmark/generate/device_monitor/device_monitor.yaml
+```
+
+配置参数：
+
+```yaml
+collect_interval: 1.0
+collect_duration: 60.0
+```
+
+- `collect_interval`：每次采样的间隔（秒）
+- `collect_duration`：总采集时长（秒），到达后停止并聚合
+
+支持的厂商与工具：
+
+| 厂商 | 工具 | 设备类型 |
+|---|---|---|
+| NVIDIA | `nvidia-smi` | GPU |
+| 华为昇腾 | `npu-smi` | NPU |
+| AMD / 海光 | `rocm-smi` | GPU / DCU |
+| 寒武纪 | `cnmon` | MLU |
+| 摩尔线程 | `mt-gpu-smi` | GPU |
+| 壁仞 | `biren-smi` | GPU |
+| 燧原 | `tops-smi` | NPU |
+
+采集器自动检测当前主机的可用工具，无需手动指定厂商。
+
+## 8. Suite
 
 Suite YAML 位于：
 
@@ -189,7 +237,7 @@ Suite 参数：
 | `--timeout` | 否 | 单任务默认超时 |
 | `--fail-fast` | 否 | 首个失败后停止调度 |
 
-## 8. 结果目录
+## 9. 结果目录
 
 单任务：
 
@@ -216,7 +264,7 @@ runs/<suite-id>/
 运行请求和最终结果不包含硬件厂商路由字段。硬件、驱动和引擎版本等事实后续统一
 写入 `environment`。
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### Benchmark 不存在
 
@@ -237,7 +285,7 @@ benchmark/<module>/<benchmark>/result.py
 依次检查 `result.json.error`、`raw/stderr.log`、`raw/stdout.log` 和
 `raw/raw_result.json`。
 
-## 10. 开发验证
+## 11. 开发验证
 
 ```bash
 ruff check src tests
@@ -245,7 +293,7 @@ pytest -q
 python -m luban_meter benchmarks list
 ```
 
-## 11. inference 模型任务效果测试
+## 12. inference 模型任务效果测试
 
 `inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
 `cmmlu`、`gsm8k` 的样例数据集，位于

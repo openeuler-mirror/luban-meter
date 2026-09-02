@@ -125,13 +125,20 @@ benchmark/<module>/<benchmark>/
 `benchmark.py` 与 `result.py` 同时存在。列表命令直接返回 Benchmark 名称：
 
 ```text
-generate    serving-online,vllm-engine-offline,vllm-metrics
+generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor
 inference   ceval,cmmlu,gsm8k
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
 同语义配置，以保证比较边界一致；只有引擎专属能力才在名称中体现，例如
 `vllm-engine-offline`。
+
+### 硬件检测
+
+所有 generate 模块的 Benchmark 在执行前自动调用 `print_hardware_info()` 检测
+当前主机硬件并输出摘要信息（设备数量、厂商、型号），方便复现问题。该功能由
+`common/device_monitor.py` 提供，支持 NVIDIA / 华为昇腾 / AMD / 寒武纪 /
+摩尔线程 / 壁仞 / 燧原等厂商。
 
 ## 5. Generate 与 Inference 的边界
 

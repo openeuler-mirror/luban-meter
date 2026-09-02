@@ -37,6 +37,9 @@ module + benchmark
 5. **采集与计算分离**：硬件或服务调用位于 `benchmark.py`，纯数据处理位于
    `result.py`；
 6. **结果可审计**：保留原始记录、参数、日志、失败原因和统计边界。
+7. **硬件检测前置**：generate 模块的 Benchmark 在执行开头调用
+   `print_hardware_info()` 输出设备摘要，便于复现问题。该工具由
+   `common/device_monitor.py` 提供，支持多厂商硬件自动检测与监控采集。
 
 ## 3. 自动发现
 
@@ -252,10 +255,16 @@ tasks:
     module: generate
     benchmark: vllm-metrics
     config: configs/vllm-metrics.yaml
+
+  - name: device
+    module: generate
+    benchmark: device-monitor
+    config: configs/device-monitor.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
-`CoreEngine` 独立生成 `result.json`。
+`CoreEngine` 独立生成 `result.json`。每个 generate 任务执行前会自动输出硬件
+检测信息，便于在 Suite 报告中确认设备状态。
 
 ## 10. 测试要求
 
