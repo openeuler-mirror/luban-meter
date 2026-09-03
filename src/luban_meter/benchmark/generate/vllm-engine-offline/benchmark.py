@@ -9,10 +9,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from luban_meter.benchmark.generate.common.device_monitor import (
-    print_hardware_info,
-)
-
 ENGINE_SLO_DIMENSIONS = (
     "internal_ttft_ms",
     "prefill_latency_ms",
@@ -315,7 +311,6 @@ def generate_batch(
 def run_benchmark(
     request: dict[str, Any], parameters: dict[str, Any]
 ) -> dict[str, Any]:
-    print_hardware_info()
     try:
         from vllm import SamplingParams
     except ImportError as exc:

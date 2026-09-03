@@ -255,16 +255,11 @@ tasks:
     module: generate
     benchmark: vllm-metrics
     config: configs/vllm-metrics.yaml
-
-  - name: device
-    module: generate
-    benchmark: device-monitor
-    config: configs/device-monitor.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
-`CoreEngine` 独立生成 `result.json`。每个 generate 任务执行前会自动输出硬件
-检测信息，便于在 Suite 报告中确认设备状态。
+`CoreEngine` 独立生成 `result.json`。框架自动为每个 generate 任务启动硬件
+监控守护线程，采集结果写入 `result.json` 的 `environment.device_monitoring`。
 
 ## 10. 测试要求
 
