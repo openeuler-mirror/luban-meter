@@ -18,7 +18,7 @@ luban-meter benchmarks list
 当前模块：
 
 ```text
-generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor  Large-model generation benchmarks
+generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
 inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
 ```
 
@@ -146,45 +146,6 @@ collect_duration: 60.0
 - `collect_duration`：总采集时长（秒），到达后停止采集并聚合
 
 该 Benchmark 不发起推理请求，只读取服务端已有指标，适合接入已运行的 vLLM 服务。
-
-## 7. 设备监控
-
-对当前主机的 GPU/NPU 设备进行周期性采样，采集利用率、显存占用、功耗和温度。
-设备检测与监控采集的核心逻辑位于 `common/device_monitor.py`，可供其他 Benchmark
-共享使用。
-
-运行方式：
-
-```bash
-luban-meter run \
-  --module generate \
-  --benchmark device-monitor \
-  --config src/luban_meter/benchmark/generate/device_monitor/device_monitor.yaml
-```
-
-配置参数：
-
-```yaml
-collect_interval: 1.0
-collect_duration: 60.0
-```
-
-- `collect_interval`：每次采样的间隔（秒）
-- `collect_duration`：总采集时长（秒），到达后停止并聚合
-
-支持的厂商与工具：
-
-| 厂商 | 工具 | 设备类型 |
-|---|---|---|
-| NVIDIA | `nvidia-smi` | GPU |
-| 华为昇腾 | `npu-smi` | NPU |
-| AMD / 海光 | `rocm-smi` | GPU / DCU |
-| 寒武纪 | `cnmon` | MLU |
-| 摩尔线程 | `mt-gpu-smi` | GPU |
-| 壁仞 | `biren-smi` | GPU |
-| 燧原 | `tops-smi` | NPU |
-
-采集器自动检测当前主机的可用工具，无需手动指定厂商。
 
 ## 8. Suite
 

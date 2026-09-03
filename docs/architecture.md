@@ -133,12 +133,15 @@ inference   ceval,cmmlu,gsm8k
 同语义配置，以保证比较边界一致；只有引擎专属能力才在名称中体现，例如
 `vllm-engine-offline`。
 
-### 硬件检测
+### 硬件监控
 
-所有 generate 模块的 Benchmark 在执行前自动调用 `print_hardware_info()` 检测
-当前主机硬件并输出摘要信息（设备数量、厂商、型号），方便复现问题。该功能由
-`common/device_monitor.py` 提供，支持 NVIDIA / 华为昇腾 / AMD / 寒武纪 /
-摩尔线程 / 壁仞 / 燧原等厂商。
+所有 generate 模块的 Benchmark 在执行时，框架会自动启动一个后台守护线程，在
+整个 Benchmark 运行期间周期性采集设备指标（利用率、显存、功耗、温度），并在
+结束后聚合为平均值注入 `result.json` 的 `environment.device_monitoring` 字段。
+硬件检测工具由 `common/device_monitor.py` 提供，支持 NVIDIA / 华为昇腾 / AMD /
+寒武纪 / 摩尔线程 / 壁仞 / 燧原等厂商。
+
+守护线程的启动与停止由 `HostSession.execute()` 管理，无需 Benchmark 自身处理。
 
 ## 5. Generate 与 Inference 的边界
 
