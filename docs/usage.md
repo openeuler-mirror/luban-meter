@@ -19,7 +19,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k                   Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k,humaneval         Online-service model evaluation benchmarks
 ```
 
 `generate` 测量生成式推理性能；`inference` 用于基于在线推理服务的模型效果评测。
@@ -155,37 +155,55 @@ Suite YAML 位于：
 src/luban_meter/suite/definitions/<suite>.yaml
 ```
 
-示例：
+当前内置的标准模型效果 Suite：
 
 ```yaml
-name: generation-basic
+name: inference-standard
 tasks:
-  - name: serving-online
-    module: generate
-    benchmark: serving-online
-    config: configs/serving-online.yaml
-    timeout: 1800
-
-  - name: engine-offline
-    module: generate
-    benchmark: vllm-engine-offline
-    config: configs/vllm-engine-offline.yaml
+  - name: ceval
+    module: inference
+    benchmark: ceval
+  - name: cmmlu
+    module: inference
+    benchmark: cmmlu
+  - name: gsm8k
+    module: inference
+    benchmark: gsm8k
+  - name: humaneval
+    module: inference
+    benchmark: humaneval
 ```
 
 相对 `config` 路径以 Suite YAML 所在目录为基准。运行命令：
 
 ```bash
 luban-meter suite \
-  --suite generation-basic \
-  --model-path /data/models/<model> \
+  --suite inference-standard \
+  --model-name <served-model-name> \
+  --output runs
+```
+
+部署环境需要替换某个任务的 Benchmark YAML 时，使用可重复的
+`--task-config TASK=PATH`，覆盖会写入 `suite_request.json`。例如让 HumanEval
+连接专用 Docker daemon：
+
+```bash
+luban-meter suite \
+  --suite inference-standard \
+  --task-config humaneval=/data/luban-meter-config/humaneval-full.yaml \
+  --model-name <served-model-name> \
   --output runs
 ```
 
 失败后立即停止后续任务：
 
 ```bash
-luban-meter suite --suite generation-basic --fail-fast
+luban-meter suite --suite inference-standard --fail-fast
 ```
+
+`suite_result.json` 的每个 task 条目直接包含该任务的 `metrics`，因此一次运行可
+同时查看 C-Eval/CMMLU Accuracy、GSM8K Exact Match 和 HumanEval Pass@1。
+每个任务仍在 `tasks/<run-id>/result.json` 中保留完整参数、环境、元数据和指标。
 
 Suite 参数：
 
@@ -197,6 +215,7 @@ Suite 参数：
 | `--output` | 否 | Suite 输出根目录 |
 | `--timeout` | 否 | 单任务默认超时 |
 | `--fail-fast` | 否 | 首个失败后停止调度 |
+| `--task-config TASK=PATH` | 否 | 替换指定 Suite 任务的配置 YAML，可重复使用 |
 
 ## 9. 结果目录
 
@@ -221,6 +240,9 @@ runs/<suite-id>/
 ├── suite_result.json
 └── tasks/<run-id>/...
 ```
+
+`suite_result.json` 是统一摘要；`tasks/<run-id>/result.json` 是每个数据集的
+完整标准结果。Suite 不对不同语义的指标求平均。
 
 运行请求和最终结果不包含硬件厂商路由字段。硬件、驱动和引擎版本等事实后续统一
 写入 `environment`。
@@ -257,9 +279,9 @@ python -m luban_meter benchmarks list
 ## 12. inference 模型任务效果测试
 
 `inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
-`cmmlu`、`gsm8k` 的样例数据集，位于
-`src/luban_meter/benchmark/inference/data/`，开箱即用。若需替换为完整官方
-数据集，先用离线准备脚本将官方格式转换为本地 jsonl（运行时不下载数据）：
+`cmmlu`、`gsm8k` 和 `humaneval` 的标准评测数据，位于
+`src/luban_meter/benchmark/inference/data/`，开箱即用。若需替换数据版本，
+可用离线准备脚本将外部官方格式转换为本地 jsonl（运行时不下载数据）：
 
 ```bash
 python src/luban_meter/benchmark/inference/scripts/prepare_ceval.py \
@@ -268,11 +290,14 @@ python src/luban_meter/benchmark/inference/scripts/prepare_cmmlu.py \
   --source /path/to/cmmlu --out data/cmmlu
 python src/luban_meter/benchmark/inference/scripts/prepare_gsm8k.py \
   --source /path/to/gsm8k --out data/gsm8k
+python src/luban_meter/benchmark/inference/scripts/prepare_humaneval.py \
+  --source /path/to/HumanEval.jsonl.gz \
+  --out data/humaneval/HumanEval.jsonl
 ```
 
 配置中的 `dataset_path` 为相对路径时按以下顺序解析：先相对当前工作目录
 （CWD），未命中时回退到包内置的 `benchmark/inference/data/` 目录。因此默认
-配置不指定 `dataset_path` 即使用内置样例数据，从 `/tmp` 等任意目录运行也可
+默认相对 `dataset_path` 会回退到包内置数据，从 `/tmp` 等任意目录运行也可
 正常加载。
 
 运行示例（C-Eval 选择题 Accuracy，ppl 模式）：
@@ -285,8 +310,28 @@ luban-meter run \
   --model-name <name>
 ```
 
+HumanEval 首版固定为 completion-only Pass@1。执行模型生成的代码前必须先构建
+专用 Docker 沙箱镜像：
+
+```bash
+docker build \
+  -f src/luban_meter/benchmark/inference/humaneval/Containerfile \
+  -t luban-meter-humaneval-sandbox:v1 \
+  src/luban_meter/benchmark/inference/humaneval
+luban-meter run \
+  --module inference \
+  --benchmark humaneval \
+  --config src/luban_meter/benchmark/inference/humaneval/humaneval.yaml \
+  --model-name <name>
+```
+
+沙箱不可用时评测直接失败，不会退回宿主机执行。服务器部署时应在配置中把
+`docker_host` 指向评测专用 Docker daemon 的 Unix socket。详细安全约束、数据
+协议和状态定义见 [HumanEval 协议说明](humaneval-protocol.md)。
+
 当前可用 Benchmark：`ceval`、`cmmlu`（选择题 Accuracy，支持 ppl/gen 两种评测
-模式）和 `gsm8k`（数学题 Exact Match，gen 模式）。其中 ppl / loss 模式依赖
+模式）、`gsm8k`（数学题 Exact Match，gen 模式）和 `humaneval`（代码补全
+Pass@1，base completions 模式）。其中 ppl / loss 模式依赖
 `/v1/completions` 的 `echo + logprobs` 回显，且仅允许 `prompt_format=base`
 （对话格式层会注入特殊 Token 破坏 ppl 续写打分，组合 ppl + chat 会被配置校验
 拒绝）；gen 模式可使用 chat 或 base 传输。配置字段、评测模式和指标口径参见

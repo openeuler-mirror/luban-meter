@@ -1,0 +1,18 @@
+name: inference-standard
+tasks:
+  - name: ceval
+    module: inference
+    benchmark: ceval
+    config: ../../benchmark/inference/ceval/ceval.yaml
+  - name: cmmlu
+    module: inference
+    benchmark: cmmlu
+    config: ../../benchmark/inference/cmmlu/cmmlu.yaml
+  - name: gsm8k
+    module: inference
+    benchmark: gsm8k
+    config: ../../benchmark/inference/gsm8k/gsm8k.yaml
+  - name: humaneval
+    module: inference
+    benchmark: humaneval
+    config: ../../benchmark/inference/humaneval/humaneval.yaml

@@ -18,7 +18,7 @@ _NUMBER = re.compile(r"[-+]?[0-9][0-9,]*(?:\.[0-9]+)?")
 
 _ARTICLES = re.compile(r"\b(a|an|the)\b")
 _PUNCTUATION = set(string.punctuation + "。，、；：？！“”‘’（）《》【】…—·")
-_CODE_FENCE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
+_CODE_FENCE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 def extract_choice(text: str) -> str | None:
@@ -70,3 +70,20 @@ def extract_code(text: str) -> str:
     if match:
         return match.group(1)
     return text or ""
+
+
+def extract_humaneval_completion(text: str, prompt: str) -> str:
+    """Extract a completion while preserving function-body indentation.
+
+    HumanEval's canonical contract is completion-only: the returned text is
+    appended directly to the prompt. An exact repeated prompt is stripped, but
+    Markdown fences and other generated text are deliberately preserved so the
+    sandbox judges the model's actual base completion.
+    """
+    candidate = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    candidate = candidate.removeprefix(prompt)
+    while candidate.startswith("\n"):
+        candidate = candidate[1:]
+    if not candidate.strip():
+        return ""
+    return candidate.rstrip() + "\n"

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,7 @@ class SuiteRequest:
     output_dir: Path
     timeout: int = 3600
     fail_fast: bool = False
+    task_configs: Mapping[str, Path] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,7 @@ class SuiteTaskResult:
     status: str
     run_id: str | None = None
     result: str | None = None
+    metrics: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

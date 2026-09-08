@@ -1,0 +1,17 @@
+FROM docker.m.daocloud.io/library/python@sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef
+
+LABEL io.luban-meter.component="humaneval-sandbox"
+LABEL io.luban-meter.protocol="humaneval-sandbox-v1"
+LABEL io.luban-meter.base-digest="sha256:9c47360a2a0355e2da18516d0b1c2126ec22c195d2185e97347c9d98398c5bef"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONHASHSEED=0 \
+    HOME=/tmp
+
+COPY sandbox_runner.py /opt/luban-meter/sandbox_runner.py
+
+USER 65534:65534
+WORKDIR /tmp
+
+ENTRYPOINT ["python3", "-I", "-B", "/opt/luban-meter/sandbox_runner.py"]
