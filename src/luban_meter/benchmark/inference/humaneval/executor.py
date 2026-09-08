@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import threading
 import time
@@ -12,41 +11,29 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from luban_meter.benchmark.inference.humaneval.sandbox_runner import RESULT_PREFIX
+from luban_meter.utils.docker_sandbox import (
+    DockerSandbox,
+    DockerSandboxConfig,
+    DockerSandboxUnavailable,
+)
 
-
-class SandboxUnavailable(RuntimeError):
-    """Raised when the configured Docker sandbox cannot be used safely."""
+SandboxUnavailable = DockerSandboxUnavailable
 
 
 @dataclass(frozen=True)
-class SandboxConfig:
-    docker_host: str
-    image: str
-    docker_binary: str = "docker"
-    runtime: str = "runc"
+class SandboxConfig(DockerSandboxConfig):
+    """HumanEval execution limits layered on the shared Docker sandbox."""
+
     timeout_seconds: float = 3.0
     startup_grace_seconds: float = 5.0
-    memory_mb: int = 256
-    cpus: float = 1.0
-    pids_limit: int = 32
-    tmpfs_mb: int = 64
     output_limit_bytes: int = 64 * 1024
 
     def validate(self) -> None:
-        if not self.docker_host.startswith("unix://"):
-            raise ValueError("docker_host must be a unix:// socket")
-        if not self.image:
-            raise ValueError("sandbox image must not be empty")
+        super().validate()
         if self.timeout_seconds <= 0 or self.startup_grace_seconds <= 0:
             raise ValueError("sandbox timeouts must be positive")
-        if self.memory_mb < 32:
-            raise ValueError("sandbox memory_mb must be at least 32")
-        if self.cpus <= 0:
-            raise ValueError("sandbox cpus must be positive")
-        if self.pids_limit < 2:
-            raise ValueError("sandbox pids_limit must be at least 2")
-        if self.tmpfs_mb < 1 or self.output_limit_bytes < 1024:
-            raise ValueError("sandbox tmpfs/output limits are too small")
+        if self.output_limit_bytes < 1024:
+            raise ValueError("sandbox output limit is too small")
 
 
 @dataclass
@@ -67,72 +54,11 @@ class ExecutionResult:
 
 class DockerSandboxExecutor:
     def __init__(self, config: SandboxConfig) -> None:
-        config.validate()
         self.config = config
-
-    def _prefix(self) -> list[str]:
-        return [
-            self.config.docker_binary,
-            "-H",
-            self.config.docker_host,
-        ]
-
-    @staticmethod
-    def _environment() -> dict[str, str]:
-        environment = os.environ.copy()
-        environment.pop("DOCKER_HOST", None)
-        return environment
-
-    def _control(self, arguments: list[str], timeout: float = 15.0) -> str:
-        try:
-            completed = subprocess.run(
-                [*self._prefix(), *arguments],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=self._environment(),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise SandboxUnavailable(f"Docker command failed: {exc}") from exc
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout).strip()[:1000]
-            raise SandboxUnavailable(f"Docker command failed: {detail}")
-        return completed.stdout.strip()
+        self.sandbox = DockerSandbox(config)
 
     def preflight(self) -> dict[str, Any]:
-        info_text = self._control(["info", "--format", "{{json .}}"])
-        try:
-            info = json.loads(info_text)
-        except json.JSONDecodeError as exc:
-            raise SandboxUnavailable("Docker info returned invalid JSON") from exc
-        security_options = info.get("SecurityOptions") or []
-        if not any("seccomp" in str(option) for option in security_options):
-            raise SandboxUnavailable("Docker daemon must enable seccomp")
-        cgroup_version = str(info.get("CgroupVersion") or "")
-        if cgroup_version not in {"1", "2"}:
-            raise SandboxUnavailable("Docker daemon returned no cgroup version")
-
-        image_text = self._control(
-            ["image", "inspect", "--format", "{{json .}}", self.config.image]
-        )
-        try:
-            image = json.loads(image_text)
-        except json.JSONDecodeError as exc:
-            raise SandboxUnavailable(
-                "sandbox image inspect returned invalid JSON"
-            ) from exc
-        return {
-            "runtime": "docker",
-            "server_version": info.get("ServerVersion"),
-            "docker_root_dir": info.get("DockerRootDir"),
-            "cgroup_driver": info.get("CgroupDriver"),
-            "cgroup_version": cgroup_version,
-            "security_options": list(security_options),
-            "image": self.config.image,
-            "image_id": image.get("Id"),
-            "oci_runtime": self.config.runtime,
-        }
+        return self.sandbox.preflight()
 
     @staticmethod
     def _drain(
@@ -151,64 +77,14 @@ class DockerSandboxExecutor:
             if len(chunk) > max(0, remaining):
                 truncated[0] = True
 
-    def _remove_container(self, name: str) -> None:
-        try:
-            subprocess.run(
-                [*self._prefix(), "rm", "-f", name],
-                check=False,
-                capture_output=True,
-                timeout=10,
-                env=self._environment(),
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-
     def execute(self, program: str) -> ExecutionResult:
         if not isinstance(program, str) or not program:
             raise ValueError("program must be a non-empty string")
         name = f"luban-humaneval-{uuid.uuid4().hex}"
-        command = [
-            *self._prefix(),
-            "run",
-            "--interactive",
-            "--rm",
-            "--pull",
-            "never",
-            "--name",
-            name,
-            "--hostname",
-            "humaneval-sandbox",
-            "--runtime",
-            self.config.runtime,
-            "--network",
-            "none",
-            "--read-only",
-            "--tmpfs",
-            (f"/tmp:rw,noexec,nosuid,nodev,size={self.config.tmpfs_mb}m,mode=1777"),
-            "--cap-drop",
-            "ALL",
-            "--security-opt",
-            "no-new-privileges",
-            "--pids-limit",
-            str(self.config.pids_limit),
-            "--memory",
-            f"{self.config.memory_mb}m",
-            "--memory-swap",
-            f"{self.config.memory_mb}m",
-            "--cpus",
-            str(self.config.cpus),
-            "--user",
-            "65534:65534",
-            "--ulimit",
-            "nofile=64:64",
-            "--ulimit",
-            "fsize=1048576:1048576",
-            "--ipc",
-            "none",
-            "--log-driver",
-            "none",
-            self.config.image,
-        ]
+        command = self.sandbox.build_run_command(
+            name=name,
+            hostname="humaneval-sandbox",
+        )
         payload = json.dumps(
             {
                 "program": program,
@@ -223,7 +99,7 @@ class DockerSandboxExecutor:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=self._environment(),
+                env=self.sandbox.environment(),
             )
         except OSError as exc:
             return ExecutionResult(
@@ -276,7 +152,7 @@ class DockerSandboxExecutor:
                 )
             )
         except subprocess.TimeoutExpired:
-            self._remove_container(name)
+            self.sandbox.remove_container(name)
             process.kill()
             process.wait()
             for thread in threads:
