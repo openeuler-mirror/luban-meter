@@ -1,10 +1,12 @@
 import io
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from luban_meter.cli import main
 from luban_meter.core.models import BenchmarkResult
+from luban_meter.suite.models import SuiteResult
 
 
 class CliTest(unittest.TestCase):
@@ -45,6 +47,39 @@ class CliTest(unittest.TestCase):
         self.assertEqual(
             request.config.as_posix(),
             "configs/benchmarks/ttft.yaml",
+        )
+
+    def test_suite_task_config_is_forwarded(self) -> None:
+        output = io.StringIO()
+        result = SuiteResult(
+            schema_version="luban-meter.suite-result/v1",
+            suite_id="test-suite",
+            name="inference-standard",
+            status="success",
+            tasks=(),
+        )
+        with (
+            patch("luban_meter.cli.SuiteLoader") as loader_type,
+            patch("luban_meter.cli.SuiteRunner") as runner_type,
+        ):
+            loader_type.return_value.load.return_value = object()
+            runner_type.return_value.run.return_value = result
+            with redirect_stdout(output):
+                exit_code = main(
+                    [
+                        "suite",
+                        "--suite",
+                        "inference-standard",
+                        "--task-config",
+                        "humaneval=/data/config/humaneval.yaml",
+                    ]
+                )
+
+        request = runner_type.return_value.run.call_args.args[0]
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            request.task_configs,
+            {"humaneval": Path("/data/config/humaneval.yaml")},
         )
 
 

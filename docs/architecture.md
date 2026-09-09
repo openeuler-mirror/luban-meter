@@ -61,7 +61,7 @@ SuiteRequest(suite)
 → SuiteRunner
 → RunRequest 1 ... RunRequest N
 → 每个任务独立 result.json
-→ suite_result.json
+→ 每个任务 metrics 内嵌到 suite_result.json
 ```
 
 ## 3. 工程目录
@@ -88,10 +88,11 @@ src/luban_meter/
 │   └── inference/
 │       ├── common/
 │       ├── scripts/
-│       ├── data/                 # 随包内置样例数据集（ceval/cmmlu/gsm8k jsonl）
+│       ├── data/                 # 随包内置标准评测数据（含 HumanEval 164 题）
 │       ├── ceval/
 │       ├── cmmlu/
-│       └── gsm8k/
+│       ├── gsm8k/
+│       └── humaneval/            # Pass@1 + Docker-only 代码执行沙箱
 ├── core/
 │   ├── engine.py
 │   ├── registry.py
@@ -126,7 +127,7 @@ benchmark/<module>/<benchmark>/
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor
-inference   ceval,cmmlu,gsm8k
+inference   ceval,cmmlu,gsm8k,humaneval
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
@@ -162,7 +163,9 @@ inference   ceval,cmmlu,gsm8k
 
 - C-Eval、CMMLU 选择题 Accuracy（ppl logprob 打分与 gen 生成抽取两种模式；ppl
   模式仅允许 `prompt_format=base`，组合 ppl + chat 会被配置校验拒绝）；
-- GSM8K 数学题 Exact Match。
+- GSM8K 数学题 Exact Match；
+- HumanEval completion-only Pass@1，生成代码只在受限 Docker 容器中执行，沙箱
+  不可用时禁止宿主机回退。
 
 数据集默认随包内置在 `benchmark/inference/data/`，相对路径优先按 CWD 解析，
 未命中时回退到包内置数据，使同一份脚本可从任意目录运行。
@@ -171,7 +174,7 @@ inference   ceval,cmmlu,gsm8k
 
 - 问答 EM、F1（SQuAD）；
 - 摘要 ROUGE（LCSTS）；
-- 代码生成 Pass@k（HumanEval）；
+- HumanEval 多样本采样与 Pass@k（k > 1）；
 - 语言建模 Perplexity（WikiText）；
 - 任务级端到端时延。
 
@@ -227,23 +230,28 @@ Suite 定义统一存放在：
 src/luban_meter/suite/definitions/<suite>.yaml
 ```
 
-示例：
+当前内置定义：
 
 ```yaml
-name: generation-basic
+name: inference-standard
 tasks:
-  - name: serving-online
-    module: generate
-    benchmark: serving-online
-    config: configs/serving-online.yaml
-
-  - name: vllm-engine-offline
-    module: generate
-    benchmark: vllm-engine-offline
-    config: configs/vllm-engine-offline.yaml
+  - name: ceval
+    module: inference
+    benchmark: ceval
+  - name: cmmlu
+    module: inference
+    benchmark: cmmlu
+  - name: gsm8k
+    module: inference
+    benchmark: gsm8k
+  - name: humaneval
+    module: inference
+    benchmark: humaneval
 ```
 
-Suite 只编排任务，不改变运行环境，也不在任务间比较指标。
+Suite 只编排任务，不改变运行环境，也不在任务间比较或平均不同语义的指标。
+`suite_result.json` 在每个 task 条目内嵌对应 `metrics` 作为统一摘要，同时保留
+每个任务的独立 `result.json`。
 
 ## 8. 扩展边界
 

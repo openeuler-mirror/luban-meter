@@ -80,27 +80,56 @@ class SuiteTest(unittest.TestCase):
 
             registry = BenchmarkRegistry(benchmark_dir)
             definition = SuiteLoader(suites_dir).load("basic")
+            override_config = root / "accuracy-override.yaml"
+            override_config.write_text("value: 99\n", encoding="utf-8")
             request = SuiteRequest(
                 suite_id="basic-test",
                 suite="basic",
                 model_path=None,
                 model_name=None,
                 output_dir=root / "runs",
+                task_configs={"accuracy": override_config},
             )
 
             result = SuiteRunner(CoreEngine(registry)).run(request, definition)
 
             self.assertEqual(result.status, "success")
             self.assertFalse(hasattr(result, "vendor"))
-            self.assertEqual(
-                [task.name for task in result.tasks], ["ttft", "accuracy"]
-            )
+            self.assertEqual([task.name for task in result.tasks], ["ttft", "accuracy"])
             self.assertTrue(all(task.status == "success" for task in result.tasks))
+            self.assertEqual(result.tasks[0].metrics, {"value": 10})
+            self.assertEqual(result.tasks[1].metrics, {"value": 99})
             for task in result.tasks:
                 task_result = json.loads(Path(task.result).read_text(encoding="utf-8"))
                 self.assertEqual(task_result["status"], "success")
             suite_result = root / "runs" / request.suite_id / "suite_result.json"
             self.assertTrue(suite_result.is_file())
+            suite_payload = json.loads(suite_result.read_text(encoding="utf-8"))
+            self.assertEqual(suite_payload["tasks"][0]["metrics"], {"value": 10})
+            self.assertEqual(suite_payload["tasks"][1]["metrics"], {"value": 99})
+
+    def test_loads_bundled_inference_standard_suite(self) -> None:
+        definition = SuiteLoader().load("inference-standard")
+        self.assertEqual(
+            [task.name for task in definition.tasks],
+            ["ceval", "cmmlu", "gsm8k", "humaneval"],
+        )
+        self.assertTrue(all(task.module == "inference" for task in definition.tasks))
+        self.assertTrue(all(task.config.is_file() for task in definition.tasks))
+
+    def test_rejects_task_config_for_unknown_suite_task(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            definition = SuiteLoader().load("inference-standard")
+            request = SuiteRequest(
+                suite_id="unknown-override-test",
+                suite="inference-standard",
+                model_path=None,
+                model_name=None,
+                output_dir=Path(directory) / "runs",
+                task_configs={"missing": Path("missing.yaml")},
+            )
+            with self.assertRaisesRegex(ConfigurationError, "unknown tasks: missing"):
+                SuiteRunner(CoreEngine(BenchmarkRegistry())).run(request, definition)
 
     def test_rejects_duplicate_task_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

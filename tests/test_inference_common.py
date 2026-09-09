@@ -85,6 +85,24 @@ def test_extract_code() -> None:
     assert parsers.extract_code("plain") == "plain"
 
 
+def test_extract_humaneval_completion_preserves_base_generation() -> None:
+    prompt = 'def car_race_collision(n: int):\n    """Return collisions."""\n'
+    completion = (
+        "    # Every left-moving car collides with every right-moving car.\n"
+        "    return n * n\n"
+        "```\n\n```python\nfrom typing import List\n"
+    )
+    assert parsers.extract_humaneval_completion(completion, prompt) == completion
+
+
+def test_extract_humaneval_completion_strips_repeated_prompt_only() -> None:
+    prompt = "def f():\n"
+    assert parsers.extract_humaneval_completion(
+        prompt + "\n    return 1\r\n", prompt
+    ) == "    return 1\n"
+    assert parsers.extract_humaneval_completion("", prompt) == ""
+
+
 def test_render_choice_prompt() -> None:
     sample = {
         "id": "1",

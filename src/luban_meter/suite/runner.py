@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from luban_meter.core.engine import CoreEngine
+from luban_meter.core.errors import ConfigurationError
 from luban_meter.core.models import RunRequest
 from luban_meter.suite.models import (
     SuiteDefinition,
@@ -23,6 +24,14 @@ class SuiteRunner:
         request: SuiteRequest,
         definition: SuiteDefinition,
     ) -> SuiteResult:
+        task_names = {task.name for task in definition.tasks}
+        unknown_overrides = sorted(set(request.task_configs) - task_names)
+        if unknown_overrides:
+            raise ConfigurationError(
+                "suite task config overrides reference unknown tasks: "
+                + ", ".join(unknown_overrides)
+            )
+
         suite_dir = request.output_dir / request.suite_id
         tasks_dir = suite_dir / "tasks"
         write_json_atomic(
@@ -49,7 +58,7 @@ class SuiteRunner:
                 run_id=run_id,
                 module=task.module,
                 benchmark=task.benchmark,
-                config=task.config,
+                config=request.task_configs.get(task.name, task.config),
                 model_path=request.model_path,
                 model_name=request.model_name,
                 output_dir=tasks_dir,
@@ -65,6 +74,7 @@ class SuiteRunner:
                     status=result.status,
                     run_id=run_id,
                     result=str(result_path),
+                    metrics=dict(result.metrics),
                 )
             )
             if result.status != "success" and request.fail_fast:

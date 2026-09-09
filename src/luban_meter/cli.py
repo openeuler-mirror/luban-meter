@@ -19,6 +19,15 @@ from luban_meter.utils.json_io import to_jsonable
 from luban_meter.utils.run_id import create_run_id
 
 
+def _parse_task_config(value: str) -> tuple[str, Path]:
+    task, separator, config = value.partition("=")
+    if not separator or not task or not config:
+        raise argparse.ArgumentTypeError(
+            "task config must use TASK=PATH with non-empty values"
+        )
+    return task, Path(config)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="luban-meter")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -58,6 +67,14 @@ def _build_parser() -> argparse.ArgumentParser:
     suite.add_argument("--output", type=Path, default=Path("runs"))
     suite.add_argument("--timeout", type=int, default=3600)
     suite.add_argument(
+        "--task-config",
+        action="append",
+        type=_parse_task_config,
+        default=[],
+        metavar="TASK=PATH",
+        help="Override one Suite task's Benchmark YAML; may be repeated",
+    )
+    suite.add_argument(
         "--fail-fast",
         action="store_true",
         help="Stop after the first failed task",
@@ -66,7 +83,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
 
     if args.command == "benchmarks" and args.benchmarks_command == "list":
         registry = BenchmarkRegistry()
@@ -104,6 +122,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.status == "success" else 1
 
     if args.command == "suite":
+        task_configs: dict[str, Path] = {}
+        for task, config in args.task_config:
+            if task in task_configs:
+                parser.error(f"duplicate --task-config for task {task!r}")
+            task_configs[task] = config
         request = SuiteRequest(
             suite_id=create_run_id(args.suite),
             suite=args.suite,
@@ -112,6 +135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output,
             timeout=args.timeout,
             fail_fast=args.fail_fast,
+            task_configs=task_configs,
         )
         try:
             definition = SuiteLoader().load(args.suite)

@@ -27,9 +27,13 @@ where = ["src"]
 luban_meter = [
   "benchmark/**/benchmark.py",
   "benchmark/**/result.py",
+  "benchmark/**/executor.py",
+  "benchmark/**/sandbox_runner.py",
+  "benchmark/**/Containerfile",
   "benchmark/**/*.yaml",
   "benchmark/inference/data/**/*.jsonl",
   "benchmark/inference/data/**/*.json",
+  "benchmark/inference/data/**/LICENSE*",
   "suite/definitions/*.yaml",
 ]
 

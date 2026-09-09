@@ -28,7 +28,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | vLLM 离线引擎测试 | 已完成 | 实现 `vllm-engine-offline` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
-| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）和 gsm8k（Exact Match），指标计算层已具备 F1、ROUGE、Pass@k、Perplexity 能力，其余数据集待接入 |
+| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）和 HumanEval（Pass@1），并提供四任务标准 Suite；F1、ROUGE、Pass@k、Perplexity 的其他任务待接入 |
 | 设备和服务内部监控 | 待建设 | GPU 利用率、显存、功耗、服务端队列和 KV Cache 实际使用率尚未采集 |
 
 ## 三、总体架构方案
@@ -252,15 +252,17 @@ result.py → result.json` 执行链路和结果协议，指标按
 - 建成 `inference/common/` 公共层（在线服务调用、数据集加载、Prompt 渲染、
   答案解析、指标计算），统一采集逐样本任务结果、端到端延迟和 Token 数；
 - 基于现有框架对接脚本执行接口，形成模型生成结果评测的目录与结果协议；
-- 首批落地 ceval、cmmlu（Accuracy）和 gsm8k（Exact Match），ppl/gen 双评测
-  模式打通在线 logprobs 链路；
+- 首批落地 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）和 HumanEval
+  （Pass@1），ppl/gen 双评测模式打通在线 logprobs 与代码补全链路；
+- 建成 `inference-standard` Suite，一次顺序执行四个数据集并在统一结果中内嵌
+  各任务指标；
 - 指标计算层已具备 Token F1、ROUGE、Pass@k、Perplexity 能力。
 
 剩余工作：
 
-- 补齐 HumanEval（Pass@1 + 沙箱执行）、SQuAD（EM、Token F1）、摘要类（LCSTS
+- 补齐 HumanEval 多样本 Pass@k、SQuAD（EM、Token F1）、摘要类（LCSTS
   ROUGE）和语言建模（WikiText Perplexity）任务；
-- 建设 `inference` 任务的 Suite 编排与跨运行汇总报告。
+- 建设跨运行对比报告。
 
 `inference` 统一通过在线推理服务调用模型，优先复用 OpenAI-compatible HTTP 接口；
 数据集、Prompt、答案解析和评分逻辑不按硬件环境复制。

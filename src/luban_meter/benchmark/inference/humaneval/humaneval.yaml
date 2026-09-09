@@ -1,0 +1,40 @@
+# OpenAI-compatible inference service.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 120
+
+# Bundled official HumanEval dataset.
+dataset_path: data/humaneval/HumanEval.jsonl
+split: test
+max_samples: 164
+shuffle: false
+seed: 42
+
+# Canonical completion-only protocol.
+eval_mode: gen
+prompt_format: base
+prompt_version: humaneval-completion-v1
+samples_per_task: 1
+pass_k: [1]
+
+# Deterministic pass@1 generation.
+temperature: 0.0
+max_tokens: 1024
+stop: ["\nclass", "\ndef", "\n#", "\nif", "\nprint"]
+max_concurrency: 8
+sandbox_concurrency: 4
+
+# Docker-only sandbox. The server deployment should override docker_host with
+# its dedicated /data socket. Host execution fallback is always rejected.
+docker_host: unix:///var/run/docker.sock
+docker_binary: docker
+sandbox_image: luban-meter-humaneval-sandbox:v1
+sandbox_runtime: runc
+sandbox_timeout: 3
+sandbox_startup_grace: 5
+sandbox_memory_mb: 256
+sandbox_cpus: 1
+sandbox_pids_limit: 32
+sandbox_tmpfs_mb: 64
+sandbox_output_limit_bytes: 65536
+allow_host_fallback: false

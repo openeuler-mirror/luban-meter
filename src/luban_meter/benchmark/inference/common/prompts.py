@@ -15,6 +15,7 @@ SUPPORTED_PROMPT_VERSIONS = {
     "ceval": ("ceval-v1",),
     "cmmlu": ("cmmlu-v1",),
     "gsm8k": ("gsm8k-v1",),
+    "humaneval": ("humaneval-completion-v1",),
 }
 
 
@@ -50,9 +51,7 @@ def render_choice_prompt(
     header = f"{instruction_prefix}{subject}{instruction_suffix}\n"
     blocks: list[str] = []
     for example in few_shot_samples:
-        blocks.append(
-            f"{render_choice_question(example)}\n答案：{example['answer']}"
-        )
+        blocks.append(f"{render_choice_question(example)}\n答案：{example['answer']}")
     blocks.append(render_choice_question(sample))
     return f"{header}" + "\n\n".join(blocks) + "\n答案："
 
@@ -62,7 +61,7 @@ def render_math_prompt(
     *,
     few_shot_samples: Sequence[Mapping[str, Any]] = (),
     instruction: str = (
-        "以下是数学应用题，请逐步推理，最后用 \"#### 数字\" 给出最终答案。"
+        '以下是数学应用题，请逐步推理，最后用 "#### 数字" 给出最终答案。'
     ),
 ) -> str:
     """Render GSM8K-style few-shot chain-of-thought prompt, ending with 答案：."""

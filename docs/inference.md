@@ -89,12 +89,12 @@ src/luban_meter/benchmark/inference/
 │   ├── metrics.py      # Accuracy/EM/F1/ROUGE/Pass@k/PPL 计算
 │   ├── choice.py       # 四选一题目通用采集流程（ppl/gen）
 │   └── choice_result.py # 四选一题目通用指标聚合
-├── scripts/            # 数据集离线准备脚本：prepare_ceval/prepare_cmmlu/prepare_gsm8k
-├── data/               # 随包内置样例数据集 jsonl（ceval/cmmlu/gsm8k），相对路径未命中时回退到此
+├── scripts/            # 数据集离线准备脚本：含 prepare_humaneval
+├── data/               # 随包内置标准评测数据（含 HumanEval 164 题）
 ├── ceval/            benchmark.py + result.py + ceval.yaml      （已实现）
 ├── cmmlu/            benchmark.py + result.py + cmmlu.yaml      （已实现）
 ├── gsm8k/            benchmark.py + result.py + gsm8k.yaml      （已实现）
-├── humaneval/        benchmark.py + result.py + humaneval.yaml  （规划）
+├── humaneval/        benchmark.py + result.py + executor.py + Containerfile（已实现 Pass@1）
 ├── squad/            benchmark.py + result.py + squad.yaml      （规划）
 ├── summarization/    benchmark.py + result.py + summarization.yaml（规划）
 └── wikitext/         benchmark.py + result.py + wikitext.yaml   （规划）
@@ -214,7 +214,8 @@ gen 模式答案提取规则（`common/parsers.py`）：
   `parse_failed` 并判该样本错误；
 - GSM8K：优先正则 `####\s*(数字)`，回退取文本最后一个数字，去千分位后数值比较；
 - SQuAD：小写、去标点、去冠词、压缩空白；
-- HumanEval：剥离 ```` ``` ```` 代码块。
+- HumanEval：base completion 仅规范换行、移除模型重复返回的完整 prompt 和开头空行；
+  其余内容（包括 Markdown 代码围栏）原样交给沙箱判定。
 
 ## 6. 逐数据集计算流程与指标
 
@@ -268,19 +269,22 @@ Exact Match = sum(correct) / N    # 此处与 Accuracy 等价
 
 样本字段：`{task_id, prompt(函数前缀), test, entry_point}`。
 
-1. 渲染：chat 模式将函数前缀放入用户消息；base 模式直接以前缀续写；
+1. 渲染：`prompt_format` 固定为 `base`，直接对数据集函数前缀续写；
 2. 生成并配置 `stop`，防止模型续写超出函数范围；
-3. 剥离代码块后拼接 `prompt + completion + test + check(entry_point)`；
-4. 在独立子进程中执行，超时或异常判失败并记录异常类型；
-5. 每题采样 n 次（配置 `samples_per_task`），c 为通过次数。
+3. 按 base completion 规则处理后，拼接
+   `prompt + completion + test + check(entry_point)`；
+4. 在一次性 Docker 容器中执行，网络关闭、根文件系统只读、能力全部移除，并限制
+   CPU、内存、PID、临时目录、输出和时间；沙箱不可用时禁止回退到宿主机；
+5. 首版每题固定采样一次（`samples_per_task=1`），通过记为 1，否则记为 0。
 
 ```text
 pass@k = 1 - C(n - c, k) / C(n, k)    # C 为组合数
 ```
 
-- 一期主报 `Pass@1`（n=1 时退化为通过率均值），输出名
+- 一期只报 `Pass@1`（n=1 时退化为通过率均值），输出名
   `metrics.task_view.humaneval.pass_at_1`，单位 `ratio`；
-- n > 1 时同时输出 `pass_at_k`、n 和 k；
+- 服务失败、解析失败和沙箱执行失败均保留在分母中；基础设施故障会额外反映在
+  顶层 `status` 和错误计数中；
 - 沙箱逻辑只服务本 Benchmark，不下沉到 `common/`。
 
 ### 6.5 SQuAD（开放问答，P1）
@@ -407,20 +411,22 @@ Benchmark 客户端不感知。
    metrics、choice、choice_result）与单元测试；
 2. `ceval` 端到端（ppl + gen 双路径）；
 3. `cmmlu`、`gsm8k` 端到端；
-4. 数据集离线准备脚本 `inference/scripts/`（prepare_ceval、prepare_cmmlu、
-   prepare_gsm8k）；
-5. 随包内置样例数据集 `inference/data/`（ceval/cmmlu/gsm8k 的 jsonl），并由
+4. `humaneval` completion-only Pass@1 端到端：本地数据加载、模型生成、代码
+   提取、Docker-only 沙箱执行、状态分类和指标聚合；
+5. 数据集离线准备脚本 `inference/scripts/`（prepare_ceval、prepare_cmmlu、
+   prepare_gsm8k、prepare_humaneval）；
+6. 随包内置标准评测数据 `inference/data/`（含 HumanEval 164 题），并由
    `dataset.resolve_data_path()` 提供 CWD → 包内置的相对路径回退解析，使默认
    配置从任意工作目录开箱即用。
 
 尚未实现，后续按以下顺序建设：
 
-1. `humaneval`（Pass@1 + 沙箱执行，完成 P0）；
+1. `humaneval` 多样本采样和 Pass@k（k > 1）；
 2. `squad`、`summarization`、`wikitext`（P1）；
 3. Suite 编排与跨运行汇总报告。
 
-其中 Token F1、ROUGE、Pass@k、Perplexity 的指标计算能力已在 `common/metrics.py`
-中具备，对应数据集评测待接入。
+其中 Token F1、ROUGE、通用 Pass@k、Perplexity 的指标计算能力已在
+`common/metrics.py` 中具备；HumanEval 首版仅接入 k=1。
 
 当前尚未实现或不应从现有字段推断：
 
@@ -429,6 +435,3 @@ Benchmark 客户端不感知。
 - 跨数据集混合指标；
 - logprobs 缺失时的客户端估算替代；
 - 幻觉、事实一致性、安全拒答和 Prompt Injection 等后续阶段评测。
-
-
-
