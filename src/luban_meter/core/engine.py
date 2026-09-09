@@ -89,11 +89,18 @@ class CoreEngine:
         except (OSError, json.JSONDecodeError):
             return
 
-        monitoring = raw.get("device_monitoring") if isinstance(raw, dict) else None
-        if monitoring is None:
+        if not isinstance(raw, dict):
             return
 
-        result.environment = {
-            **dict(result.environment),
-            "device_monitoring": monitoring,
-        }
+        env: dict[str, Any] = dict(result.environment)
+
+        # Hardware environment goes first for easy access
+        hw_env = raw.get("hardware_environment")
+        if hw_env is not None:
+            env["hardware_environment"] = hw_env
+
+        monitoring = raw.get("device_monitoring")
+        if monitoring is not None:
+            env["device_monitoring"] = monitoring
+
+        result.environment = env

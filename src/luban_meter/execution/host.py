@@ -1,9 +1,15 @@
-"""Execute a Benchmark tool directly on the current host."""
+"""Execute a Benchmark tool directly on the current host.
+
+Hardware monitoring is optional: if a Prometheus exporter URL is provided,
+a background daemon samples GPU/CPU metrics during the benchmark run.
+If no URL is provided, monitoring is skipped entirely.
+"""
 
 from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
 from luban_meter.core.errors import ExecutionError
 from luban_meter.core.models import (
@@ -24,16 +30,25 @@ class HostSession:
     def __init__(
         self,
         runner: LocalCommandRunner | None = None,
+        monitor_url: str | None = None,
+        monitor_interval: float = 1.0,
     ) -> None:
         self._runner = runner or LocalCommandRunner()
+        self._monitor_url = monitor_url
+        self._monitor_interval = monitor_interval
 
     def execute(self, run: ResolvedRun) -> RawRunArtifacts:
         run_dir, raw_dir, artifact_dir = prepare_run_directory(run)
         raw_result = raw_dir / "raw_result.json"
 
-        # Start hardware monitoring daemon before benchmark execution
-        daemon = DeviceMonitorDaemon(interval=1.0)
-        daemon.start()
+        # Start hardware monitoring daemon (only if exporter URL is provided)
+        daemon: DeviceMonitorDaemon | None = None
+        if self._monitor_url:
+            daemon = DeviceMonitorDaemon(
+                exporter_url=self._monitor_url,
+                interval=self._monitor_interval,
+            )
+            daemon.start()
 
         result = self._runner.run(
             CommandSpec(
@@ -51,8 +66,9 @@ class HostSession:
         write_command_logs(raw_dir, result.stdout, result.stderr)
 
         # Stop daemon and inject monitoring summary into raw_result.json
-        daemon.stop()
-        self._inject_monitoring_summary(raw_result, daemon.summary())
+        if daemon is not None:
+            daemon.stop()
+            self._inject_monitoring_summary(raw_result, daemon.summary())
 
         if result.returncode != 0:
             raise ExecutionError(
@@ -84,7 +100,27 @@ class HostSession:
 
         from dataclasses import asdict
 
-        data["device_monitoring"] = asdict(summary)
+        monitoring = asdict(summary)
+
+        # Generate charts from timeseries data
+        timeseries = monitoring.get("timeseries", [])
+        artifact_dir = raw_result.parent / "artifacts"
+        if timeseries:
+            try:
+                from luban_meter.result.charts import generate_monitoring_charts
+                charts = generate_monitoring_charts(timeseries, artifact_dir)
+                monitoring["charts"] = charts
+            except Exception:
+                pass  # matplotlib may not be installed
+
+        # Put hardware_environment at the top of the result for easy access
+        hw_env = monitoring.pop("hardware_environment", None)
+        if hw_env:
+            new_data = {"hardware_environment": hw_env}
+            new_data.update(data)
+            data = new_data
+
+        data["device_monitoring"] = monitoring
         try:
             with raw_result.open("w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)

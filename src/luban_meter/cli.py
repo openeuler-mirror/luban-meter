@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -26,6 +27,31 @@ def _parse_task_config(value: str) -> tuple[str, Path]:
             "task config must use TASK=PATH with non-empty values"
         )
     return task, Path(config)
+
+
+def _add_monitor_args(parser: argparse.ArgumentParser) -> None:
+    """Add hardware monitoring CLI arguments to a subparser."""
+    monitor = parser.add_argument_group("hardware monitoring")
+    monitor.add_argument(
+        "--monitor-url",
+        help="Prometheus exporter URL for hardware monitoring "
+        "(e.g. http://43.138.110.236:9400). "
+        "If omitted, hardware monitoring is disabled.",
+    )
+    monitor.add_argument(
+        "--monitor-interval",
+        type=float,
+        default=1.0,
+        help="Sampling interval in seconds (default: 1.0)",
+    )
+
+
+def _apply_monitor_env(args) -> None:
+    """Export monitor args as environment variables for ExecutionManager."""
+    if getattr(args, "monitor_url", None):
+        os.environ["LUBAN_MONITOR_URL"] = args.monitor_url
+    if getattr(args, "monitor_interval", None):
+        os.environ["LUBAN_MONITOR_INTERVAL"] = str(args.monitor_interval)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -55,6 +81,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--model-name", help="Logical or served model name")
     run.add_argument("--output", type=Path, default=Path("runs"))
     run.add_argument("--timeout", type=int, default=3600)
+    _add_monitor_args(run)
 
     suite = commands.add_parser("suite", help="Run one Benchmark Suite")
     suite.add_argument(
@@ -79,6 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Stop after the first failed task",
     )
+    _add_monitor_args(suite)
     return parser
 
 
@@ -94,6 +122,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "run":
+        _apply_monitor_env(args)
         request = RunRequest(
             run_id=create_run_id(args.module),
             module=args.module,
@@ -127,6 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if task in task_configs:
                 parser.error(f"duplicate --task-config for task {task!r}")
             task_configs[task] = config
+        _apply_monitor_env(args)
         request = SuiteRequest(
             suite_id=create_run_id(args.suite),
             suite=args.suite,
