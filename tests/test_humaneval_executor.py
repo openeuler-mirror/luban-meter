@@ -19,6 +19,7 @@ from luban_meter.benchmark.inference.humaneval.sandbox_runner import (
     RESULT_PREFIX,
     execute_payload,
 )
+from luban_meter.utils.docker_sandbox import DockerSandbox
 
 
 def sandbox_config() -> SandboxConfig:
@@ -127,9 +128,24 @@ def test_executor_uses_hardened_docker_arguments(
         return process
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    controls = []
+
+    def control(self, arguments, **kwargs):
+        controls.append(arguments)
+        return "container-id" if arguments[0] == "create" else ""
+
+    monkeypatch.setattr(DockerSandbox, "_control", control)
     result = DockerSandboxExecutor(sandbox_config()).execute("assert True")
     assert result.passed is True
-    command = created[0].command
+    assert created[0].command[3:] == [
+        "start",
+        "--attach",
+        "--interactive",
+        "container-id",
+    ]
+    command = controls[0]
+    assert command[0] == "create"
+    assert "--rm" not in command
     for option in (
         "--interactive",
         "--network",

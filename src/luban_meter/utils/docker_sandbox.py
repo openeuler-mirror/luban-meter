@@ -5,8 +5,15 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+SCOPE_ENV = "LUBAN_METER_SANDBOX_SCOPE"
+REGISTRY_ENV = "LUBAN_METER_SANDBOX_REGISTRY"
+SCOPE_LABEL = "io.luban-meter.sandbox-scope"
 
 
 class DockerSandboxUnavailable(RuntimeError):
@@ -72,9 +79,7 @@ class DockerSandbox:
                 env=self.environment(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DockerSandboxUnavailable(
-                f"Docker command failed: {exc}"
-            ) from exc
+            raise DockerSandboxUnavailable(f"Docker command failed: {exc}") from exc
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout).strip()[:1000]
             raise DockerSandboxUnavailable(f"Docker command failed: {detail}")
@@ -86,17 +91,13 @@ class DockerSandbox:
         try:
             info = json.loads(info_text)
         except json.JSONDecodeError as exc:
-            raise DockerSandboxUnavailable(
-                "Docker info returned invalid JSON"
-            ) from exc
+            raise DockerSandboxUnavailable("Docker info returned invalid JSON") from exc
         security_options = info.get("SecurityOptions") or []
         if not any("seccomp" in str(option) for option in security_options):
             raise DockerSandboxUnavailable("Docker daemon must enable seccomp")
         cgroup_version = str(info.get("CgroupVersion") or "")
         if cgroup_version not in {"1", "2"}:
-            raise DockerSandboxUnavailable(
-                "Docker daemon returned no cgroup version"
-            )
+            raise DockerSandboxUnavailable("Docker daemon returned no cgroup version")
 
         image_text = self._control(
             ["image", "inspect", "--format", "{{json .}}", self.config.image]
@@ -130,6 +131,8 @@ class DockerSandbox:
             "never",
             "--name",
             name,
+            "--label",
+            f"{SCOPE_LABEL}={os.environ.get(SCOPE_ENV, name)}",
             "--hostname",
             hostname,
             "--runtime",
@@ -138,10 +141,7 @@ class DockerSandbox:
             "none",
             "--read-only",
             "--tmpfs",
-            (
-                "/tmp:rw,noexec,nosuid,nodev,"
-                f"size={self.config.tmpfs_mb}m,mode=1777"
-            ),
+            (f"/tmp:rw,noexec,nosuid,nodev,size={self.config.tmpfs_mb}m,mode=1777"),
             "--cap-drop",
             "ALL",
             "--security-opt",
@@ -168,14 +168,89 @@ class DockerSandbox:
         ]
 
     def remove_container(self, name: str) -> None:
-        """Best-effort cleanup for a container that exceeded its deadline."""
+        """Remove an exact named container and verify removal; fail visibly."""
+        # Listing first distinguishes an already auto-removed container from
+        # daemon unavailability; never suppress a Docker failure.
+        ids = self._control(
+            ["ps", "-aq", "--no-trunc", "--filter", f"name=^/{name}$"]
+        ).split()
+        for container_id in ids:
+            self._control(["rm", "-f", container_id], timeout=10)
+        if self._control(["ps", "-aq", "--filter", f"name=^/{name}$"]):
+            raise DockerSandboxUnavailable(f"container still exists: {name}")
+
+    def create_container(self, *, name: str, hostname: str) -> str:
+        """Create without starting, so interrupted creates cannot execute code."""
+        arguments = self.build_run_command(name=name, hostname=hostname)[
+            len(self.client_prefix()) :
+        ]
+        arguments[0] = "create"
+        arguments.remove("--rm")
+        container_id = self._control(arguments)
+        if not container_id:
+            raise DockerSandboxUnavailable("Docker create returned no container ID")
+        return container_id
+
+
+class DockerSandboxScope:
+    """Parent-owned registry. Only the parent calls cleanup after child exit."""
+
+    def __init__(self, directory: Path, config: DockerSandboxConfig) -> None:
+        self.token = uuid.uuid4().hex
+        self.directory = directory / self.token
+        self.directory.mkdir(parents=True, exist_ok=False)
+        self.sandbox = DockerSandbox(config)
+        (self.directory / "owner.json").write_text(
+            json.dumps(
+                {
+                    "scope": self.token,
+                    "docker_host": config.docker_host,
+                    "docker_binary": config.docker_binary,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def environment(self) -> dict[str, str]:
+        return {
+            SCOPE_ENV: self.token,
+            REGISTRY_ENV: str(self.directory),
+        }
+
+    def cleanup(self, grace_seconds: float = 3.0) -> None:
+        """Reconcile interrupted creates; report ambiguity rather than success."""
+        pending = {p.name for p in self.directory.glob("*.pending")}
+        observed: set[str] = set()
+        deadline = time.monotonic() + grace_seconds
         try:
-            subprocess.run(
-                [*self.client_prefix(), "rm", "-f", name],
-                check=False,
-                capture_output=True,
-                timeout=10,
-                env=self.environment(),
+            while True:
+                rows = self.sandbox._control(
+                    [
+                        "ps",
+                        "-a",
+                        "--no-trunc",
+                        "--filter",
+                        f"label={SCOPE_LABEL}={self.token}",
+                        "--format",
+                        "{{.ID}} {{.Names}}",
+                    ]
+                )
+                for row in rows.splitlines():
+                    container_id, name = row.split()
+                    self.sandbox._control(["rm", "-f", container_id], timeout=10)
+                    observed.add(name + ".pending")
+                unresolved = pending - observed
+                if not rows and not unresolved:
+                    break
+                if time.monotonic() >= deadline:
+                    raise DockerSandboxUnavailable(
+                        "sandbox cleanup unconfirmed; interrupted creates or "
+                        f"remaining containers; registry: {self.directory}"
+                    )
+                time.sleep(0.1)
+        except Exception as exc:
+            (self.directory / "cleanup-error.txt").write_text(
+                str(exc), encoding="utf-8"
             )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+            raise
+        (self.directory / "cleanup-ok").touch()

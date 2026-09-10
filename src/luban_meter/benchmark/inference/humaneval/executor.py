@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from luban_meter.benchmark.inference.humaneval.sandbox_runner import RESULT_PREFIX
 from luban_meter.utils.docker_sandbox import (
+    REGISTRY_ENV,
     DockerSandbox,
     DockerSandboxConfig,
     DockerSandboxUnavailable,
@@ -81,10 +84,32 @@ class DockerSandboxExecutor:
         if not isinstance(program, str) or not program:
             raise ValueError("program must be a non-empty string")
         name = f"luban-humaneval-{uuid.uuid4().hex}"
-        command = self.sandbox.build_run_command(
+        registry = os.environ.get(REGISTRY_ENV)
+        pending = Path(registry) / (name + ".pending") if registry else None
+        if pending:
+            # Persist before Docker can receive the create request.
+            pending.touch(exist_ok=False)
+        try:
+            result = self._execute(program, name)
+        finally:
+            # SIGKILL cannot run this block; the outer scope owns recovery.
+            self.sandbox.remove_container(name)
+        if pending:
+            pending.rename(pending.with_suffix(".done"))
+        return result
+
+    def _execute(self, program: str, name: str) -> ExecutionResult:
+        container_id = self.sandbox.create_container(
             name=name,
             hostname="humaneval-sandbox",
         )
+        command = [
+            *self.sandbox.client_prefix(),
+            "start",
+            "--attach",
+            "--interactive",
+            container_id,
+        ]
         payload = json.dumps(
             {
                 "program": program,
@@ -152,9 +177,9 @@ class DockerSandboxExecutor:
                 )
             )
         except subprocess.TimeoutExpired:
-            self.sandbox.remove_container(name)
             process.kill()
             process.wait()
+            self.sandbox.remove_container(name)
             for thread in threads:
                 thread.join(timeout=1)
             return ExecutionResult(
@@ -168,6 +193,10 @@ class DockerSandboxExecutor:
                 error_type="TimeoutError",
                 error_message="sandbox exceeded the host-side timeout",
             )
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
         for thread in threads:
             thread.join(timeout=1)
 

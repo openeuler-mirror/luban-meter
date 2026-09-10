@@ -13,6 +13,7 @@ class CommandSpec:
     argv: Sequence[str]
     cwd: Path | None = None
     timeout: float | None = None
+    env: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)
