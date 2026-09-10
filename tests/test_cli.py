@@ -1,4 +1,5 @@
 import io
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -10,10 +11,15 @@ from luban_meter.suite.models import SuiteResult
 
 
 class CliTest(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.output_dir = directory.name
+
     def test_model_arguments_are_in_request(self) -> None:
         output = io.StringIO()
         result = BenchmarkResult(
-            schema_version="luban-meter.result/v1",
+            schema_version="luban-meter.result/v2",
             run_id="test-run",
             status="success",
             module="generate",
@@ -36,6 +42,8 @@ class CliTest(unittest.TestCase):
                         "/models/Qwen3-8B",
                         "--model-name",
                         "Qwen3-8B",
+                        "--output",
+                        self.output_dir,
                     ]
                 )
 
@@ -52,7 +60,7 @@ class CliTest(unittest.TestCase):
     def test_suite_task_config_is_forwarded(self) -> None:
         output = io.StringIO()
         result = SuiteResult(
-            schema_version="luban-meter.suite-result/v1",
+            schema_version="luban-meter.suite-result/v2",
             suite_id="test-suite",
             name="inference-standard",
             status="success",
@@ -72,6 +80,8 @@ class CliTest(unittest.TestCase):
                         "inference-standard",
                         "--task-config",
                         "humaneval=/data/config/humaneval.yaml",
+                        "--output",
+                        self.output_dir,
                     ]
                 )
 

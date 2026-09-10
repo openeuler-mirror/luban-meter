@@ -97,16 +97,24 @@ class SuiteTest(unittest.TestCase):
             self.assertFalse(hasattr(result, "vendor"))
             self.assertEqual([task.name for task in result.tasks], ["ttft", "accuracy"])
             self.assertTrue(all(task.status == "success" for task in result.tasks))
-            self.assertEqual(result.tasks[0].metrics, {"value": 10})
-            self.assertEqual(result.tasks[1].metrics, {"value": 99})
+            self.assertEqual(
+                result.schema_version, "luban-meter.suite-result/v2"
+            )
+            self.assertEqual(result.tasks[0].output["metrics"], {"value": 10})
+            self.assertEqual(result.tasks[1].output["metrics"], {"value": 99})
             for task in result.tasks:
                 task_result = json.loads(Path(task.result).read_text(encoding="utf-8"))
                 self.assertEqual(task_result["status"], "success")
+                self.assertEqual(task.output, task_result)
             suite_result = root / "runs" / request.suite_id / "suite_result.json"
             self.assertTrue(suite_result.is_file())
             suite_payload = json.loads(suite_result.read_text(encoding="utf-8"))
-            self.assertEqual(suite_payload["tasks"][0]["metrics"], {"value": 10})
-            self.assertEqual(suite_payload["tasks"][1]["metrics"], {"value": 99})
+            self.assertEqual(
+                suite_payload["tasks"][0]["output"]["metrics"], {"value": 10}
+            )
+            self.assertEqual(
+                suite_payload["tasks"][1]["output"]["metrics"], {"value": 99}
+            )
 
     def test_loads_bundled_inference_standard_suite(self) -> None:
         definition = SuiteLoader().load("inference-standard")

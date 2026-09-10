@@ -15,6 +15,40 @@ from luban_meter.benchmark.generate.common.statistics import (
     scalar,
     summarize,
 )
+from luban_meter.result.report_spec import table
+
+REPORT = {
+    "tables": [
+        table(
+            "服务状态",
+            "/server_status",
+            {
+                "/num_requests_running/mean": "运行请求 Mean",
+                "/num_requests_waiting/mean": "等待请求 Mean",
+                "/kv_cache_usage_perc/mean": "KV Cache 使用率 Mean",
+            },
+        ),
+        table(
+            "服务吞吐",
+            "/throughput",
+            {
+                "/request_throughput": "请求吞吐",
+                "/generation_token_throughput": "生成 Token 吞吐",
+                "/prompt_token_throughput": "输入 Token 吞吐",
+            },
+        ),
+        table(
+            "服务延迟",
+            "/latency_decomposition",
+            {
+                "/ttft/p50": "TTFT P50",
+                "/ttft/p99": "TTFT P99",
+                "/tpot/p50": "TPOT P50",
+                "/tpot/p99": "TPOT P99",
+            },
+        ),
+    ]
+}
 
 
 def _object_list(value: Any, name: str) -> list[Mapping[str, Any]]:
@@ -356,6 +390,7 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
             "successful_snapshot_count": len(snapshots),
             "total_snapshot_count": len(raw_snapshots),
             "measurement": "vllm_metrics_aggregation",
+            "report": REPORT,
         }
     )
 

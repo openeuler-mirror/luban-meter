@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 from luban_meter.core.models import (
     BenchmarkResult,
@@ -14,6 +15,8 @@ from luban_meter.core.registry import BenchmarkRegistry
 from luban_meter.execution.manager import ExecutionManager
 from luban_meter.execution.session import ExecutionSession
 from luban_meter.result.manager import ResultManager
+from luban_meter.result.schema import validate_result
+from luban_meter.utils.json_io import to_jsonable
 
 
 class CoreEngine:
@@ -48,15 +51,22 @@ class CoreEngine:
 
             # Inject device monitoring summary into result.environment
             self._inject_device_monitoring(result, artifacts)
+
+            stage = "validate_result"
+            validate_result(to_jsonable(result))
         # The Engine is the Run boundary: any tool, execution, or processor
         # failure must be converted into a diagnostic result.json.
         except Exception as exc:  # noqa: BLE001
+            environment = getattr(result, "environment", {})
             result = self._result_manager.failure(
                 request=request,
                 stage=stage,
                 error=exc,
                 parameters=resolved.parameters if resolved is not None else {},
+                artifacts=artifacts,
             )
+            if isinstance(environment, Mapping):
+                result.environment = dict(environment)
         finally:
             if session is not None:
                 try:

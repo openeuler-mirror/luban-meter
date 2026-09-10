@@ -6,6 +6,26 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from luban_meter.benchmark.inference.common.metrics import pass_at_k
+from luban_meter.result.report_spec import bar, table
+
+REPORT = {
+    "tables": [
+        table(
+            "代码评测得分",
+            "/task_view/humaneval",
+            {
+                "/pass_at_1": "Pass@1",
+                "/total_tasks": "总任务数",
+                "/passed": "通过",
+                "/parse_failed": "解析失败",
+                "/service_failed": "服务失败",
+                "/sandbox_failed": "沙箱失败",
+                "/execution_timeout": "执行超时",
+            },
+            charts=[bar("/pass_at_1")],
+        )
+    ]
+}
 
 SCORER_VERSION = "humaneval-scorer-v1"
 SAMPLE_STATUSES = ("success", "parse_failed", "service_failed", "sandbox_failed")
@@ -124,6 +144,7 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
             "parse_failed_samples": parse_failed,
             "service_failed_samples": service_failed,
             "sandbox_failed_samples": sandbox_failed,
+            "report": REPORT,
         }
     )
     error = None

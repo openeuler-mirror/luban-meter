@@ -34,6 +34,7 @@ class SuiteRequest:
     timeout: int = 3600
     fail_fast: bool = False
     task_configs: Mapping[str, Path] = field(default_factory=dict)
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ class SuiteTaskResult:
     status: str
     run_id: str | None = None
     result: str | None = None
-    metrics: Mapping[str, Any] | None = None
+    output: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -54,3 +55,4 @@ class SuiteResult:
     name: str
     status: str
     tasks: tuple[SuiteTaskResult, ...]
+    metadata: Mapping[str, Any] = field(default_factory=dict)

@@ -33,6 +33,7 @@ class RunRequest:
     model_name: str | None
     output_dir: Path
     timeout: int = 3600
+    display_name: str | None = None
 
 
 @dataclass(frozen=True)

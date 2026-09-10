@@ -9,6 +9,43 @@ from luban_meter.benchmark.generate.common.statistics import (
     scalar,
     summarize,
 )
+from luban_meter.result.report_spec import line, table
+
+REPORT = {
+    "tables": [
+        table(
+            "在线性能",
+            "/cases",
+            {
+                "/input_length": "输入长度",
+                "/output_length": "输出长度",
+                "/request_rate": "请求速率 (req/s)",
+                "/request_outcome": "状态",
+                "/service_view/successful_requests": "成功请求",
+                "/service_view/failed_requests": "失败请求",
+                "/service_view/request_throughput": "请求吞吐",
+                "/service_view/output_token_throughput": "输出吞吐",
+                "/request_view/ttft/p50": "TTFT P50",
+                "/request_view/ttft/p99": "TTFT P99",
+                "/request_view/tpot/p50": "TPOT P50",
+                "/request_view/tpot/p99": "TPOT P99",
+            },
+            charts=[
+                line(
+                    "/request_rate",
+                    metric,
+                    ["/input_length", "/output_length"],
+                )
+                for metric in (
+                    "/service_view/request_throughput",
+                    "/service_view/output_token_throughput",
+                    "/request_view/ttft/p50",
+                    "/request_view/ttft/p99",
+                )
+            ],
+        )
+    ]
+}
 
 
 def numeric(record: Mapping[str, Any], name: str) -> float:
@@ -381,6 +418,7 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
             "total_successful_requests": total_successful,
             "total_failed_requests": total_failed,
             "request_metrics_source": "same_case_client_streaming_timeline",
+            "report": REPORT,
         }
     )
     return {
