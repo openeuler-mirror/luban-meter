@@ -71,6 +71,7 @@ src/luban_meter/
 ├── benchmark/
 │   ├── generate/
 │   │   ├── common/
+│   │   │   ├── device_monitor.py
 │   │   │   ├── prometheus.py
 │   │   │   └── statistics.py
 │   │   ├── serving-online/
@@ -99,7 +100,11 @@ src/luban_meter/
 │   ├── models.py
 │   └── config.py
 ├── execution/
+│   ├── host.py
+│   ├── manager.py
+│   └── device_monitor.py
 ├── result/
+│   └── charts.py
 └── suite/
     └── definitions/
 ```
@@ -136,13 +141,25 @@ inference   ceval,cmmlu,gsm8k,humaneval
 
 ### 硬件监控
 
-所有 generate 模块的 Benchmark 在执行时，框架会自动启动一个后台守护线程，在
-整个 Benchmark 运行期间周期性采集设备指标（利用率、显存、功耗、温度），并在
-结束后聚合为平均值注入 `result.json` 的 `environment.device_monitoring` 字段。
-硬件检测工具由 `common/device_monitor.py` 提供，支持 NVIDIA / 华为昇腾 / AMD /
-寒武纪 / 摩尔线程 / 壁仞 / 燧原等厂商。
+硬件监控是**可选功能**。用户通过 CLI `--monitor-url` 参数指定 Prometheus
+exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 端点
+周期性采集硬件指标（GPU 利用率、功耗、温度、显存 + CPU 利用率、内存）。
+不指定该参数时监控完全跳过，零开销。
 
-守护线程的启动与停止由 `HostSession.execute()` 管理，无需 Benchmark 自身处理。
+采集方式：
+
+- 通过 HTTP 拉取 Prometheus text format，解析 DCGM exporter 和 node_exporter
+  指标，不依赖 SSH 或本地命令执行；
+- 无密码、无凭据，exporter 的 `/metrics` 端点为公开 HTTP 接口。
+
+监控守护线程的启动与停止由 `HostSession.execute()` 管理，无需 Benchmark 自身
+处理。采集结果注入 `raw_result.json` 和 `result.json` 的
+`environment.device_monitoring` 字段，包含：
+
+- `hardware_environment`：静态硬件环境（GPU 型号、CPU、内存总量）；
+- `devices[]`：每张卡的 avg/p50/p90/p99 统计；
+- `timeseries[]`：每采样周期的完整快照；
+- `charts`：折线图 PNG（GPU 利用率/功耗/温度/显存 + CPU 利用率/内存）。
 
 ## 5. Generate 与 Inference 的边界
 

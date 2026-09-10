@@ -753,7 +753,10 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 - 通用 Mean、P50、P90、P99、Min、Max 和 Stddev；
 - Engine KV Cache 容量环境信息；
 - SLO 配置与熔断机制（Case 级 P99 E2EL 超阈值时跳过后续 Case）；
-- Goodput 计算（满足 SLO 的有效请求吞吐，区分有量无质与有效产出）。
+- Goodput 计算（满足 SLO 的有效请求吞吐，区分有量无质与有效产出）；
+- 可选的硬件监控：通过 Prometheus exporter（DCGM exporter + node_exporter）
+  周期采集 GPU 利用率/功耗/温度/显存和 CPU/内存指标，输出 avg/p50/p90/p99
+  统计、完整 timeseries 和折线图，注入 `environment.device_monitoring`。
 
 当前尚未实现或不应从现有字段推断：
 

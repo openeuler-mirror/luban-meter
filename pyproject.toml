@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=7.4",
+  "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -40,3 +41,21 @@ luban_meter = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 99
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E = pycodestyle errors (PEP 8)
+# F = pyflakes (unused imports, undefined names, etc.)
+# W = pycodestyle warnings
+# I = isort (import ordering)
+select = ["E", "F", "W", "I"]
+ignore = [
+  "E501",  # line length handled by formatter
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["luban_meter"]
