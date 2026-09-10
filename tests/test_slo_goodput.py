@@ -10,7 +10,6 @@ Covers the M1 milestone:
 from __future__ import annotations
 
 import importlib.util
-import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch

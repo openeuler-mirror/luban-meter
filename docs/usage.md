@@ -49,6 +49,8 @@ luban-meter run \
 | `--model-name` | 否 | 逻辑模型名或在线服务模型名 |
 | `--output` | 否 | 结果根目录，默认 `runs` |
 | `--timeout` | 否 | 执行超时秒数 |
+| `--monitor-url` | 否 | Prometheus exporter 地址，启用硬件监控 |
+| `--monitor-interval` | 否 | 硬件监控采样间隔秒数，默认 `1.0` |
 
 框架按以下路径解析脚本：
 
@@ -57,14 +59,35 @@ src/luban_meter/benchmark/<module>/<benchmark>/benchmark.py
 src/luban_meter/benchmark/<module>/<benchmark>/result.py
 ```
 
-所有 generate 模块的 Benchmark 在执行前会自动检测硬件并输出摘要信息，例如：
+### 硬件监控（可选）
 
-```text
-[Device Monitor] Detected 8 x 910B2 (ascend) via npu-smi
-  [ascend] Device 0: 910B2
-  [ascend] Device 1: 910B2
-  ...
+通过 `--monitor-url` 指定 Prometheus exporter 地址后，框架在 Benchmark 运行
+期间通过 HTTP GET `/metrics` 端点周期性采集硬件指标（GPU 利用率、功耗、温度、
+显存 + CPU 利用率、内存）。不指定该参数时监控完全跳过，零开销。
+
+支持的 exporter：
+
+- **DCGM exporter**（NVIDIA GPU）— 默认端口 9400，提供 `DCGM_FI_DEV_*` 系列指标
+- **node_exporter**（CPU/内存）— 默认端口 9100，提供 `node_cpu_*`、`node_memory_*` 指标
+
+通常 DCGM exporter 已包含 node_exporter 的 CPU/内存指标，只需指定一个 URL。
+
+```bash
+luban-meter run \
+  --module generate \
+  --benchmark serving-online \
+  --config config.yaml \
+  --monitor-url http://43.138.110.236:9400 \
+  --monitor-interval 1.0
 ```
+
+监控数据注入 `raw_result.json` 和 `result.json` 的 `environment.device_monitoring`
+字段，包含：
+
+- `hardware_environment`：静态硬件环境（GPU 型号、CPU、内存总量）
+- `devices[]`：每张卡的 avg/p50/p90/p99 统计
+- `timeseries[]`：每采样周期的完整快照
+- `charts`：6 张折线图 PNG（GPU 利用率/功耗/温度/显存 + CPU 利用率/内存）
 
 ## 4. 在线生成服务测试
 
@@ -216,6 +239,8 @@ Suite 参数：
 | `--timeout` | 否 | 单任务默认超时 |
 | `--fail-fast` | 否 | 首个失败后停止调度 |
 | `--task-config TASK=PATH` | 否 | 替换指定 Suite 任务的配置 YAML，可重复使用 |
+| `--monitor-url` | 否 | Prometheus exporter 地址，启用硬件监控 |
+| `--monitor-interval` | 否 | 硬件监控采样间隔秒数，默认 `1.0` |
 
 ## 9. 结果目录
 

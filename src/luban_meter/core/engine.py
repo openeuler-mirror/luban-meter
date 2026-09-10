@@ -92,7 +92,7 @@ class CoreEngine:
         if not isinstance(raw, dict):
             return
 
-        env: dict[str, Any] = dict(result.environment)
+        env: dict[str, object] = dict(result.environment)
 
         # Hardware environment goes first for easy access
         hw_env = raw.get("hardware_environment")
