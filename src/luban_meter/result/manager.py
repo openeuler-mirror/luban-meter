@@ -16,7 +16,9 @@ from luban_meter.core.models import (
     ResolvedRun,
     RunRequest,
 )
+from luban_meter.result.schema import RESULT_SCHEMA, validate_result
 from luban_meter.result.writer import ResultWriter
+from luban_meter.utils.json_io import to_jsonable
 
 
 class ResultManager:
@@ -93,11 +95,13 @@ class ResultManager:
         stage: str,
         error: Exception,
         parameters: Mapping[str, Any],
+        artifacts: RawRunArtifacts | None = None,
     ) -> BenchmarkResult:
         return self._result(
             request,
             status="failed",
             parameters=parameters,
+            artifacts=artifacts,
             metadata={"failure_stage": stage},
             error={
                 "type": type(error).__name__,
@@ -106,6 +110,7 @@ class ResultManager:
         )
 
     def write(self, request: RunRequest, result: BenchmarkResult) -> None:
+        validate_result(to_jsonable(result))
         self._writer.write(
             request.output_dir / request.run_id / "result.json",
             result,
@@ -179,7 +184,7 @@ class ResultManager:
             }
 
         return BenchmarkResult(
-            schema_version="luban-meter.result/v1",
+            schema_version=RESULT_SCHEMA,
             run_id=request.run_id,
             status=status,
             module=request.module,
@@ -195,6 +200,13 @@ class ResultManager:
             parameters=dict(parameters),
             metrics=dict(metrics or {}),
             artifacts=artifact_data,
-            metadata=dict(metadata or {}),
+            metadata={
+                **dict(metadata or {}),
+                **(
+                    {"display_name": request.display_name}
+                    if request.display_name
+                    else {}
+                ),
+            },
             error=error,
         )

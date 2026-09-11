@@ -157,14 +157,17 @@ def _parse_prom_simple(text: str, metric_name: str) -> float | None:
 # Device detection (from exporter)
 # ---------------------------------------------------------------------------
 
-def detect_devices(metrics_text: str | None = None, exporter_url: str | None = None) -> list[DeviceInfo]:
+def detect_devices(
+    metrics_text: str | None = None,
+    exporter_url: str | None = None,
+) -> list[DeviceInfo]:
     """Detect GPUs from DCGM exporter metrics."""
     if metrics_text is None and exporter_url:
         metrics_text = _fetch_metrics(exporter_url)
     if not metrics_text:
         return []
 
-    # DCGM exporter exposes DCGM_FI_DEV_NAME as a string metric
+    # Retain support for explicit device-name fields.
     name_entries = _parse_prom_str_value(metrics_text, "DCGM_FI_DEV_NAME")
     if not name_entries:
         # Fall back: infer device count from DCGM_FI_DEV_GPU_UTIL
@@ -182,7 +185,7 @@ def detect_devices(metrics_text: str | None = None, exporter_url: str | None = N
                 vendor="nvidia",
                 tool="dcgm-exporter",
                 index=idx,
-                name=f"GPU-{idx}",
+                name=labels.get("modelName") or f"GPU-{idx}",
             ))
         return devices
 
@@ -197,7 +200,7 @@ def detect_devices(metrics_text: str | None = None, exporter_url: str | None = N
             vendor="nvidia",
             tool="dcgm-exporter",
             index=idx,
-            name=name_val or f"GPU-{idx}",
+            name=labels.get("modelName") or name_val or f"GPU-{idx}",
         ))
     return devices
 

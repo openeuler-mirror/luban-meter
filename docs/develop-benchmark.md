@@ -181,6 +181,136 @@ def process(raw_result):
 `result.py` 应尽量只依赖 Python 标准库或 Benchmark 公共工具，不重新调用模型、
 服务或硬件运行时。
 
+### 6.1 统一的 result.json v2
+
+`ResultManager` 为所有脚本构造相同的外层结构，脚本无需自行拼接这些字段。
+成功、部分失败和失败结果均使用 `luban-meter.result/v2`：
+
+```json
+{
+  "schema_version": "luban-meter.result/v2",
+  "run_id": "generate-example",
+  "status": "success",
+  "module": "generate",
+  "benchmark": "custom",
+  "config": "custom.yaml",
+  "model": {"name": "model-a", "path": null},
+  "environment": {},
+  "parameters": {"batch_size": 4},
+  "metrics": {"throughput": {"value": 120, "unit": "token/s"}},
+  "artifacts": {},
+  "metadata": {"display_name": "第一次测试"},
+  "error": null
+}
+```
+
+- `status` 为 `success`、`partial_failed` 或 `failed`。
+- `model`、`environment`、`parameters`、`metrics`、`artifacts`、`metadata`
+  均为字典；`error` 为字典或 null。
+- **`metrics` 内部没有强制结构**，可以使用普通数值、嵌套字典和 Case 列表。
+  指标名称、语义和计算方式由 Benchmark 负责。`{value, unit}` 和带 `unit`
+  的统计字典是可选约定，报告会识别其单位。
+- `raw_result.json` 是采集阶段的另一份文件，继续使用 `luban-meter.raw/v1`。
+  本次升级的是最终结果协议；报告仅接受最终结果 v2，不兼容旧 v1。
+
+Core 在运行异常处理范围内校验最终结果。脚本返回非法的结果字段（如非字典
+`error`）时，保存 `status=failed` 的诊断结果，记录 `failure_stage` 和错误原因，
+并保留已产生的原始产物链接、已读入的环境信息。Suite 将其视为失败任务，继续
+执行后续任务或遵循 `--fail-fast` 跳过后续任务。
+
+### 6.2 报告声明（可选）
+
+新脚本无需向报告工具注册名称。只有 `metrics` 字典时，报告自动遍历嵌套字典和
+列表，以 JSON Pointer 路径展示前 30 个数值或 null 指标；CSV 保留所有数值和
+null 叶子。字符串、布尔值和原始逐请求文本保留在 JSON 中，不进入自动数值摘要。
+
+若需要指定核心指标、Case 表格和图表，在 `process()` 返回的 `metadata.report`
+中增加声明。例如：
+
+```python
+from luban_meter.result.report_spec import line, table
+
+
+def process(raw_result):
+    return {
+        "metrics": {
+            "cases": [
+                {
+                    "batch_size": 4,
+                    "input_length": 128,
+                    "throughput": {"value": 120, "unit": "token/s"},
+                }
+            ]
+        },
+        "metadata": {
+            "report": {
+                "tables": [
+                    table(
+                        "吞吐摘要",
+                        "/cases",
+                        {
+                            "/batch_size": "Batch Size",
+                            "/input_length": "输入长度",
+                            "/throughput": "吞吐量",
+                        },
+                        charts=[
+                            line(
+                                "/batch_size",
+                                "/throughput",
+                                ["/input_length"],
+                            )
+                        ],
+                    )
+                ]
+            }
+        },
+    }
+```
+
+声明是普通 JSON 数据，随 `result.json` 保存。导出历史 v2 文件无需加载原脚本。
+
+| 字段 | 约定 |
+|---|---|
+| `tables` | 按显示顺序排列的表格列表 |
+| `table.title` | 表格标题 |
+| `table.path` | 相对 `metrics` 的 JSON Pointer；空字符串表示整个字典 |
+| `table.columns` | `{"path": "/...", "label": "..."}` 列表，路径相对每行记录 |
+| `table.mapping` | 为 true 时将字典转成 `{"key": 名称, "value": 指标}` 行，适合学科得分 |
+| `table.charts` | 可选图表列表，图表紧跟对应表格 |
+| `chart.type` | `line` 或 `bar`，分别由 `line()`、`bar()` 构造 |
+| `chart.x`、`chart.y` | 相对记录的指标路径；折线图必须有数值 x，柱状图可省略 x |
+| `chart.group_by` | 固定条件的路径列表，每组单独绘图，避免连接不同条件的 Case |
+
+路径中的 `/`、`~` 分别编码为 `~1`、`~0`；例如键名 `a/b` 使用 `/a~1b`。
+表格路径可以指向单个字典或字典列表；统计值可直接选择 `/latency/p99`。
+表格和图表保留 `table.path` 上级的单位，子字段自己的 `unit`（包括空字符串）
+可以覆盖继承单位；`count` 按计数展示。`mapping` 表格中的名称列不继承指标单位，
+字符串 `unit` 字段作为单位元数据，不单独生成一行指标。
+缺失值在表格显示 `—`、CSV 留空，折线保留缺口；0 是正常数值。
+没有可用数值时不生成图表。声明格式错误时回退到自动摘要并记录原因，完整结果
+仍保留在 JSON 中。报告不推断不同运行之间的对应关系，也不计算差值或百分比。
+
+### 6.3 效果评测的条件摘要
+
+`module=inference` 的报告在硬件总览之后、指标表之前展示“评测条件”，控制台
+同步展示。该摘要读取通用字段，不按 Benchmark 名称注册，`metrics` 协议不变。
+
+- `metadata` 优先提供实际模型、数据集、`split`、`sample_count`、`eval_mode`、
+  `prompt_format`、`prompt_version`、`few_shot`、`scorer_version`、解码参数等；
+- 模型名称缺少元数据记录时读取 `model.name`；模型版本可由
+  `metadata.model_version` 或 `model.version` 提供。推理引擎及版本读取
+  `metadata` 或 `environment` 中的 `engine`、`engine_version`；
+- 其余同名字段可回退到 `parameters`，回退值标注“配置”，不当作额外测量结果；
+- 样本选择显示 `max_samples`、`shuffle`、`seed`；若已有 `dataset_sha256` 或
+  `few_shot_path`，同时展示。Few-shot 数量表示保存的设置，不推断实际示例数；
+- 必要字段完全缺失时显示“未记录”；显式 `null`、空列表、0、false 按原值
+  展示，不能因其为空而改用配置值。例如 ppl 结果中的 `max_tokens=null` 和
+  `stop=[]` 保持原样；
+- 仅提取上述摘要，不展开 Prompt 全文，不查询硬件或服务，不推测版本和取值。
+
+CSV 继续只导出 `metrics` 中的数值与 null 指标；完整参数、环境和元数据保留
+在 JSON 中。自定义脚本不提供这些可选条件时仍可导出报告，缺项按上述规则展示。
+
 ## 7. Generate Benchmark 指南
 
 生成性能脚本应明确观察边界：
@@ -253,13 +383,27 @@ tasks:
 
   - name: metrics
     module: generate
-    benchmark: vllm-metrics
+    benchmark: vllm_metrics
     config: configs/vllm-metrics.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
-`CoreEngine` 独立生成 `result.json`。框架自动为每个 generate 任务启动硬件
-监控守护线程，采集结果写入 `result.json` 的 `environment.device_monitoring`。
+`CoreEngine` 独立生成 `result.json`。启用 `--monitor-url` 时，采集结果写入
+`result.json` 的 `environment.device_monitoring`。
+
+`SuiteRunner` 写入 `luban-meter.suite-result/v2`：`tasks` 按 YAML 中的任务顺序
+排列，每项保留任务名、模块、脚本、状态、run_id、结果路径，并在 `output` 内嵌
+完整的 `luban-meter.result/v2`。被 fail-fast 跳过的任务 `output` 为 null。
+因此 Suite 报告可只用 `suite_result.json` 生成，指标提取不依赖各任务文件存在。
+
+CLI 的 `run` 和 `suite` 在结果保存后自动生成报告；直接调用 `CoreEngine` 或
+`SuiteRunner` 的 Python 接口只写结果，可再通过 `luban-meter report` 导出。
+多份 Suite 输入各自产生独立报告，任务参数不同也不做匹配或比较。
+
+报告在每个 Benchmark 区块开头，将 `environment.hardware_environment` 和
+`environment.device_monitoring` 合并绘制为一张硬件总览图。环境字段按记录
+展示，监控摘要保留已存数值；`timeseries` 中同一设备缺失的采样不会补零。
+只有环境信息也可生成图，不要求 Benchmark 额外声明硬件报告布局。
 
 ## 10. 测试要求
 
@@ -273,6 +417,8 @@ Suite 不声明硬件环境。所有任务使用启动命令时的当前环境�
 - [ ] 配置字段有类型、范围和边界校验；
 - [ ] 指标单位、样本数和观察边界明确；
 - [ ] `result.json` 中的模块、脚本、模型和参数正确；
+- [ ] 成功和失败的最终结果符合 v2，`metrics` 为字典；
+- [ ] 使用 `luban-meter report --input <result.json>` 验证指标、单位和可选图表；
 - [ ] 不按硬件品牌复制脚本或引入路由分支；
 - [ ] `ruff check src tests` 通过；
 - [ ] `pytest -q` 通过；

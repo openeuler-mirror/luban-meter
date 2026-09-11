@@ -10,6 +10,48 @@ from luban_meter.benchmark.generate.common.statistics import (
     scalar,
     summarize,
 )
+from luban_meter.result.report_spec import line, table
+
+REPORT = {
+    "tables": [
+        table(
+            "Engine 性能",
+            "/cases",
+            {
+                "/input_length": "输入长度",
+                "/output_length": "输出长度",
+                "/request_batch_size": "Batch Size",
+                "/batch_metrics/aggregate_prefill_token_throughput/mean": (
+                    "Engine Prefill 吞吐 Mean"
+                ),
+                "/batch_metrics/aggregate_decode_token_throughput/mean": (
+                    "Engine Decode 吞吐 Mean"
+                ),
+                "/request_metrics/internal_ttft/p50": "Internal TTFT P50",
+                "/request_metrics/internal_ttft/p99": "Internal TTFT P99",
+                "/request_metrics/mean_decode_step_latency/p50": (
+                    "Decode Step P50"
+                ),
+                "/request_metrics/engine_execution_latency/p50": (
+                    "Engine E2E P50"
+                ),
+            },
+            charts=[
+                line(
+                    "/request_batch_size",
+                    metric,
+                    ["/input_length", "/output_length"],
+                )
+                for metric in (
+                    "/batch_metrics/aggregate_prefill_token_throughput/mean",
+                    "/batch_metrics/aggregate_decode_token_throughput/mean",
+                    "/request_metrics/internal_ttft/p50",
+                    "/request_metrics/internal_ttft/p99",
+                )
+            ],
+        )
+    ]
+}
 
 ENGINE_SLO_DIMENSIONS = (
     "internal_ttft_ms",
@@ -366,5 +408,8 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
                 process_case(case, engine_slo_config) for case in raw_cases
             ]
         },
-        "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+        "metadata": {
+            **(dict(metadata) if isinstance(metadata, Mapping) else {}),
+            "report": REPORT,
+        },
     }

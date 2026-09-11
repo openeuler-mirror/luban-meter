@@ -5,6 +5,25 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from luban_meter.result.report_spec import bar, table
+
+REPORT = {
+    "tables": [
+        table(
+            "总体得分",
+            "/task_view/gsm8k",
+            {
+                "/exact_match": "Exact Match",
+                "/total_samples": "总样本",
+                "/scored_samples": "有效评分",
+                "/service_failed": "服务失败",
+                "/parse_failed": "解析失败",
+            },
+            charts=[bar("/exact_match")],
+        )
+    ]
+}
+
 SCORER_VERSION = "metrics-v1"
 SAMPLE_STATUSES = ("success", "parse_failed", "service_failed")
 
@@ -105,6 +124,7 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
             "correct_samples": correct,
             "parse_failed_samples": parse_failed,
             "service_failed_samples": service_failed,
+            "report": REPORT,
         }
     )
     return {

@@ -1,4 +1,4 @@
-# LuBan-Meter Agent 开发指南
+# LuBan-Meter 团队 Agent 开发指南
 
 本文档面向参与 LuBan-Meter 开发的团队成员和 Agent，用于快速建立项目认知、定位
 代码入口，并按照一致的方式完成开发与验证。
@@ -13,60 +13,17 @@
 - [使用说明](docs/usage.md)
 - [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
 
-## 1. 当前状态与开发计划
+## 1. 开发入口与适用范围
 
-### 1.1 当前已有能力
+本文件是团队开发与审查的统一 Agent 指引，随项目纳入版本控制。
 
-LuBan-Meter 当前已经具备以下基础能力：
-
-- 按 `module + benchmark` 自动发现 Benchmark；
-- 通过 YAML 加载 Benchmark 配置；
-- 运行单个 Benchmark；
-- 通过 Suite 顺序编排多个 Benchmark；
-- 将一次运行划分为原始数据采集和指标处理两个阶段；
-- 输出 `raw_result.json`、`result.json` 和 Suite 汇总结果；
-- 保存运行身份、参数、指标、环境、产物和错误信息。
-- 可配置在线 SLO（TTFT、TPOT、E2EL）与服务 Goodput 有效吞吐量计算；
-- 可配置 Engine 内部 SLO 与独立的 Engine Goodput 计算；
-- P99 熔断机制，Case 超阈值时自动跳过后续 Case。
-
-当前已经实现两个 `generate` Benchmark：
-
-- `serving-online`：通过 OpenAI-compatible HTTP 流式接口测试在线生成服务；
-- `vllm-engine-offline`：调用 vLLM Engine 执行离线推理并采集内部阶段时间和吞吐数据，可按
-  Engine 内部 SLO 判定 Engine Goodput。
-
-`benchmark/generate/common/` 当前提供流式响应处理、Token 计数和通用统计能力。
-
-`inference` 模块已部分落地，面向模型任务效果评测：
-
-- `inference/common/` 提供 OpenAI-compatible 在线服务调用（chat、completions +
-  echo logprobs）、本地数据集确定性加载、Prompt 模板渲染、答案解析和指标计算
-  （Accuracy、Token F1、ROUGE、Pass@k、Perplexity，其中后几类计算能力已具备，
-  数据集评测待接入）等公共能力；
-- 已实现三个 Benchmark：`ceval` 和 `cmmlu`（四选一题目 Accuracy，支持
-  ppl/logprob 打分和 gen 生成抽取两种评测模式）以及 `gsm8k`（生成模式 +
-  数值答案 Exact Match 判分）；
-- 数据集只使用本地 json/jsonl 文件，离线准备脚本位于
-  `benchmark/inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k）。
-
-### 1.2 计划开发内容
-
-当前计划主要包括：
-
-- 补充 Queue、Scheduler 和 KV Cache 等服务端运行指标；
-- 增加 GPU 利用率、显存峰值、功耗和温度等设备数据采集；
-- 增加超时、OOM 和长时间稳定性测试；
-- 完善 Engine forward 阶段测试；
-- 建设跨运行结果的汇总报告；
-- 继续建设 `inference` 下的模型任务级评测（已完成 ceval、cmmlu、gsm8k），
-  补齐 HumanEval、SQuAD、摘要类和语言建模（WikiText）任务；
-- 为新增数据集接入 Token F1、ROUGE、Pass@k 和 Perplexity 等指标的端到端评测；
-- 建设 `inference` 任务的 Suite 编排与跨运行汇总报告；
-- 后续扩展幻觉、事实一致性、安全拒答和 Prompt Injection 等评测。
-
-开始新任务前，应先检查对应能力是否已经存在，并以当前代码和专题文档为准确认实现
-状态。
+- 开始任务时，先阅读本文件和任务相关的专题文档，再检查当前代码。
+- 当前模块、Benchmark 能力与开发计划以源码、架构说明及相关专题文档为准，
+  开发前核实目标能力是否已存在。
+- 若当前工作区存在 [.agents/local-instructions.md](.agents/local-instructions.md)，
+  同时读取其中的本地补充约定；该文件由开发者个人维护，不要求其他成员安装
+  相同的技能或工具。文件不存在时直接按本指南执行。
+- 已明确的用户要求优先；本地补充约定用于个人工作方式，不替代团队共同规范。
 
 ## 2. 架构与目录
 
@@ -103,19 +60,12 @@ Suite YAML
 ```text
 src/luban_meter/
 ├── benchmark/
-│   ├── generate/
-│   │   ├── common/
-│   │   ├── serving-online/
-│   │   └── vllm-engine-offline/
-│   └── inference/
-│       ├── common/
-│       ├── scripts/
-│       ├── ceval/
-│       ├── cmmlu/
-│       └── gsm8k/
+│   ├── generate/     # 生成式性能场景及 common 公共能力
+│   └── inference/    # 效果评测场景、common 能力及 scripts 数据准备
 ├── core/
 ├── execution/
 ├── result/
+├── reporting/
 ├── suite/
 │   └── definitions/
 └── utils/
@@ -127,6 +77,7 @@ src/luban_meter/
 - `core/`：请求模型、配置解析、Benchmark 发现和运行编排；
 - `execution/`：执行命令、会话和运行过程管理；
 - `result/`：原始结果处理、标准结果构造和写入；
+- `reporting/`：读取 v2 结果，导出单次运行的 Markdown、CSV 和静态图；
 - `suite/`：Suite 定义加载、校验和任务编排；
 - `utils/`：JSON 和运行标识等通用工具。
 
@@ -210,6 +161,55 @@ Benchmark 名称使用小写字母、数字、连字符或下划线，并以字�
 - 修改公开接口、配置或指标语义时，更新对应专题文档；
 - 功能依赖真实服务、模型或 Engine 时，在目标环境完成冒烟测试；
 - 任务包含代码交付时，再执行提交、推送和交付检查。
+
+### 4.3 新功能开发前的需求追问
+
+每次新增功能或扩展现有功能，必须先完成以下需求追问流程并获得用户确认，
+再开始功能实现。该流程适用于团队所有成员。
+
+工作区已安装 `grill-me` / `grilling` 技能时，读取 `.agents/skills/` 下对应
+`SKILL.md` 并执行；没有 Skill 调用工具时直接读取文件。未安装这些技能时，
+按下列完整流程执行，流程本身不依赖个人技能目录。
+
+- 先查阅当前代码与文档，确认已有能力；可查证的事实由 Agent 调查。
+- 按决策依赖分轮追问用户，每轮只问前置条件已明确的问题，并给出建议及取舍。
+- 覆盖目标与非目标、使用场景、输入输出、接口与兼容性、异常和边界、性能与资源
+  约束、验收标准；根据回答继续追问相关细节。
+- 汇总已确定的需求、设计约束和验收条件，待用户确认形成共同理解后开始实现。
+  沿用本次任务中已确认的决定；需求变化时追问受影响的分支。
+
+### 4.4 Python 代码规范
+
+新增和修改的 Python 代码遵循 [PEP 8](https://peps.python.org/pep-0008/)。
+
+- 使用 4 个空格缩进；代码行默认最多 79 字符，注释与文档字符串正文默认最多
+  72 字符。确需例外时，说明可读性或兼容性原因。
+- 函数、变量与模块使用 `snake_case`，类使用 `CapWords`，常量使用
+  `UPPER_CASE`；导入按标准库、第三方库、项目模块分组。
+- 按 PEP 8 检查空行、空格、换行、命名、导入和编程建议；保持公开接口兼容，
+  修改范围内统一风格。
+- 交付前对涉及的 Python 文件执行静态检查并人工审查工具未覆盖的规范。
+  使用 Ruff 时显式覆盖 `E`、`W`、`F` 规则及 79 字符行宽，例如
+  `ruff check --select E,W,F --line-length 79 <本次涉及的文件>`。
+  检查通过仅代表启用规则通过，不能替代完整的 PEP 8 审查。
+- 历史违规单独记录，避免顺带重排无关代码；工具缺失或检查未执行时如实说明。
+
+### 4.5 GoF 23 种设计模式选用
+
+设计模式仅在实际需要时使用。GoF 23 种设计模式可作为按需查阅的参考：
+
+- 创建型：工厂方法、抽象工厂、建造者、原型、单例。
+- 结构型：适配器、桥接、组合、装饰器、外观、享元、代理。
+- 行为型：责任链、命令、解释器、迭代器、中介者、备忘录、观察者、状态、策略、
+  模板方法、访问者。
+
+围绕实际变化点、模块职责和依赖关系选择适用模式，遵循其意图并采用符合 Python
+习惯的实现。优先复用现有抽象；函数、组合或简单数据结构足够时保留简单设计。
+无需为每个新功能逐项评估 23 种模式，也无需为未使用模式单独说明理由。
+
+采用设计模式时，说明它解决的具体问题、职责与协作方式、代价和测试方式。
+审查时检查实现是否符合选定模式的职责与协作约定，以及是否引入了没有实际需求
+支撑的抽象。
 
 ## 5. 指标与结果注意事项
 

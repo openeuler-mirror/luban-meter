@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from luban_meter.result.report_spec import bar, table
+
 SCORER_VERSION = "metrics-v1"
 SAMPLE_STATUSES = ("success", "parse_failed", "service_failed")
 
@@ -119,6 +121,33 @@ def process_choice_result(
             "correct_samples": correct,
             "parse_failed_samples": parse_failed,
             "service_failed_samples": service_failed,
+            "report": {
+                "tables": [
+                    table(
+                        "总体得分",
+                        f"/task_view/{benchmark}",
+                        {
+                            "/accuracy": "准确率",
+                            "/total_samples": "总样本",
+                            "/scored_samples": "有效评分",
+                            "/service_failed": "服务失败",
+                            "/parse_failed": "解析失败",
+                        },
+                        charts=[bar("/accuracy")],
+                    ),
+                    table(
+                        "分学科得分",
+                        f"/task_view/{benchmark}/accuracy_by_subject",
+                        {
+                            "/key": "学科",
+                            "/value": "准确率",
+                            "/value/count": "有效评分",
+                        },
+                        mapping=True,
+                        charts=[bar("/value", "/key")],
+                    ),
+                ]
+            },
         }
     )
     return {

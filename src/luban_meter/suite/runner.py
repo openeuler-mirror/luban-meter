@@ -5,13 +5,14 @@ from __future__ import annotations
 from luban_meter.core.engine import CoreEngine
 from luban_meter.core.errors import ConfigurationError
 from luban_meter.core.models import RunRequest
+from luban_meter.result.schema import SUITE_SCHEMA
 from luban_meter.suite.models import (
     SuiteDefinition,
     SuiteRequest,
     SuiteResult,
     SuiteTaskResult,
 )
-from luban_meter.utils.json_io import write_json_atomic
+from luban_meter.utils.json_io import to_jsonable, write_json_atomic
 from luban_meter.utils.run_id import create_run_id
 
 
@@ -63,6 +64,7 @@ class SuiteRunner:
                 model_name=request.model_name,
                 output_dir=tasks_dir,
                 timeout=task.timeout or request.timeout,
+                display_name=request.display_name,
             )
             result = self._engine.run(run_request)
             result_path = tasks_dir / run_id / "result.json"
@@ -74,7 +76,7 @@ class SuiteRunner:
                     status=result.status,
                     run_id=run_id,
                     result=str(result_path),
-                    metrics=dict(result.metrics),
+                    output=to_jsonable(result),
                 )
             )
             if result.status != "success" and request.fail_fast:
@@ -82,11 +84,16 @@ class SuiteRunner:
 
         status = self._suite_status(task_results)
         suite_result = SuiteResult(
-            schema_version="luban-meter.suite-result/v1",
+            schema_version=SUITE_SCHEMA,
             suite_id=request.suite_id,
             name=definition.name,
             status=status,
             tasks=tuple(task_results),
+            metadata=(
+                {"display_name": request.display_name}
+                if request.display_name
+                else {}
+            ),
         )
         write_json_atomic(suite_dir / "suite_result.json", suite_result)
         return suite_result

@@ -61,7 +61,8 @@ SuiteRequest(suite)
 → SuiteRunner
 → RunRequest 1 ... RunRequest N
 → 每个任务独立 result.json
-→ 每个任务 metrics 内嵌到 suite_result.json
+→ 每个任务完整 v2 结果内嵌到 suite_result.json
+→ CLI 按任务顺序生成 Suite 报告
 ```
 
 ## 3. 工程目录
@@ -153,10 +154,11 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
 - 无密码、无凭据，exporter 的 `/metrics` 端点为公开 HTTP 接口。
 
 监控守护线程的启动与停止由 `HostSession.execute()` 管理，无需 Benchmark 自身
-处理。采集结果注入 `raw_result.json` 和 `result.json` 的
-`environment.device_monitoring` 字段，包含：
+处理。采集结果写入 `raw_result.json.hardware_environment` 和
+`raw_result.json.device_monitoring`，再由 Core 分别注入最终结果的
+`environment.hardware_environment` 与 `environment.device_monitoring`。
+前者保存设备型号、CPU、内存总量等静态环境，后者包含：
 
-- `hardware_environment`：静态硬件环境（GPU 型号、CPU、内存总量）；
 - `devices[]`：每张卡的 avg/p50/p90/p99 统计；
 - `timeseries[]`：每采样周期的完整快照；
 - `charts`：折线图 PNG（GPU 利用率/功耗/温度/显存 + CPU 利用率/内存）。
@@ -220,7 +222,7 @@ python benchmark.py --request <request.json> --output <raw_result.json>
 
 ```json
 {
-  "schema_version": "luban-meter.result/v1",
+  "schema_version": "luban-meter.result/v2",
   "run_id": "generate-...",
   "status": "success",
   "module": "generate",
@@ -267,8 +269,37 @@ tasks:
 ```
 
 Suite 只编排任务，不改变运行环境，也不在任务间比较或平均不同语义的指标。
-`suite_result.json` 在每个 task 条目内嵌对应 `metrics` 作为统一摘要，同时保留
-每个任务的独立 `result.json`。
+`suite_result.json` 使用 `luban-meter.suite-result/v2`，在每个 task 的 `output`
+字段内嵌完整的 `luban-meter.result/v2`，同时保留每个任务的独立 `result.json`。
+被跳过的任务 `output` 为 null。
+
+## 8. 报告输出
+
+`ResultManager` 统一构造并校验 v2 结果外层；`metrics` 只要求为字典，内部结构
+和指标语义由 Benchmark 定义。报告模块 `reporting/` 不注册 Benchmark 名称，
+不调用评测脚本，只读取最终结果：
+
+```text
+result.json / suite_result.json (v2)
+→ reporting.data：读取外层结构和完整任务结果
+→ reporting.tables：按 metadata.report 声明提取摘要，或自动遍历数值指标
+→ reporting.charts：根据声明绘制单次运行的静态图
+→ reporting.render：Markdown、CSV、控制台摘要
+```
+
+`metadata.report` 是可选的纯数据声明，由各 Benchmark 的 `result.py` 与指标
+一起输出。缺少声明时仍支持通用报告，Markdown 展示前 30 个数值/null 指标，
+CSV 保留全部数值/null 叶子。原始文本和完整层级保留在 JSON 中。
+
+`reporting.hardware` 从环境和监控数据生成单张硬件总览 PNG，放在每个任务的
+评测指标之前。上方为已保存的环境与聚合摘要，下方为采样曲线；时间轴按设备
+身份对齐，缺失采样保留空缺。无需查询硬件或加载 Benchmark；没有采样记录时
+可以合并已有监控 PNG，只有环境信息时生成环境信息图。
+
+CLI 的 `run` 和 `suite` 在结果持久化之后生成报告，图表紧跟对应表格；报告
+失败会单独提示，不替换评测结果或改变评测状态。`report` 命令支持重复输入，
+每份输入独立导出，不进行跨运行比较或指标优劣分析。直接调用 Core/Suite
+Python 接口时只输出 JSON，可随后调用报告命令。
 
 ## 8. 扩展边界
 
