@@ -141,6 +141,18 @@ inference   ceval,cmmlu,gsm8k,humaneval,wikitext
 同语义配置，以保证比较边界一致；只有引擎专属能力才在名称中体现，例如
 `vllm-engine-offline`。
 
+`serving-online` 内部通过 `workload_mode` 参数支持两种工作负载：
+
+- **random**：通过 `/v1/completions` 发送精确长度 Token ID Prompt，遍历
+  `input_lengths × output_lengths × request_rates` 矩阵；
+- **dataset**：通过 `/v1/chat/completions` 发送 ShareGPT 真实对话 Prompt，
+  支持 Poisson、Gamma 和恒定到达过程调度请求。
+
+两种模式共用同一套 TTFT、ITL、TPOT、E2EL 指标计算逻辑，但 Case 维度和
+结果字段不同。random 模式的 Case 由 `input_length + output_length +
+request_rate` 确定，输出 Token 数与配置值严格校验；dataset 模式的 Case
+由 `request_rate + arrival_process` 确定，输入/输出 Token 数按分布统计。
+
 ### 硬件监控
 
 硬件监控是**可选功能**。用户通过 CLI `--monitor-url` 参数指定 Prometheus
@@ -174,7 +186,9 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
 - Prefill、Decode 与 Engine 内部时延；
 - Request/Token Throughput；
 - 固定请求速率、调度偏差与并发；
-- KV Cache 静态容量环境。
+- KV Cache 静态容量环境；
+- 真实数据集负载（ShareGPT 对话）与到达过程建模（Poisson、Gamma），
+  支持变长输入/输出分布统计和服务容量评估。
 
 ### inference
 

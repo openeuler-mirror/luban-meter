@@ -1,4 +1,12 @@
-"""Calculate online metrics for exact-length, fixed-rate serving cases."""
+"""Calculate online serving metrics for random and dataset workload modes.
+
+In **random** mode, every request in a case has identical input/output
+lengths, and token counts are validated against ``input_length`` /
+``output_length`` case fields.
+
+In **dataset** mode, input/output lengths vary per request.  Token counts
+are summarised as distributions rather than validated against fixed values.
+"""
 
 from __future__ import annotations
 
@@ -222,20 +230,29 @@ def process_case(
     raw_case: Mapping[str, Any],
     slo_config: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], int, int]:
-    input_length = positive_token_count(raw_case, "input_length")
-    output_length = positive_token_count(raw_case, "output_length")
     request_rate = positive_numeric(raw_case, "request_rate")
     duration_seconds = positive_numeric(raw_case, "benchmark_duration_seconds")
-    maximum_concurrency = positive_token_count(
-        raw_case, "maximum_request_concurrency"
-    )
+    maximum_concurrency = token_count(raw_case, "maximum_request_concurrency")
     peak_concurrency = token_count(raw_case, "peak_concurrent_requests")
     records = object_list(raw_case.get("requests"), "case requests")
     if not records:
         raise ValueError("case requests must not be empty")
 
-    successful = [record for record in records if record.get("status") == "success"]
-    failed = [record for record in records if record.get("status") != "success"]
+    # Detect workload mode: random cases have input_length/output_length,
+    # dataset cases do not.
+    is_random_mode = "input_length" in raw_case and "output_length" in raw_case
+    input_length: int | None = None
+    output_length: int | None = None
+    if is_random_mode:
+        input_length = positive_token_count(raw_case, "input_length")
+        output_length = positive_token_count(raw_case, "output_length")
+
+    successful = [
+        record for record in records if record.get("status") == "success"
+    ]
+    failed = [
+        record for record in records if record.get("status") != "success"
+    ]
     ttft_samples: list[float] = []
     itl_samples: list[float] = []
     tpot_samples: list[float] = []
@@ -252,8 +269,16 @@ def process_case(
         e2el_ms = numeric(record, "e2el_ms")
         input_tokens = token_count(record, "input_tokens")
         output_tokens = token_count(record, "output_tokens")
-        if input_tokens != input_length or output_tokens != output_length:
-            raise ValueError("successful request token counts must match the case")
+        if (
+            is_random_mode
+            and (
+                input_tokens != input_length
+                or output_tokens != output_length
+            )
+        ):
+            raise ValueError(
+                "successful request token counts must match the case"
+            )
         if e2el_ms < ttft_ms:
             raise ValueError("request e2el_ms must not be smaller than ttft_ms")
 
@@ -362,11 +387,24 @@ def process_case(
         request_outcome = "all_failed"
     else:
         request_outcome = "partial_failed"
+
+    case_info: dict[str, Any] = {
+        "request_rate": request_rate,
+    }
+    if is_random_mode:
+        case_info["input_length"] = input_length
+        case_info["output_length"] = output_length
+    else:
+        case_info["arrival_process"] = raw_case.get("arrival_process")
+        case_info["burstiness"] = raw_case.get("burstiness")
+        case_info["num_prompts"] = raw_case.get("num_prompts")
+        case_info["max_tokens"] = raw_case.get("max_tokens")
+        # Drop None values
+        case_info = {k: v for k, v in case_info.items() if v is not None}
+
     return (
         {
-            "input_length": input_length,
-            "output_length": output_length,
-            "request_rate": request_rate,
+            **case_info,
             "request_outcome": request_outcome,
             "request_view": request_view,
             "service_view": service_view,

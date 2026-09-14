@@ -1,4 +1,12 @@
-"""Collect exact-length online serving cases at fixed request rates."""
+"""Online serving benchmark with random and dataset workload modes.
+
+**random** mode sends exact-length token-ID prompts through
+``/v1/completions`` at a constant rate, varying input/output lengths.
+
+**dataset** mode sends real conversational prompts from a ShareGPT dataset
+through ``/v1/chat/completions`` and schedules their arrival using Poisson,
+Gamma, or constant inter-arrival distributions.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +14,7 @@ import argparse
 import itertools
 import json
 import math
+import random
 import threading
 import time
 import urllib.error
@@ -17,8 +26,11 @@ from typing import Any
 
 from luban_meter.benchmark.generate.common.statistics import percentile
 from luban_meter.benchmark.generate.common.streaming import (
+    collect_chat_stream,
     collect_completion_stream,
 )
+
+# ── CLI ──────────────────────────────────────────────────────────────────
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +49,9 @@ def load_request(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     if not isinstance(parameters, Mapping):
         raise TypeError("parameters must be an object")
     return dict(request), dict(parameters)
+
+
+# ── Parameter helpers ────────────────────────────────────────────────────
 
 
 def positive_integer(parameters: Mapping[str, Any], name: str, default: int) -> int:
@@ -158,6 +173,9 @@ def slo_config(parameters: Mapping[str, Any]) -> dict[str, float] | None:
     return config
 
 
+# ── HTTP helpers ─────────────────────────────────────────────────────────
+
+
 def request_headers(api_key: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -179,7 +197,9 @@ def post_json(
             value = json.load(response)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"POST {url} failed with HTTP {exc.code}: {detail}") from exc
+        raise RuntimeError(
+            f"POST {url} failed with HTTP {exc.code}: {detail}"
+        ) from exc
     if not isinstance(value, Mapping):
         raise TypeError(f"POST {url} returned a non-object response")
     return value
@@ -201,8 +221,13 @@ def discover_model(service_url: str, api_key: str, timeout: float) -> str:
         raise RuntimeError(f"serving endpoint returned no models from {url}")
     model = models[0].get("id") if isinstance(models[0], Mapping) else None
     if not isinstance(model, str) or not model:
-        raise RuntimeError(f"serving endpoint returned an invalid model from {url}")
+        raise RuntimeError(
+            f"serving endpoint returned an invalid model from {url}"
+        )
     return model
+
+
+# ── Random-mode helpers ──────────────────────────────────────────────────
 
 
 def tokenize_seed_prompt(
@@ -228,7 +253,10 @@ def tokenize_seed_prompt(
     if (
         not isinstance(tokens, list)
         or not tokens
-        or any(not isinstance(token, int) or isinstance(token, bool) for token in tokens)
+        or any(
+            not isinstance(token, int) or isinstance(token, bool)
+            for token in tokens
+        )
         or count != len(tokens)
     ):
         raise RuntimeError("/tokenize returned invalid token IDs or count")
@@ -248,6 +276,97 @@ def exact_prompt_token_ids(
     rotated = [*seed_tokens[offset:], *seed_tokens[:offset]]
     repeats = math.ceil(length / len(rotated))
     return (rotated * repeats)[:length]
+
+
+# ── Dataset-mode helpers ─────────────────────────────────────────────────
+
+
+def load_sharegpt_prompts(
+    dataset_path: str, num_prompts: int, seed: int = 0
+) -> list[str]:
+    """Load human prompts from a ShareGPT JSON file.
+
+    Each conversation has
+    ``{"conversations": [{"from": "human", "value": ...}, ...]}``.
+    We extract the **first** human message from each conversation to serve
+    as a single-turn prompt.
+    """
+    path = Path(dataset_path)
+    if not path.exists():
+        raise FileNotFoundError(f"dataset not found: {dataset_path}")
+
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise TypeError("ShareGPT dataset must be a JSON array of conversations")
+
+    rng = random.Random(seed)
+    rng.shuffle(data)
+
+    prompts: list[str] = []
+    for conversation in data:
+        if not isinstance(conversation, Mapping):
+            continue
+        conversations = conversation.get("conversations")
+        if not isinstance(conversations, list) or not conversations:
+            continue
+        for turn in conversations:
+            if not isinstance(turn, Mapping):
+                continue
+            if turn.get("from") == "human":
+                value = turn.get("value")
+                if isinstance(value, str) and value.strip():
+                    prompts.append(value.strip())
+                    break
+        if len(prompts) >= num_prompts:
+            break
+
+    if not prompts:
+        raise ValueError("no valid prompts found in the dataset")
+    return prompts
+
+
+def schedule_arrival_times(
+    *,
+    arrival_process: str,
+    request_rate: float,
+    num_requests: int,
+    burstiness: float,
+    seed: int,
+) -> list[float]:
+    """Return cumulative arrival offsets (seconds from t=0).
+
+    - ``constant``: uniform spacing ``1/rate``.
+    - ``poisson``: exponential inter-arrival with mean ``1/rate``.
+    - ``gamma``: Gamma(shape=burstiness, scale=1/(rate*burstiness))
+      intervals.  ``burstiness < 1`` → more bursty; ``> 1`` → more uniform.
+    """
+    rng = random.Random(seed)
+    offsets: list[float] = []
+    cumulative = 0.0
+
+    if arrival_process == "constant":
+        for i in range(num_requests):
+            offsets.append(i / request_rate)
+    elif arrival_process == "poisson":
+        for _ in range(num_requests):
+            offsets.append(cumulative)
+            cumulative += rng.expovariate(request_rate)
+    elif arrival_process == "gamma":
+        shape = burstiness
+        scale = 1.0 / (request_rate * burstiness)
+        for _ in range(num_requests):
+            offsets.append(cumulative)
+            cumulative += rng.gammavariate(shape, scale)
+    else:
+        raise ValueError(
+            f"arrival_process must be 'constant', 'poisson', or 'gamma', "
+            f"got {arrival_process!r}"
+        )
+
+    return offsets
+
+
+# ── Request execution ───────────────────────────────────────────────────
 
 
 class ActiveRequestTracker:
@@ -271,7 +390,7 @@ class ActiveRequestTracker:
             self._active -= 1
 
 
-def execute_request(
+def execute_completion_request(
     *,
     request_index: int,
     prompt_token_ids: list[int],
@@ -284,6 +403,7 @@ def execute_request(
     scheduled_time: float,
     tracker: ActiveRequestTracker,
 ) -> dict[str, Any]:
+    """Execute a /v1/completions request with exact-length token IDs."""
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt_token_ids,
@@ -332,9 +452,15 @@ def execute_request(
             "scheduled_offset_ms": round(
                 (scheduled_time - benchmark_start) * 1000, 3
             ),
-            "start_offset_ms": round((started - benchmark_start) * 1000, 3),
-            "dispatch_delay_ms": round(max(0.0, started - scheduled_time) * 1000, 3),
-            "end_offset_ms": round((ended - benchmark_start) * 1000, 3),
+            "start_offset_ms": round(
+                (started - benchmark_start) * 1000, 3
+            ),
+            "dispatch_delay_ms": round(
+                max(0.0, started - scheduled_time) * 1000, 3
+            ),
+            "end_offset_ms": round(
+                (ended - benchmark_start) * 1000, 3
+            ),
             "duration_ms": round((ended - started) * 1000, 3),
             "ttft_ms": round(ttft_ms, 3),
             "e2el_ms": round((ended - started) * 1000, 3),
@@ -356,20 +482,119 @@ def execute_request(
     return {
         "request_index": request_index,
         "status": "failed",
-        "scheduled_offset_ms": round((scheduled_time - benchmark_start) * 1000, 3),
+        "scheduled_offset_ms": round(
+            (scheduled_time - benchmark_start) * 1000, 3
+        ),
         "start_offset_ms": round((started - benchmark_start) * 1000, 3),
-        "dispatch_delay_ms": round(max(0.0, started - scheduled_time) * 1000, 3),
+        "dispatch_delay_ms": round(
+            max(0.0, started - scheduled_time) * 1000, 3
+        ),
         "end_offset_ms": round((ended - benchmark_start) * 1000, 3),
         "duration_ms": round((ended - started) * 1000, 3),
         "error": {"type": type(error).__name__, "message": str(error)},
     }
 
 
+def execute_chat_request(
+    *,
+    request_index: int,
+    prompt: str,
+    max_tokens: int,
+    service_url: str,
+    model: str,
+    api_key: str,
+    timeout: float,
+    benchmark_start: float,
+    scheduled_time: float,
+    tracker: ActiveRequestTracker,
+) -> dict[str, Any]:
+    """Execute a /v1/chat/completions request with a natural-language prompt."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+        "seed": 0,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    url = f"{service_url.rstrip('/')}/v1/chat/completions"
+    http_request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=request_headers(api_key),
+        method="POST",
+    )
+    started = time.perf_counter()
+    tracker.enter()
+    try:
+        with urllib.request.urlopen(http_request, timeout=timeout) as response:
+            observation = collect_chat_stream(response)
+            ended = time.perf_counter()
+
+        event_times = observation.event_times
+        ttft_ms = (event_times[0] - started) * 1000
+        itl_samples_ms = [
+            (current - previous) * 1000
+            for previous, current in itertools.pairwise(event_times)
+        ]
+        return {
+            "request_index": request_index,
+            "status": "success",
+            "scheduled_offset_ms": round(
+                (scheduled_time - benchmark_start) * 1000, 3
+            ),
+            "start_offset_ms": round(
+                (started - benchmark_start) * 1000, 3
+            ),
+            "dispatch_delay_ms": round(
+                max(0.0, started - scheduled_time) * 1000, 3
+            ),
+            "end_offset_ms": round(
+                (ended - benchmark_start) * 1000, 3
+            ),
+            "duration_ms": round((ended - started) * 1000, 3),
+            "ttft_ms": round(ttft_ms, 3),
+            "e2el_ms": round((ended - started) * 1000, 3),
+            "itl_samples_ms": [round(value, 3) for value in itl_samples_ms],
+            "input_tokens": observation.input_tokens,
+            "output_tokens": observation.output_tokens,
+            "stream_event_count": len(event_times),
+        }
+    except urllib.error.HTTPError as exc:
+        ended = time.perf_counter()
+        detail = exc.read().decode("utf-8", errors="replace")
+        error: Exception = RuntimeError(f"HTTP {exc.code}: {detail}")
+    except Exception as exc:  # noqa: BLE001
+        ended = time.perf_counter()
+        error = exc
+    finally:
+        tracker.exit()
+
+    return {
+        "request_index": request_index,
+        "status": "failed",
+        "scheduled_offset_ms": round(
+            (scheduled_time - benchmark_start) * 1000, 3
+        ),
+        "start_offset_ms": round((started - benchmark_start) * 1000, 3),
+        "dispatch_delay_ms": round(
+            max(0.0, started - scheduled_time) * 1000, 3
+        ),
+        "end_offset_ms": round((ended - benchmark_start) * 1000, 3),
+        "duration_ms": round((ended - started) * 1000, 3),
+        "error": {"type": type(error).__name__, "message": str(error)},
+    }
+
+
+# ── Case runner ──────────────────────────────────────────────────────────
+
+
 def case_p99_e2el_ms(case: Mapping[str, Any]) -> float | None:
     """Compute P99 E2EL from successful requests in a case.
 
-    Returns None when fewer than 10 successful samples are available, because
-    P99 is statistically unstable for small sample sizes.
+    Returns None when fewer than 10 successful samples are available,
+    because P99 is statistically unstable for small sample sizes.
     """
     successful = [
         record
@@ -389,7 +614,7 @@ def case_p99_e2el_ms(case: Mapping[str, Any]) -> float | None:
     return round(percentile(e2el_values, 0.99), 3)
 
 
-def run_case(
+def run_case_random(
     *,
     input_length: int,
     output_length: int,
@@ -403,11 +628,14 @@ def run_case(
     api_key: str,
     timeout: float,
 ) -> dict[str, Any]:
+    """Run a case with exact-length token-ID prompts (random mode)."""
     for index in range(warmup):
         now = time.perf_counter()
-        result = execute_request(
+        result = execute_completion_request(
             request_index=index,
-            prompt_token_ids=exact_prompt_token_ids(seed_tokens, input_length, index),
+            prompt_token_ids=exact_prompt_token_ids(
+                seed_tokens, input_length, index
+            ),
             output_length=output_length,
             service_url=service_url,
             model=model,
@@ -420,14 +648,16 @@ def run_case(
         if result["status"] != "success":
             message = result["error"]["message"]
             raise RuntimeError(
-                f"warmup failed for input={input_length}, output={output_length}, "
-                f"rate={request_rate}: {message}"
+                f"warmup failed for input={input_length}, "
+                f"output={output_length}, rate={request_rate}: {message}"
             )
 
     tracker = ActiveRequestTracker()
     benchmark_start = time.perf_counter()
     request_results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=min(max_concurrency, rounds)) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(max_concurrency, rounds)
+    ) as executor:
         futures = []
         for index in range(rounds):
             scheduled_time = benchmark_start + index / request_rate
@@ -436,7 +666,7 @@ def run_case(
                 time.sleep(remaining)
             futures.append(
                 executor.submit(
-                    execute_request,
+                    execute_completion_request,
                     request_index=index,
                     prompt_token_ids=exact_prompt_token_ids(
                         seed_tokens, input_length, index
@@ -466,9 +696,110 @@ def run_case(
     }
 
 
+def run_case_dataset(
+    *,
+    prompts: list[str],
+    request_rate: float,
+    arrival_process: str,
+    burstiness: float,
+    max_tokens: int,
+    seed: int,
+    warmup: int,
+    rounds: int,
+    max_concurrency: int,
+    service_url: str,
+    model: str,
+    api_key: str,
+    timeout: float,
+) -> dict[str, Any]:
+    """Run a case with real conversational prompts (dataset mode)."""
+    num_requests = min(rounds, len(prompts))
+
+    for i in range(min(warmup, len(prompts))):
+        warmup_prompt = prompts[i % len(prompts)]
+        result = execute_chat_request(
+            request_index=i,
+            prompt=warmup_prompt,
+            max_tokens=max_tokens,
+            service_url=service_url,
+            model=model,
+            api_key=api_key,
+            timeout=timeout,
+            benchmark_start=time.perf_counter(),
+            scheduled_time=time.perf_counter(),
+            tracker=ActiveRequestTracker(),
+        )
+        if result["status"] != "success":
+            message = result["error"]["message"]
+            raise RuntimeError(
+                f"warmup failed for rate={request_rate}, "
+                f"arrival={arrival_process}: {message}"
+            )
+
+    arrival_offsets = schedule_arrival_times(
+        arrival_process=arrival_process,
+        request_rate=request_rate,
+        num_requests=num_requests,
+        burstiness=burstiness,
+        seed=seed,
+    )
+
+    tracker = ActiveRequestTracker()
+    benchmark_start = time.perf_counter()
+    request_results: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(
+        max_workers=min(max_concurrency, num_requests)
+    ) as executor:
+        futures = []
+        for i in range(num_requests):
+            scheduled_time = benchmark_start + arrival_offsets[i]
+            remaining = scheduled_time - time.perf_counter()
+            if remaining > 0:
+                time.sleep(remaining)
+            futures.append(
+                executor.submit(
+                    execute_chat_request,
+                    request_index=i,
+                    prompt=prompts[i],
+                    max_tokens=max_tokens,
+                    service_url=service_url,
+                    model=model,
+                    api_key=api_key,
+                    timeout=timeout,
+                    benchmark_start=benchmark_start,
+                    scheduled_time=scheduled_time,
+                    tracker=tracker,
+                )
+            )
+        for future in as_completed(futures):
+            request_results.append(future.result())
+    benchmark_end = time.perf_counter()
+    request_results.sort(key=lambda item: item["request_index"])
+    return {
+        "request_rate": request_rate,
+        "arrival_process": arrival_process,
+        "burstiness": burstiness if arrival_process == "gamma" else None,
+        "num_prompts": num_requests,
+        "max_tokens": max_tokens,
+        "benchmark_duration_seconds": round(benchmark_end - benchmark_start, 6),
+        "maximum_request_concurrency": max_concurrency,
+        "peak_concurrent_requests": tracker.peak,
+        "requests": request_results,
+    }
+
+
+# ── Benchmark orchestrator ───────────────────────────────────────────────
+
+
 def run_benchmark(
     request: dict[str, Any], parameters: dict[str, Any]
 ) -> dict[str, Any]:
+    workload_mode = string_value(parameters, "workload_mode", "random")
+    if workload_mode not in ("random", "dataset"):
+        raise ValueError(
+            "workload_mode must be 'random' or 'dataset'"
+        )
+
     service_url = string_value(
         parameters, "service_url", "http://127.0.0.1:8000"
     ).rstrip("/")
@@ -480,14 +811,69 @@ def run_benchmark(
     warmup = non_negative_integer(parameters, "warmup", 2)
     rounds = positive_integer(parameters, "rounds", 100)
     max_concurrency = positive_integer(parameters, "max_concurrency", 128)
+    request_rates = positive_number_list(
+        parameters, "request_rates", [1.0, 4.0, 16.0]
+    )
+    seed = non_negative_integer(parameters, "seed", 0)
+
+    slo = slo_config(parameters)
+
+    model = request.get("model_name")
+    if not isinstance(model, str) or not model:
+        model = discover_model(service_url, api_key, timeout)
+
+    if workload_mode == "random":
+        return _run_random_mode(
+            request=request,
+            parameters=parameters,
+            service_url=service_url,
+            api_key=api_key,
+            timeout=timeout,
+            warmup=warmup,
+            rounds=rounds,
+            max_concurrency=max_concurrency,
+            request_rates=request_rates,
+            seed=seed,
+            slo=slo,
+            model=model,
+        )
+    else:
+        return _run_dataset_mode(
+            request=request,
+            parameters=parameters,
+            service_url=service_url,
+            api_key=api_key,
+            timeout=timeout,
+            warmup=warmup,
+            rounds=rounds,
+            max_concurrency=max_concurrency,
+            request_rates=request_rates,
+            seed=seed,
+            slo=slo,
+            model=model,
+        )
+
+
+def _run_random_mode(
+    *,
+    request: dict[str, Any],
+    parameters: dict[str, Any],
+    service_url: str,
+    api_key: str,
+    timeout: float,
+    warmup: int,
+    rounds: int,
+    max_concurrency: int,
+    request_rates: list[float],
+    seed: int,
+    slo: dict[str, float] | None,
+    model: str,
+) -> dict[str, Any]:
     input_lengths = positive_integer_list(
         parameters, "input_lengths", [128, 512, 2048]
     )
     output_lengths = positive_integer_list(
         parameters, "output_lengths", [1, 32, 128]
-    )
-    request_rates = positive_number_list(
-        parameters, "request_rates", [1.0, 4.0, 16.0]
     )
     seed_prompt = string_value(
         parameters,
@@ -500,11 +886,6 @@ def run_benchmark(
     fixed_value(parameters, "ignore_eos", True)
     fixed_value(parameters, "seed", 0)
 
-    slo = slo_config(parameters)
-
-    model = request.get("model_name")
-    if not isinstance(model, str) or not model:
-        model = discover_model(service_url, api_key, timeout)
     seed_tokens, max_model_len = tokenize_seed_prompt(
         service_url, model, seed_prompt, api_key, timeout
     )
@@ -512,8 +893,9 @@ def run_benchmark(
         for output_length in output_lengths:
             if input_length + output_length > max_model_len:
                 raise ValueError(
-                    f"input_length {input_length} + output_length {output_length} "
-                    f"exceeds service max_model_len {max_model_len}"
+                    f"input_length {input_length} + output_length "
+                    f"{output_length} exceeds service max_model_len "
+                    f"{max_model_len}"
                 )
 
     p99_threshold = slo.get("p99_ms") if slo is not None else None
@@ -521,14 +903,13 @@ def run_benchmark(
     skipped_cases: list[dict[str, Any]] = []
     cases: list[dict[str, Any]] = []
 
-    # Build a flat list of all case specs for deterministic iteration.
     all_specs: list[dict[str, Any]] = [
         {"input_length": il, "output_length": ol, "request_rate": rr}
         for il in input_lengths
         for ol in output_lengths
         for rr in request_rates
     ]
-    for idx, spec in enumerate(all_specs):
+    for spec in all_specs:
         if circuit_breaker is not None:
             skipped_cases.append(
                 {
@@ -540,7 +921,7 @@ def run_benchmark(
             )
             continue
 
-        case = run_case(
+        case = run_case_random(
             input_length=spec["input_length"],
             output_length=spec["output_length"],
             request_rate=spec["request_rate"],
@@ -576,6 +957,7 @@ def run_benchmark(
     metadata: dict[str, Any] = {
         "measurement": "client_streaming_serving_exact_length_fixed_rate",
         "protocol": "openai_compatible_completions",
+        "workload_mode": "random",
         "service_url": service_url,
         "model": model,
         "max_model_len": max_model_len,
@@ -601,14 +983,127 @@ def run_benchmark(
     }
 
 
+def _run_dataset_mode(
+    *,
+    request: dict[str, Any],
+    parameters: dict[str, Any],
+    service_url: str,
+    api_key: str,
+    timeout: float,
+    warmup: int,
+    rounds: int,
+    max_concurrency: int,
+    request_rates: list[float],
+    seed: int,
+    slo: dict[str, float] | None,
+    model: str,
+) -> dict[str, Any]:
+    dataset_path = string_value(parameters, "dataset_path", "")
+    if not dataset_path:
+        raise ValueError("dataset_path must not be empty")
+    num_prompts = positive_integer(parameters, "num_prompts", 1000)
+
+    arrival_process = string_value(parameters, "arrival_process", "gamma")
+    if arrival_process not in ("constant", "poisson", "gamma"):
+        raise ValueError(
+            "arrival_process must be 'constant', 'poisson', or 'gamma'"
+        )
+
+    burstiness = positive_number(parameters, "burstiness", 1.0)
+    max_tokens = positive_integer(parameters, "max_tokens", 2048)
+
+    prompts = load_sharegpt_prompts(dataset_path, num_prompts, seed)
+
+    p99_threshold = slo.get("p99_ms") if slo is not None else None
+    circuit_breaker: dict[str, Any] | None = None
+    skipped_cases: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+
+    for rate in request_rates:
+        if circuit_breaker is not None:
+            skipped_cases.append(
+                {
+                    "request_rate": rate,
+                    "arrival_process": arrival_process,
+                    "skipped_reason": "circuit_breaker_triggered",
+                }
+            )
+            continue
+
+        case = run_case_dataset(
+            prompts=prompts,
+            request_rate=rate,
+            arrival_process=arrival_process,
+            burstiness=burstiness,
+            max_tokens=max_tokens,
+            seed=seed,
+            warmup=warmup,
+            rounds=rounds,
+            max_concurrency=max_concurrency,
+            service_url=service_url,
+            model=model,
+            api_key=api_key,
+            timeout=timeout,
+        )
+        cases.append(case)
+
+        if p99_threshold is not None:
+            actual_p99 = case_p99_e2el_ms(case)
+            if actual_p99 is not None and actual_p99 > p99_threshold:
+                circuit_breaker = {
+                    "triggered": True,
+                    "threshold_p99_ms": p99_threshold,
+                    "actual_p99_ms": actual_p99,
+                    "triggered_at_case": {
+                        "request_rate": rate,
+                        "arrival_process": arrival_process,
+                    },
+                    "remaining_cases_skipped": 0,
+                }
+
+    if circuit_breaker is not None:
+        circuit_breaker["remaining_cases_skipped"] = len(skipped_cases)
+
+    metadata: dict[str, Any] = {
+        "measurement": "client_streaming_serving_real_workload",
+        "protocol": "openai_compatible_chat_completions",
+        "workload_mode": "dataset",
+        "service_url": service_url,
+        "model": model,
+        "dataset_path": dataset_path,
+        "num_prompts": num_prompts,
+        "arrival_process": arrival_process,
+        "burstiness": burstiness,
+        "max_tokens": max_tokens,
+        "rounds_per_case": rounds,
+        "warmup_requests_per_case": warmup,
+        "case_count": len(cases),
+        "max_concurrency": max_concurrency,
+        "temperature": 0.0,
+        "seed": seed,
+    }
+    if slo is not None:
+        metadata["slo_config"] = slo
+    if circuit_breaker is not None:
+        metadata["circuit_breaker"] = circuit_breaker
+        metadata["skipped_cases"] = skipped_cases
+    return {
+        "schema_version": "luban-meter.raw/v1",
+        "status": "success",
+        "metrics": {"cases": cases},
+        "metadata": metadata,
+        "artifacts": {},
+    }
+
+
 def failure_result(error: Exception) -> dict[str, Any]:
     return {
         "schema_version": "luban-meter.raw/v1",
         "status": "failed",
         "metrics": {},
         "metadata": {
-            "measurement": "client_streaming_serving_exact_length_fixed_rate",
-            "protocol": "openai_compatible_completions",
+            "measurement": "client_streaming_serving",
+            "protocol": "openai_compatible",
         },
         "artifacts": {},
         "error": {"type": type(error).__name__, "message": str(error)},

@@ -124,6 +124,32 @@ seed: 0
 `/tokenize` 构造精确长度输入，通过 `min_tokens = max_tokens` 固定输出长度，并以
 开放式固定 Request Rate 调度请求。
 
+### dataset 模式：真实数据集负载
+
+将 `workload_mode` 设为 `dataset`，使用 ShareGPT 真实对话作为 Prompt，通过
+`/v1/chat/completions` 发送请求，支持 Poisson、Gamma 和恒定到达过程调度：
+
+```yaml
+workload_mode: dataset
+service_url: http://127.0.0.1:8000
+dataset_path: dataset/sharegpt/ShareGPT_V3_sample.json
+num_prompts: 200
+arrival_process: gamma    # poisson | gamma | constant
+burstiness: 1.0          # < 1 更突发, > 1 更均匀
+max_tokens: 2048
+request_rates: [1.0, 5.0]
+```
+
+完整数据集（约 90K 条对话，641MB）可从 HuggingFace 下载：
+
+```bash
+wget -O dataset/sharegpt/ShareGPT_V3_unfiltered_cleaned_split.json \
+  https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+```
+
+dataset 模式的 Case 由 `request_rate + arrival_process` 确定，输入/输出
+Token 数按分布统计（Mean、P50、P90、P99），不与配置值严格校验。
+
 ## 5. vLLM 离线引擎测试
 
 进入已安装 vLLM 的 Python 环境后执行：

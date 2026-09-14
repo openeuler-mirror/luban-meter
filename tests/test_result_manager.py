@@ -316,7 +316,7 @@ class ServingCollectionTest(unittest.TestCase):
             "urlopen",
             return_value=FakeStreamingResponse(4, 2),
         ):
-            record = benchmark.execute_request(
+            record = benchmark.execute_completion_request(
                 request_index=0,
                 prompt_token_ids=[1, 2, 3, 4],
                 output_length=3,

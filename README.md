@@ -81,9 +81,15 @@ benchmark/<module>/<benchmark>/
 
 ## 已实现 Benchmark
 
-`generate/serving-online` 通过 OpenAI-compatible HTTP 流式接口遍历精确输入长度、
-输出长度和固定请求速率矩阵，输出 TTFT、ITL、TPOT、E2EL、吞吐量、调度偏差、
-并发和成功/失败请求统计。
+`generate/serving-online` 通过 OpenAI-compatible HTTP 流式接口评测在线服务性能，
+支持两种工作负载模式：
+
+- **random**：通过 `/v1/completions` 发送精确长度 Token ID Prompt，遍历
+  `input_lengths × output_lengths × request_rates` 矩阵，输出 TTFT、ITL、TPOT、
+  E2EL、吞吐量、调度偏差、并发和成功/失败请求统计；
+- **dataset**：通过 `/v1/chat/completions` 发送 ShareGPT 真实对话 Prompt，
+  支持 Poisson、Gamma 和恒定到达过程调度请求，输出变长输入/输出的分布统计、
+  到达过程指标和服务容量评估。
 
 `generate/vllm-engine-offline` 直接调用 vLLM Engine 进行离线推理，遍历输入长度、输出长度和请求
 批量矩阵，输出内部 TTFT、Prefill/Decode 时延与吞吐量、Engine Execution Latency，
