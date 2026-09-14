@@ -1,0 +1,24 @@
+# OpenAI-compatible inference service.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 60
+
+# Dataset. Local jsonl only; null = load all records.
+dataset_path: data/wikitext/val.jsonl
+split: validation
+max_samples: null
+shuffle: false
+seed: 42
+
+# Evaluation protocol. WikiText is loss-only; base format.
+eval_mode: loss
+prompt_format: base
+prompt_version: wikitext-v1
+
+# Rolling window. max_context_length = model context limit.
+# stride = new tokens per API call (null = max_context_length).
+max_context_length: 2048
+stride: null
+
+# Client-side safety cap for simultaneous requests.
+max_concurrency: 8

@@ -19,7 +19,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k,humaneval         Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k,humaneval,wikitext  Online-service model evaluation benchmarks
 ```
 
 `generate` 测量生成式推理性能；`inference` 用于基于在线推理服务的模型效果评测。
@@ -369,8 +369,9 @@ luban-meter run \
 协议和状态定义见 [HumanEval 协议说明](humaneval-protocol.md)。
 
 当前可用 Benchmark：`ceval`、`cmmlu`（选择题 Accuracy，支持 ppl/gen 两种评测
-模式）、`gsm8k`（数学题 Exact Match，gen 模式）和 `humaneval`（代码补全
-Pass@1，base completions 模式）。其中 ppl / loss 模式依赖
+模式）、`gsm8k`（数学题 Exact Match，gen 模式）、`humaneval`（代码补全
+Pass@1，base completions 模式）和 `wikitext`（语言建模 Perplexity / Bits-per-Byte，
+loss 模式）。其中 ppl / loss 模式依赖
 `/v1/completions` 的 `echo + logprobs` 回显，且仅允许 `prompt_format=base`
 （对话格式层会注入特殊 Token 破坏 ppl 续写打分，组合 ppl + chat 会被配置校验
 拒绝）；gen 模式可使用 chat 或 base 传输。配置字段、评测模式和指标口径参见
@@ -403,6 +404,7 @@ Pass@1，base completions 模式）。其中 ppl / loss 模式依赖
 | `ceval`、`cmmlu` | 总体和分学科 Accuracy、评分及失败样本数 | 总体和分学科得分柱状图 |
 | `gsm8k` | Exact Match、评分及失败样本数 | 得分柱状图 |
 | `humaneval` | Pass@1、任务数、通过数、解析/服务/沙箱失败及超时数 | Pass@1 柱状图 |
+| `wikitext` | Mean Loss、Perplexity、Bits-per-Byte、计 Token 数及失败样本数 | Perplexity 和 Bits-per-Byte 柱状图 |
 
 评测图表紧跟对应的指标表格。每个 Benchmark 区块开头先展示一张**硬件环境与
 监控总览图**，将已记录的硬件环境、监控摘要和曲线集中在同一张 PNG 中：

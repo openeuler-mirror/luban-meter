@@ -16,6 +16,7 @@ SUPPORTED_PROMPT_VERSIONS = {
     "cmmlu": ("cmmlu-v1",),
     "gsm8k": ("gsm8k-v1",),
     "humaneval": ("humaneval-completion-v1",),
+    "wikitext": ("wikitext-v1",),
 }
 
 
@@ -72,3 +73,11 @@ def render_math_prompt(
         blocks.append(f"问题：{question}\n答案：{answer}")
     blocks.append(f"问题：{str(sample['question']).strip()}\n答案：")
     return f"{instruction}\n\n" + "\n\n".join(blocks)
+
+
+def render_wikitext_prompt(sample: Mapping[str, Any]) -> str:
+    """Return the detokenized text for loss scoring (no template)."""
+    text = sample.get("text")
+    if not isinstance(text, str) or not text:
+        raise ValueError("sample text must be a non-empty string")
+    return text

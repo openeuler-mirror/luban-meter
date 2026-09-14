@@ -60,7 +60,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-offline  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k                  Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k,wikitext          Online-service model evaluation benchmarks
 ```
 
 ## 4. 配置文件
@@ -328,7 +328,7 @@ Case，禁止将不同条件的样本混合统计。
 
 `inference` 通过在线推理服务评测模型任务效果，建议每个 Benchmark 封装一类任务
 协议或数据集族，例如 `ceval`、`gsm8k`、`summarization`。当前已端到端实现
-`ceval`、`cmmlu` 和 `gsm8k`，协议细节参见
+`ceval`、`cmmlu`、`gsm8k` 和 `wikitext`，协议细节参见
 [Inference 评测指标说明](inference.md)。
 
 一次运行通常包含：

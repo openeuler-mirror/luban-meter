@@ -47,9 +47,9 @@ LuBan-Meter 按“数据集族和任务协议”组织 inference Benchmark，不
 | P0 | 知识问答 | CMMLU | PPL/LogLikelihood | Accuracy | 从 C-Eval 协议泛化到另一选择题族 |
 | P0 | 推理与数学 | GSM8K | Generation | Exact Match / Accuracy | 验证长生成、答案抽取和判分逻辑 |
 | P0 | 代码 | HumanEval | Generation + 执行 | Pass@1 | 验证代码补全、沙箱执行和多次采样统计 |
+| P0 | 语言建模 | WikiText | Token Loss | Perplexity、Bits-per-Byte | 验证在线 logprobs 链路，tokenizer 无关跨模型可比 |
 | P1 | 开放问答 | SQuAD | Generation | Exact Match、Token F1 | 验证文本归一化与 Span 匹配指标 |
 | P1 | 中文摘要 | LCSTS | Generation | ROUGE-1/2/L | 验证中文文本重叠指标 |
-| P1 | 语言建模 | WikiText | Token Loss | Perplexity、平均 Token Loss | 验证在线 logprobs 链路，缺失时不替代 |
 
 ## 3. 执行流程与目录框架
 
@@ -90,14 +90,14 @@ src/luban_meter/benchmark/inference/
 │   ├── choice.py       # 四选一题目通用采集流程（ppl/gen）
 │   └── choice_result.py # 四选一题目通用指标聚合
 ├── scripts/            # 数据集离线准备脚本：含 prepare_humaneval
-├── data/               # 随包内置标准评测数据（含 HumanEval 164 题）
+├── data/               # 随包内置标准评测数据（含 HumanEval 164 题、WikiText val/test）
 ├── ceval/            benchmark.py + result.py + ceval.yaml      （已实现）
 ├── cmmlu/            benchmark.py + result.py + cmmlu.yaml      （已实现）
 ├── gsm8k/            benchmark.py + result.py + gsm8k.yaml      （已实现）
 ├── humaneval/        benchmark.py + result.py + executor.py + Containerfile（已实现 Pass@1）
 ├── squad/            benchmark.py + result.py + squad.yaml      （规划）
 ├── summarization/    benchmark.py + result.py + summarization.yaml（规划）
-└── wikitext/         benchmark.py + result.py + wikitext.yaml   （规划）
+└── wikitext/         benchmark.py + result.py + wikitext.yaml   （已实现）
 ```
 
 多个数据集共用的逻辑放在 `inference/common/`；只服务单一场景的逻辑保留在对应
@@ -420,15 +420,17 @@ Prompt 全文，完整设置与原始信息仍保存在 JSON 中。
 4. `humaneval` completion-only Pass@1 端到端：本地数据加载、模型生成、代码
    提取、Docker-only 沙箱执行、状态分类和指标聚合；
 5. 数据集离线准备脚本 `inference/scripts/`（prepare_ceval、prepare_cmmlu、
-   prepare_gsm8k、prepare_humaneval）；
-6. 随包内置标准评测数据 `inference/data/`（含 HumanEval 164 题），并由
+   prepare_gsm8k、prepare_humaneval、prepare_wikitext）；
+6. 随包内置标准评测数据 `inference/data/`（含 HumanEval 164 题、WikiText val/test），并由
    `dataset.resolve_data_path()` 提供 CWD → 包内置的相对路径回退解析，使默认
-   配置从任意工作目录开箱即用。
+   配置从任意工作目录开箱即用；
+7. `wikitext` 端到端：本地数据加载、滚动窗口 logprob 采集、Bits-per-Byte
+   和 Perplexity 指标聚合。
 
 尚未实现，后续按以下顺序建设：
 
 1. `humaneval` 多样本采样和 Pass@k（k > 1）；
-2. `squad`、`summarization`、`wikitext`（P1）；
+2. `squad`、`summarization`（P1）；
 3. Suite 编排与跨运行汇总报告。
 
 其中 Token F1、ROUGE、通用 Pass@k、Perplexity 的指标计算能力已在
