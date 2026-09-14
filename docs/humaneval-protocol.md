@@ -96,6 +96,26 @@ docker -H unix:///path/to/docker.sock build \
   src/luban_meter/benchmark/inference/humaneval
 ```
 
+## 容器生命周期与异常回收
+
+通过 CLI / Suite 的 `HostSession` 运行时，外层为每次 HumanEval 任务建立独立的
+容器标签和 `artifacts/sandbox-registry/<scope>/` 登记目录。创建请求发出前写入
+`.pending`，候选执行结束且确认容器删除后改为 `.done`。
+
+容器先 `docker create`，确认创建完成后才 `docker start`，不依赖 `--rm`。
+正常结束、候选超时及异常都会尝试显式删除容器；外层任务超时、Ctrl-C 或主线程
+收到 SIGTERM 时，先终止 benchmark 进程组，再按本次任务的唯一标签回收容器。
+不会执行全局 prune，也不会删除其他运行的容器。监控进程同样在 finally 中停止。
+
+回收成功写入 `cleanup-ok`；Docker 不可达或创建请求的结果无法确认时，保留
+`cleanup-error.txt` 和 `owner.json`，使任务报错，不将其报告为成功回收。
+管理员应使用记录中的 Docker host 和 scope 标签核查残留后，仅处理该任务容器。
+迟到的创建请求仍可能留下未启动容器，因此回收异常需要人工核查。
+
+边界：进程组回收针对 Linux/POSIX；直接调用内部执行器没有外层托管保证。
+管理进程自身被 SIGKILL、宿主机宕机或 Docker 长时间不可达时，Python 的 finally
+无法保证回收；当前没有独立的常驻回收服务，不能宣称这些场景零残留。
+
 ## 候选答案状态
 
 以下模型输出结果会被计为失败候选：
@@ -143,7 +163,7 @@ pytest -q tests/test_inference_humaneval.py tests/test_humaneval_executor.py
 LUBAN_METER_RUN_DOCKER_TESTS=1 \
 LUBAN_METER_DOCKER_HOST=unix:///path/to/docker.sock \
 LUBAN_METER_HUMANEVAL_IMAGE=luban-meter-humaneval-sandbox:v1 \
-pytest -q tests/test_humaneval_executor.py
+pytest -q tests/test_humaneval_executor.py tests/test_sandbox_lifecycle.py
 ```
 
 ## 后续 pass@k 扩展

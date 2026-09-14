@@ -23,6 +23,7 @@ from luban_meter.execution.session import (
     prepare_run_directory,
     write_command_logs,
 )
+from luban_meter.utils.docker_sandbox import DockerSandboxConfig, DockerSandboxScope
 
 
 class HostSession:
@@ -40,33 +41,61 @@ class HostSession:
         run_dir, raw_dir, artifact_dir = prepare_run_directory(run)
         raw_result = raw_dir / "raw_result.json"
 
-        # Start hardware monitoring daemon (only if exporter URL is provided)
+        # Hardware monitoring remains optional in the upstream protocol.
         daemon: DeviceMonitorDaemon | None = None
         if self._monitor_url:
             daemon = DeviceMonitorDaemon(
                 exporter_url=self._monitor_url,
                 interval=self._monitor_interval,
             )
-            daemon.start()
 
-        result = self._runner.run(
-            CommandSpec(
-                argv=(
-                    sys.executable,
-                    str(run.benchmark.benchmark_entry),
-                    "--request",
-                    str(run_dir / "request.json"),
-                    "--output",
-                    str(raw_result),
+        scope = None
+        if (
+            run.benchmark.module == "inference"
+            and run.benchmark.benchmark == "humaneval"
+        ):
+            scope = DockerSandboxScope(
+                artifact_dir / "sandbox-registry",
+                DockerSandboxConfig(
+                    docker_host=str(
+                        run.parameters.get("docker_host", "unix:///var/run/docker.sock")
+                    ),
+                    image=str(
+                        run.parameters.get(
+                            "sandbox_image", "luban-meter-humaneval-sandbox:v1"
+                        )
+                    ),
+                    docker_binary=str(run.parameters.get("docker_binary", "docker")),
                 ),
-                timeout=run.request.timeout,
             )
-        )
+        try:
+            if daemon is not None:
+                daemon.start()
+            result = self._runner.run(
+                CommandSpec(
+                    argv=(
+                        sys.executable,
+                        str(run.benchmark.benchmark_entry),
+                        "--request",
+                        str(run_dir / "request.json"),
+                        "--output",
+                        str(raw_result),
+                    ),
+                    timeout=run.request.timeout,
+                    env=scope.environment() if scope else None,
+                )
+            )
+        finally:
+            try:
+                if scope:
+                    scope.cleanup()
+            finally:
+                if daemon is not None:
+                    daemon.stop()
         write_command_logs(raw_dir, result.stdout, result.stderr)
 
-        # Stop daemon and inject monitoring summary into raw_result.json
+        # Inject the already-stopped monitor's summary after a successful command.
         if daemon is not None:
-            daemon.stop()
             self._inject_monitoring_summary(raw_result, daemon.summary())
 
         if result.returncode != 0:
