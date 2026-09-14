@@ -94,7 +94,8 @@ src/luban_meter/
 │       ├── ceval/
 │       ├── cmmlu/
 │       ├── gsm8k/
-│       └── humaneval/            # Pass@1 + Docker-only 代码执行沙箱
+│       ├── humaneval/            # Pass@1 + Docker-only 代码执行沙箱
+│       └── wikitext/             # Perplexity / Bits-per-Byte (loss 模式)
 ├── core/
 │   ├── engine.py
 │   ├── registry.py
@@ -133,7 +134,7 @@ benchmark/<module>/<benchmark>/
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor
-inference   ceval,cmmlu,gsm8k,humaneval
+inference   ceval,cmmlu,gsm8k,humaneval,wikitext
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
@@ -184,7 +185,9 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
   模式仅允许 `prompt_format=base`，组合 ppl + chat 会被配置校验拒绝）；
 - GSM8K 数学题 Exact Match；
 - HumanEval completion-only Pass@1，生成代码只在受限 Docker 容器中执行，沙箱
-  不可用时禁止宿主机回退。
+  不可用时禁止宿主机回退；
+- WikiText 语言建模 Perplexity / Bits-per-Byte（loss 模式，滚动窗口 logprob
+  计分，对齐 lm-eval-harness 覆盖范围）。
 
 数据集默认随包内置在 `benchmark/inference/data/`，相对路径优先按 CWD 解析，
 未命中时回退到包内置数据，使同一份脚本可从任意目录运行。
@@ -194,7 +197,6 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
 - 问答 EM、F1（SQuAD）；
 - 摘要 ROUGE（LCSTS）；
 - HumanEval 多样本采样与 Pass@k（k > 1）；
-- 语言建模 Perplexity（WikiText）；
 - 任务级端到端时延。
 
 `inference` 不直接加载硬件专属模型接口；首选统一的在线推理服务协议，使同一套

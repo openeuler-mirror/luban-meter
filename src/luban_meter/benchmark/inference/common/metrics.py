@@ -97,3 +97,13 @@ def mean_loss(total_logprob: float, token_count: int) -> float:
 
 def perplexity(total_logprob: float, token_count: int) -> float:
     return math.exp(mean_loss(total_logprob, token_count))
+
+
+def bits_per_byte(total_logprob: float, byte_count: int) -> float:
+    """Bits per byte (tokenizer-independent, cross-model comparable).
+
+    bpb = -sum_logprob / (byte_count * ln(2))
+    """
+    if byte_count <= 0:
+        raise ValueError("byte count must be positive")
+    return -total_logprob / byte_count / math.log(2)

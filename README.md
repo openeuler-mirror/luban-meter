@@ -41,7 +41,8 @@ src/luban_meter/
 │       ├── ceval/
 │       ├── cmmlu/
 │       ├── gsm8k/
-│       └── humaneval/
+│       ├── humaneval/
+│       └── wikitext/
 ├── core/
 ├── execution/
 ├── result/
@@ -90,10 +91,11 @@ benchmark/<module>/<benchmark>/
 与在线服务边界分离的 Engine Goodput。
 
 `inference` 通过在线推理服务评测模型任务效果，已端到端实现 `ceval`、`cmmlu`（选择题
-Accuracy，支持 ppl / gen 两种评测模式）、`gsm8k`（数学题 Exact Match，gen 模式）
-和 `humaneval`（代码补全 Pass@1，强制 Docker 沙箱执行）。
-其中 ppl 模式走 `/v1/completions` 的 `echo + logprobs` 打分，要求 `prompt_format=base`；
-gen 模式可走 chat 或 base 传输。默认数据集随包内置在
+Accuracy，支持 ppl / gen 两种评测模式）、`gsm8k`（数学题 Exact Match，gen 模式）、
+`humaneval`（代码补全 Pass@1，强制 Docker 沙箱执行）和 `wikitext`（语言建模
+Perplexity / Bits-per-Byte，loss 模式）。
+其中 ppl / loss 模式走 `/v1/completions` 的 `echo + logprobs` 打分，要求
+`prompt_format=base`；gen 模式可走 chat 或 base 传输。默认数据集随包内置在
 `benchmark/inference/data/`，相对路径优先按 CWD 解析，未命中时回退到包内置数据。
 
 ## CLI 示例
@@ -149,6 +151,16 @@ luban-meter run \
 ```
 
 完整执行与安全协议见 [HumanEval 协议说明](docs/humaneval-protocol.md)。
+
+运行 WikiText 语言建模评测（loss 模式，Perplexity + Bits-per-Byte）：
+
+```bash
+luban-meter run \
+  --module inference \
+  --benchmark wikitext \
+  --config src/luban_meter/benchmark/inference/wikitext/wikitext.yaml \
+  --model-name <served-model-name>
+```
 
 运行 Suite：
 
