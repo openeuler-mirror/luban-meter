@@ -95,6 +95,7 @@ src/luban_meter/
 │       ├── cmmlu/
 │       ├── gsm8k/
 │       ├── humaneval/            # Pass@1 + Docker-only 代码执行沙箱
+│       ├── lcsts/                # 中文摘要 ROUGE-1/2/L (gen 模式)
 │       └── wikitext/             # Perplexity / Bits-per-Byte (loss 模式)
 ├── core/
 │   ├── engine.py
@@ -134,7 +135,7 @@ benchmark/<module>/<benchmark>/
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics,device-monitor
-inference   ceval,cmmlu,gsm8k,humaneval,wikitext
+inference   ceval,cmmlu,gsm8k,humaneval,lcsts,wikitext
 ```
 
 公共层不包含硬件品牌字段。相同 Benchmark 应在不同硬件环境中执行同一份脚本和
@@ -186,6 +187,8 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
 - GSM8K 数学题 Exact Match；
 - HumanEval completion-only Pass@1，生成代码只在受限 Docker 容器中执行，沙箱
   不可用时禁止宿主机回退；
+- LCSTS 中文摘要 ROUGE-1/2/L F-measure（gen 模式，jieba 分词 + rouge-chinese，
+  对齐 OpenCompass JiebaRougeEvaluator）；
 - WikiText 语言建模 Perplexity / Bits-per-Byte（loss 模式，滚动窗口 logprob
   计分，对齐 lm-eval-harness 覆盖范围）。
 
@@ -195,7 +198,6 @@ exporter 地址后，框架在 Benchmark 运行期间通过 HTTP GET `/metrics` 
 后续规划：
 
 - 问答 EM、F1（SQuAD）；
-- 摘要 ROUGE（LCSTS）；
 - HumanEval 多样本采样与 Pass@k（k > 1）；
 - 任务级端到端时延。
 

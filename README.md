@@ -42,6 +42,7 @@ src/luban_meter/
 │       ├── cmmlu/
 │       ├── gsm8k/
 │       ├── humaneval/
+│       ├── lcsts/
 │       └── wikitext/
 ├── core/
 ├── execution/
@@ -92,7 +93,8 @@ benchmark/<module>/<benchmark>/
 
 `inference` 通过在线推理服务评测模型任务效果，已端到端实现 `ceval`、`cmmlu`（选择题
 Accuracy，支持 ppl / gen 两种评测模式）、`gsm8k`（数学题 Exact Match，gen 模式）、
-`humaneval`（代码补全 Pass@1，强制 Docker 沙箱执行）和 `wikitext`（语言建模
+`humaneval`（代码补全 Pass@1，强制 Docker 沙箱执行）、`lcsts`（中文摘要
+ROUGE-1/2/L，gen 模式）和 `wikitext`（语言建模
 Perplexity / Bits-per-Byte，loss 模式）。
 其中 ppl / loss 模式走 `/v1/completions` 的 `echo + logprobs` 打分，要求
 `prompt_format=base`；gen 模式可走 chat 或 base 传输。默认数据集随包内置在
@@ -159,6 +161,16 @@ luban-meter run \
   --module inference \
   --benchmark wikitext \
   --config src/luban_meter/benchmark/inference/wikitext/wikitext.yaml \
+  --model-name <served-model-name>
+```
+
+运行 LCSTS 中文摘要评测（gen 模式，ROUGE-1/2/L F-measure）：
+
+```bash
+luban-meter run \
+  --module inference \
+  --benchmark lcsts \
+  --config src/luban_meter/benchmark/inference/lcsts/lcsts.yaml \
   --model-name <served-model-name>
 ```
 

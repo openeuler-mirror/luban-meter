@@ -97,6 +97,7 @@ src/luban_meter/benchmark/inference/
 ├── humaneval/        benchmark.py + result.py + executor.py + Containerfile（已实现 Pass@1）
 ├── squad/            benchmark.py + result.py + squad.yaml      （规划）
 ├── summarization/    benchmark.py + result.py + summarization.yaml（规划）
+├── lcsts/            benchmark.py + result.py + lcsts.yaml      （已实现）
 └── wikitext/         benchmark.py + result.py + wikitext.yaml   （已实现）
 ```
 
@@ -214,6 +215,8 @@ gen 模式答案提取规则（`common/parsers.py`）：
   `parse_failed` 并判该样本错误；
 - GSM8K：优先正则 `####\s*(数字)`，回退取文本最后一个数字，去千分位后数值比较；
 - SQuAD：小写、去标点、去冠词、压缩空白；
+- LCSTS：两层后处理——`lcsts_postprocess`（取首行、去编号前缀、去首尾中文标点）
+  + `general_postprocess`（截断、去标点、去冠词、合并空白）；
 - HumanEval：base completion 仅规范换行、移除模型重复返回的完整 prompt 和开头空行；
   其余内容（包括 Markdown 代码围栏）原样交给沙箱判定。
 
@@ -307,23 +310,30 @@ F1 = max over refs  2PR / (P + R)
 
 ### 6.6 LCSTS（中文摘要，P1）
 
-样本字段：`{article, summary}`。
+样本字段：`{content, abst}`。
 
-1. 渲染：摘要指令 + 正文；
+1. 渲染：`阅读以下文章，并给出简短的摘要：{content}\n摘要如下：`
+   （与 OpenCompass `lcsts_gen_8ee1fe.py` 一致）；支持 few-shot 和自定义模板；
 2. gen 模式生成；
-3. 分词：中文无自然空格，统一按字符切分（确定性基线，口径记录在元数据）；
-4. 指标：
+3. 两层后处理对齐 OpenCompass：
+   - `lcsts_postprocess`：取首行、去编号前缀（`1. `/`- `）、去首尾中文标点；
+   - `general_postprocess`：在首个换行/句号/逗号处截断、去标点、去冠词、
+     合并空白；
+4. 分词：使用 **jieba** 分词（`' '.join(jieba.cut(text))`），与 OpenCompass
+   `JiebaRougeEvaluator` 口径完全一致；
+5. ROUGE 计算使用 **rouge-chinese** 库（`from rouge_chinese import Rouge`），
+   调用 `Rouge().get_scores(pred, ref)` 获取 ROUGE-1/2/L F-measure；
+6. 指标：
 
 ```text
-ROUGE-N: n-gram 用 Counter 计数
-         P = |overlap| / |pred_ngrams|
-         R = |overlap| / |ref_ngrams|
-         F1 = 2PR / (P + R)
-ROUGE-L: 以 pred/ref 字符序列的 LCS 长度代替重叠数，同式计算 P、R、F1
+ROUGE-1/2/L F-measure = rouge_chinese.Rouge().get_scores(
+    " ".join(jieba.cut(postprocess(prediction))),
+    " ".join(jieba.cut(postprocess(reference))),
+)[0]["rouge-{1,2,l}"]["f"]
 ```
 
-输出名：`metrics.task_view.summarization.rouge_1`、`rouge_2`、`rouge_l`，单位
-`ratio`，全样本取均值。
+输出名：`metrics.task_view.lcsts.rouge1`、`rouge2`、`rougeL`，单位
+`score`（× 100），全样本取算术平均值。
 
 ### 6.7 WikiText（语言建模，P1）
 
@@ -420,21 +430,25 @@ Prompt 全文，完整设置与原始信息仍保存在 JSON 中。
 4. `humaneval` completion-only Pass@1 端到端：本地数据加载、模型生成、代码
    提取、Docker-only 沙箱执行、状态分类和指标聚合；
 5. 数据集离线准备脚本 `inference/scripts/`（prepare_ceval、prepare_cmmlu、
-   prepare_gsm8k、prepare_humaneval、prepare_wikitext）；
+   prepare_gsm8k、prepare_humaneval、prepare_lcsts、prepare_wikitext）；
 6. 随包内置标准评测数据 `inference/data/`（含 HumanEval 164 题、WikiText val/test），并由
    `dataset.resolve_data_path()` 提供 CWD → 包内置的相对路径回退解析，使默认
    配置从任意工作目录开箱即用；
 7. `wikitext` 端到端：本地数据加载、滚动窗口 logprob 采集、Bits-per-Byte
-   和 Perplexity 指标聚合。
+   和 Perplexity 指标聚合；
+8. `lcsts` 端到端：中文摘要 gen 模式，jieba 分词 + rouge-chinese 计算
+   ROUGE-1/2/L F-measure，与 OpenCompass `JiebaRougeEvaluator` 口径一致。
 
 尚未实现，后续按以下顺序建设：
 
 1. `humaneval` 多样本采样和 Pass@k（k > 1）；
-2. `squad`、`summarization`（P1）；
+2. `squad`（P1）；
 3. Suite 编排与跨运行汇总报告。
 
-其中 Token F1、ROUGE、通用 Pass@k、Perplexity 的指标计算能力已在
-`common/metrics.py` 中具备；HumanEval 首版仅接入 k=1。
+其中 Token F1、通用 Pass@k、Perplexity 的指标计算能力已在
+`common/metrics.py` 中具备；HumanEval 首版仅接入 k=1。LCSTS 的 ROUGE
+计算使用 `rouge-chinese` 库（与 OpenCompass 一致），不使用
+`common/metrics.py` 中的标准库 ROUGE 实现。
 
 当前尚未实现或不应从现有字段推断：
 

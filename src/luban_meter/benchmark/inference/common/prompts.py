@@ -16,6 +16,7 @@ SUPPORTED_PROMPT_VERSIONS = {
     "cmmlu": ("cmmlu-v1",),
     "gsm8k": ("gsm8k-v1",),
     "humaneval": ("humaneval-completion-v1",),
+    "lcsts": ("lcsts-v1",),
     "wikitext": ("wikitext-v1",),
 }
 
@@ -81,3 +82,32 @@ def render_wikitext_prompt(sample: Mapping[str, Any]) -> str:
     if not isinstance(text, str) or not text:
         raise ValueError("sample text must be a non-empty string")
     return text
+
+
+def render_lcsts_prompt(
+    sample: Mapping[str, Any],
+    *,
+    few_shot_samples: Sequence[Mapping[str, Any]] = (),
+    template: str = (
+        "阅读以下文章，并给出简短的摘要：{content}\n摘要如下："
+    ),
+) -> str:
+    """Render LCSTS summarization prompt.
+
+    Matches OpenCompass ``lcsts_gen_8ee1fe.py``: zero-shot by default,
+    optional few-shot examples inserted before the target article.
+    """
+    content = sample.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(
+            "sample content must be a non-empty string"
+        )
+    blocks: list[str] = []
+    for example in few_shot_samples:
+        ex_content = str(example["content"]).strip()
+        ex_abst = str(example["abst"]).strip()
+        blocks.append(
+            f"{template.format(content=ex_content)}{ex_abst}"
+        )
+    blocks.append(template.format(content=content.strip()))
+    return "\n\n".join(blocks)

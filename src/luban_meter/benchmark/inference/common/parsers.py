@@ -87,3 +87,41 @@ def extract_humaneval_completion(text: str, prompt: str) -> str:
     if not candidate.strip():
         return ""
     return candidate.rstrip() + "\n"
+
+
+def lcsts_postprocess(text: str) -> str:
+    """First-layer post-processing for LCSTS predictions.
+
+    Matches OpenCompass ``lcsts_postprocess`` in
+    ``opencompass/datasets/lcsts.py``: take the first line, strip
+    numbered / bulleted prefixes, strip surrounding Chinese
+    punctuation.  Applied only to the prediction (not the reference).
+    """
+    text = text.strip().split("\n")[0].strip()
+    if text.startswith("1. "):
+        text = text[3:]
+    if text.startswith("- "):
+        text = text[2:]
+    text = text.strip("\u201c\u201d\uff0c\u3002\uff01\u201d")
+    return text
+
+
+def general_postprocess(text: str) -> str:
+    """Second-layer post-processing before ROUGE scoring.
+
+    Matches OpenCompass ``general_postprocess`` in
+    ``opencompass/utils/text_postprocessors.py``: truncate at the
+    first newline / period / comma, remove punctuation, remove
+    English articles, collapse whitespace.  Applied to both
+    prediction and reference.
+
+    Note: for Chinese text the truncation only fires on ASCII
+    ``.``, ``,``, or ``\\n``; Chinese punctuation is removed by the
+    ``[^\\w\\s]`` substitution (``\\w`` matches CJK characters).
+    """
+    truncated = re.split(r"[\n.,]", text, 1)[0]
+    no_punct = re.sub(r"[^\w\s]", "", truncated)
+    no_articles = re.sub(
+        r"\b(a|an|the)\b", "", no_punct, flags=re.IGNORECASE
+    )
+    return re.sub(r"\s+", " ", no_articles).strip()

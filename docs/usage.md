@@ -19,7 +19,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k,humaneval,wikitext  Online-service model evaluation benchmarks
+inference   ceval,cmmlu,gsm8k,humaneval,lcsts,wikitext  Online-service model evaluation benchmarks
 ```
 
 `generate` 测量生成式推理性能；`inference` 用于基于在线推理服务的模型效果评测。
@@ -318,7 +318,7 @@ python -m luban_meter benchmarks list
 ## 12. inference 模型任务效果测试
 
 `inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
-`cmmlu`、`gsm8k` 和 `humaneval` 的标准评测数据，位于
+`cmmlu`、`gsm8k`、`humaneval`、`lcsts` 和 `wikitext` 的标准评测数据，位于
 `src/luban_meter/benchmark/inference/data/`，开箱即用。若需替换数据版本，
 可用离线准备脚本将外部官方格式转换为本地 jsonl（运行时不下载数据）：
 
@@ -332,6 +332,8 @@ python src/luban_meter/benchmark/inference/scripts/prepare_gsm8k.py \
 python src/luban_meter/benchmark/inference/scripts/prepare_humaneval.py \
   --source /path/to/HumanEval.jsonl.gz \
   --out data/humaneval/HumanEval.jsonl
+python src/luban_meter/benchmark/inference/scripts/prepare_lcsts.py \
+  --source /path/to/lcsts --out data/lcsts
 ```
 
 配置中的 `dataset_path` 为相对路径时按以下顺序解析：先相对当前工作目录
@@ -370,7 +372,8 @@ luban-meter run \
 
 当前可用 Benchmark：`ceval`、`cmmlu`（选择题 Accuracy，支持 ppl/gen 两种评测
 模式）、`gsm8k`（数学题 Exact Match，gen 模式）、`humaneval`（代码补全
-Pass@1，base completions 模式）和 `wikitext`（语言建模 Perplexity / Bits-per-Byte，
+Pass@1，base completions 模式）、`lcsts`（中文摘要 ROUGE-1/2/L F-measure，
+gen 模式）和 `wikitext`（语言建模 Perplexity / Bits-per-Byte，
 loss 模式）。其中 ppl / loss 模式依赖
 `/v1/completions` 的 `echo + logprobs` 回显，且仅允许 `prompt_format=base`
 （对话格式层会注入特殊 Token 破坏 ppl 续写打分，组合 ppl + chat 会被配置校验
@@ -404,6 +407,7 @@ loss 模式）。其中 ppl / loss 模式依赖
 | `ceval`、`cmmlu` | 总体和分学科 Accuracy、评分及失败样本数 | 总体和分学科得分柱状图 |
 | `gsm8k` | Exact Match、评分及失败样本数 | 得分柱状图 |
 | `humaneval` | Pass@1、任务数、通过数、解析/服务/沙箱失败及超时数 | Pass@1 柱状图 |
+| `lcsts` | ROUGE-1/2/L F-measure、总样本、有效评分及服务失败数 | ROUGE-1/2/L 柱状图 |
 | `wikitext` | Mean Loss、Perplexity、Bits-per-Byte、计 Token 数及失败样本数 | Perplexity 和 Bits-per-Byte 柱状图 |
 
 评测图表紧跟对应的指标表格。每个 Benchmark 区块开头先展示一张**硬件环境与
