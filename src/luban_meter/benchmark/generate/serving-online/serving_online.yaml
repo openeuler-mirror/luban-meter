@@ -3,28 +3,41 @@ service_url: http://127.0.0.1:8000
 api_key: ""
 request_timeout: 120
 
-# Every input/output/rate combination is an independent measured Case.
+# Workload mode: "random" or "dataset"
+# - random:  exact-length token-ID prompts via /v1/completions
+# - dataset: real conversational prompts via /v1/chat/completions
+workload_mode: random
+
+# ── Common parameters ───────────────────────────────────────────────────
 warmup: 2
 rounds: 100
-input_lengths: [128, 512, 2048]	 
-output_lengths: [1, 32, 128]	 
 request_rates: [1.0, 4.0, 16.0]
-
-# Safety cap for simultaneous client requests. Requests that cannot start at
-# their scheduled time expose the delay through request_view.dispatch_delay.
 max_concurrency: 128
+seed: 0
 
-# Encoded by the service /tokenize endpoint, then repeated and truncated at
-# token-ID level to construct each exact input length.
+# ── random mode parameters ──────────────────────────────────────────────
+# Encoded by the service /tokenize endpoint, then repeated and truncated
+# at token-ID level to construct each exact input length.
 seed_prompt: "Please summarize the benefits of open source software."
-
+input_lengths: [128, 512, 2048]
+output_lengths: [1, 32, 128]
 # Fixed exact-length semantics. Changing these values is rejected.
 temperature: 0.0
 ignore_eos: true
-seed: 0
 
-# Optional Service Level Objective block.
-#
+# ── dataset mode parameters ─────────────────────────────────────────────
+# Dataset: ShareGPT real conversations.
+# A 200-conversation sample is included at dataset/sharegpt/ShareGPT_V3_sample.json
+# Full dataset (~90K, 641 MB) can be downloaded from:
+#   https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+# dataset_path: dataset/sharegpt/ShareGPT_V3_sample.json
+# num_prompts: 200
+# Arrival process: "poisson" | "gamma" | "constant"
+# arrival_process: gamma
+# burstiness: 1.0  # < 1 → more bursty, > 1 → more uniform
+# max_tokens: 2048
+
+# ── Optional Service Level Objective block ──────────────────────────────
 #   p99_ms   — Circuit breaker threshold. After each Case, if the Case's P99
 #              E2EL exceeds this value, subsequent Cases are skipped.
 #              Requires at least 10 successful samples; otherwise it is

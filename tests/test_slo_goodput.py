@@ -157,7 +157,7 @@ class CaseP99E2elTest(unittest.TestCase):
 
 
 class CircuitBreakerTest(unittest.TestCase):
-    """Verify circuit breaker triggering in benchmark.run_benchmark."""
+    """Verify circuit breaker triggering in benchmark.run_benchmark (random mode)."""
 
     def setUp(self) -> None:
         self.benchmark = load_module(
@@ -165,7 +165,7 @@ class CircuitBreakerTest(unittest.TestCase):
         )
 
     def _patch_run_case(self, p99_values: list[float]):
-        """Patch run_case to return cases with controlled P99 values.
+        """Patch run_case_random to return cases with controlled P99 values.
 
         Each entry in p99_values produces a Case whose successful requests
         have E2EL samples such that percentile(e2el, 0.99) == p99_values[i].
@@ -206,7 +206,7 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case", side_effect=self._patch_run_case([100, 200])):
+        with patch.object(self.benchmark, "run_case_random", side_effect=self._patch_run_case([100, 200])):
             with patch.object(self.benchmark, "tokenize_seed_prompt", return_value=([1, 2], 32)):
                 with patch.object(self.benchmark, "discover_model", return_value="test-model"):
                     raw_result = self.benchmark.run_benchmark(request, parameters)
@@ -230,7 +230,7 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case", side_effect=self._patch_run_case([100, 200, 300])):
+        with patch.object(self.benchmark, "run_case_random", side_effect=self._patch_run_case([100, 200, 300])):
             with patch.object(self.benchmark, "tokenize_seed_prompt", return_value=([1, 2], 32)):
                 with patch.object(self.benchmark, "discover_model", return_value="test-model"):
                     raw_result = self.benchmark.run_benchmark(request, parameters)
@@ -259,7 +259,7 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case", side_effect=self._patch_run_case([100, 200])):
+        with patch.object(self.benchmark, "run_case_random", side_effect=self._patch_run_case([100, 200])):
             with patch.object(self.benchmark, "tokenize_seed_prompt", return_value=([1, 2], 32)):
                 with patch.object(self.benchmark, "discover_model", return_value="test-model"):
                     raw_result = self.benchmark.run_benchmark(request, parameters)
@@ -294,7 +294,7 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case", side_effect=fake_run_case):
+        with patch.object(self.benchmark, "run_case_random", side_effect=fake_run_case):
             with patch.object(self.benchmark, "tokenize_seed_prompt", return_value=([1, 2], 32)):
                 with patch.object(self.benchmark, "discover_model", return_value="test-model"):
                     raw_result = self.benchmark.run_benchmark(request, parameters)
@@ -336,7 +336,7 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case", side_effect=fake_run_case):
+        with patch.object(self.benchmark, "run_case_random", side_effect=fake_run_case):
             with patch.object(self.benchmark, "tokenize_seed_prompt", return_value=([1, 2], 32)):
                 with patch.object(self.benchmark, "discover_model", return_value="test-model"):
                     raw_result = self.benchmark.run_benchmark(request, parameters)

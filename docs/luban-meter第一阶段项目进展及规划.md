@@ -24,7 +24,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | 建立统一 Benchmark 分类 | 已完成 | 使用 `benchmark/<module>/<benchmark>/` 管理评测脚本 |
 | 支持单任务执行 | 已完成 | 通过 `module + benchmark + config` 定位并执行测试 |
 | 支持多任务编排 | 已完成 | Suite 顺序执行多个任务，每个任务独立输出结果 |
-| 在线服务生成性能测试 | 已完成 | 实现 `serving-online` 开放式固定 Request Rate 负载测试 |
+| 在线服务生成性能测试 | 已完成 | 实现 `serving-online` 开放式固定 Request Rate 负载测试，支持 random 和 dataset 双模式 |
 | vLLM 离线引擎测试 | 已完成 | 实现 `vllm-engine-offline` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
@@ -96,7 +96,12 @@ input_lengths × output_lengths × request_rates
 - 负载质量：Offered/Achieved Request Start Rate、Dispatch Delay；
 - 并发情况：配置上限、峰值并发、平均并发；
 - 可靠性：成功请求数、失败请求数；
-- 统计结果：Mean、Median、P50、P90、P99、Min、Max、Stddev、Count。
+- 统计结果：Mean、Median、P50、P90、P99、Min、Max、Stddev、Count；
+- SLO/Goodput：可配置 TTFT 和 E2EL 阈值，统计满足 SLO 的有效请求比例。
+
+`serving-online` 还支持 **dataset 模式**：使用 ShareGPT 真实对话作为 Prompt，
+通过 `/v1/chat/completions` 发送请求，支持 Poisson、Gamma 和恒定到达过程调度，
+输出变长输入/输出的分布统计和服务容量评估。两种模式共用同一套指标计算逻辑。
 
 ### 4.2 离线 Engine Benchmark：`vllm-engine-offline`
 

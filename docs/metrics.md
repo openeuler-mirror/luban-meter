@@ -66,8 +66,10 @@ LuBan-Meter 当前使用线性插值计算分位数。比较不同运行时，�
 
 ## 4. 在线服务指标
 
-在线测试通过 `/tokenize` 构造精确长度的 Token ID Prompt，再通过流式
-`/v1/completions` 采集完整请求时间线。脚本对 `input_lengths ×
+`serving-online` 支持两种工作负载模式，由 `workload_mode` 配置决定。
+
+**random 模式**：通过 `/tokenize` 构造精确长度的 Token ID Prompt，再通过
+流式 `/v1/completions` 采集完整请求时间线。脚本对 `input_lengths ×
 output_lengths × request_rates` 做笛卡尔积，每个组合形成一个独立 Case，分别
 预热、计时和聚合，不能把不同负载条件的样本混合统计。
 
@@ -93,6 +95,24 @@ scheduled_time[i] = case_start_time + i / request_rate
 这是开放式固定速率负载。`max_concurrency` 只作为客户端安全上限；当在途请求
 达到上限时，线程池会延迟后续请求的实际启动。结果使用 `dispatch_delay` 和
 `achieved_request_start_rate` 暴露这种偏差，不能只看配置的 Request Rate。
+
+### 4.1.1 dataset 模式：真实负载与到达过程
+
+dataset 模式使用 ShareGPT 真实对话作为 Prompt，通过 `/v1/chat/completions`
+发送请求。Case 由 `request_rate + arrival_process` 确定，输入/输出 Token 数
+按分布统计而非严格校验。
+
+到达过程调度请求的计划时刻：
+
+- **constant**：与 random 模式相同，`scheduled_time[i] = i / request_rate`；
+- **poisson**：相邻请求间隔服从指数分布，
+  `interval[i] ~ Exponential(request_rate)`；
+- **gamma**：相邻请求间隔服从 Gamma 分布，通过 `burstiness` 参数控制突发性。
+  `burstiness < 1` 表示更突发，`> 1` 表示更均匀。
+
+dataset 模式的 Case 字段不包含 `input_length` 和 `output_length`，而是记录
+`arrival_process`、`burstiness`、`num_prompts` 和 `max_tokens`，并对输入/输出
+Token 数按 Mean、P50、P90、P99 统计分布。
 
 ### 4.2 原始采集数据
 
