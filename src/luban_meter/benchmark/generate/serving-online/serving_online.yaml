@@ -26,11 +26,29 @@ temperature: 0.0
 ignore_eos: true
 
 # ── dataset mode parameters ─────────────────────────────────────────────
-# Dataset: ShareGPT real conversations.
-# A 200-conversation sample is included at dataset/sharegpt/ShareGPT_V3_sample.json
-# Full dataset (~90K, 641 MB) can be downloaded from:
-#   https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+# Dataset format: "sharegpt" or "jsonl"
+# - sharegpt: ShareGPT JSON with conversations array
+# - jsonl:    Custom JSONL, each line has a "prompt" field (or set
+#             prompt_field to use a different key)
+# dataset_format: sharegpt
+# prompt_field: prompt  # only for jsonl format
+#
+# Available datasets:
+#   ShareGPT (JSON):
+#     A 200-conversation sample is included at
+#     dataset/sharegpt/ShareGPT_V3_sample.json
+#     Full dataset (~90K, 641 MB) can be downloaded from:
+#       wget -O dataset/sharegpt/ShareGPT_V3_unfiltered_cleaned_split.json \
+#         https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json
+#
+#   Custom JSONL:
+#     Each line: {"prompt": "your prompt text"}
+#     Example:
+#       {"prompt": "What is the capital of India?"}
+#       {"prompt": "Explain quantum computing."}
+#
 # dataset_path: dataset/sharegpt/ShareGPT_V3_sample.json
+# dataset_format: sharegpt
 # num_prompts: 200
 # Arrival process: "poisson" | "gamma" | "constant"
 # arrival_process: gamma
@@ -38,24 +56,33 @@ ignore_eos: true
 # max_tokens: 2048
 
 # ── Optional Service Level Objective block ──────────────────────────────
-#   p99_ms   — Circuit breaker threshold. After each Case, if the Case's P99
-#              E2EL exceeds this value, subsequent Cases are skipped.
-#              Requires at least 10 successful samples; otherwise it is
-#              not triggered to avoid statistically unstable P99.
+#   Per-request SLO dimensions for Goodput computation.
+#   A request is SLO-satisfied only when ALL configured dimensions are
+#   within their thresholds (AND relation).
 #
-#   ttft_ms  — Goodput dimension: requests with TTFT above this value are
-#              counted as SLO-violated.
-#   tpot_ms  — Goodput dimension: requests with TPOT above this value are
-#              counted as SLO-violated. Skipped for output_tokens == 1.
-#   e2el_ms  — Goodput dimension: requests with E2EL above this value are
-#              counted as SLO-violated.
-#
-# A request is SLO-satisfied only when ALL configured dimensions are within
-# their thresholds (AND relation). The slo block is optional; when omitted,
-# Goodput is not computed and circuit breaker is disabled.
+#   ttft_ms  — Requests with TTFT above this value are SLO-violated.
+#   tpot_ms  — Requests with TPOT above this value are SLO-violated.
+#              TPOT = e2el / output_tokens (includes first token).
+#              Skipped for output_tokens == 1.
+#   e2el_ms  — Requests with E2EL above this value are SLO-violated.
 #
 # slo:
-#   p99_ms: 2000
 #   ttft_ms: 500
 #   tpot_ms: 50
 #   e2el_ms: 8000
+
+# ── Optional circuit breaker ───────────────────────────────────────────
+#   Case-level stop: after each Case, if P99 E2EL exceeds this threshold,
+#   subsequent Cases are skipped. Requires >= 10 successful samples.
+#   Independent of SLO. Can be a number or an object:
+#
+# circuit_breaker: 2000
+# circuit_breaker:
+#   p99_e2el_ms: 2000
+
+# ── Optional stop constraints ──────────────────────────────────────────
+#   max_duration:  stop cases when a case exceeds this duration (seconds)
+#   max_error_rate: stop cases when a case's error rate exceeds this ratio
+#
+# max_duration: 300
+# max_error_rate: 0.3

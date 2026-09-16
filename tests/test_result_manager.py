@@ -63,7 +63,8 @@ class ResultManagerTest(unittest.TestCase):
                 "    samples = raw_result['metrics']['samples_ms']\n"
                 "    return {\n"
                 "        'environment': {'runtime': {'name': 'test'}},\n"
-                "        'metrics': {'mean_ms': sum(samples) / len(samples)},\n"
+                "        'metrics': {'mean_ms': "
+                "sum(samples) / len(samples)},\n"
                 "        'metadata': {'processed': True},\n"
                 "    }\n",
                 encoding="utf-8",
@@ -120,7 +121,9 @@ class StreamingCollectionTest(unittest.TestCase):
         )
         times = iter((10.0, 10.2))
 
-        observation = collect_completion_stream(stream, clock=lambda: next(times))
+        observation = collect_completion_stream(
+            stream, clock=lambda: next(times)
+        )
 
         self.assertEqual(observation.generated_text, "ABC")
         self.assertEqual(observation.event_times, (10.0, 10.2))
@@ -133,7 +136,9 @@ class StreamingCollectionTest(unittest.TestCase):
             b"data: [DONE]\n\n"
         )
 
-        with self.assertRaisesRegex(RuntimeError, "did not report token usage"):
+        with self.assertRaisesRegex(
+            RuntimeError, "did not report token usage"
+        ):
             collect_completion_stream(stream, clock=lambda: 10.0)
 
 
@@ -193,7 +198,7 @@ class ServingMetricsTest(unittest.TestCase):
         request_view = case["request_view"]
         service_view = case["service_view"]
 
-        self.assertEqual(len(request_view), 9)
+        self.assertEqual(len(request_view), 10)
         self.assertEqual(len(service_view), 15)
         self.assertEqual(request_view["ttft"]["count"], 2)
         self.assertEqual(request_view["itl"]["count"], 3)
@@ -272,7 +277,9 @@ class ServingCollectionTest(unittest.TestCase):
                 )
             payload = json.loads(http_request.data)
             completion_payloads.append(payload)
-            return FakeStreamingResponse(len(payload["prompt"]), payload["max_tokens"])
+            return FakeStreamingResponse(
+                len(payload["prompt"]), payload["max_tokens"]
+            )
 
         with patch.object(
             benchmark.urllib.request,
@@ -291,12 +298,19 @@ class ServingCollectionTest(unittest.TestCase):
         self.assertEqual(cases[0]["request_rate"], 100000.0)
         self.assertEqual(cases[1]["request_rate"], 200000.0)
         self.assertEqual(cases[0]["request_view"]["ttft"]["count"], 2)
-        self.assertEqual(cases[0]["request_view"]["tpot"]["count"], 0)
+        self.assertEqual(cases[0]["request_view"]["tpot"]["count"], 2)
         self.assertEqual(cases[2]["request_view"]["tpot"]["count"], 2)
-        self.assertEqual(cases[3]["service_view"]["total_requests"]["value"], 2)
+        self.assertEqual(
+            cases[3]["service_view"]["total_requests"]["value"], 2
+        )
         self.assertEqual(result["metadata"]["total_successful_requests"], 8)
         self.assertEqual(len(completion_payloads), 8)
-        self.assertTrue(all(len(payload["prompt"]) == 4 for payload in completion_payloads))
+        self.assertTrue(
+            all(
+                len(payload["prompt"]) == 4
+                for payload in completion_payloads
+            )
+        )
         self.assertTrue(
             all(
                 payload["min_tokens"] == payload["max_tokens"]
@@ -316,17 +330,30 @@ class ServingCollectionTest(unittest.TestCase):
             "urlopen",
             return_value=FakeStreamingResponse(4, 2),
         ):
-            record = benchmark.execute_completion_request(
+            record = benchmark.execute_request(
                 request_index=0,
-                prompt_token_ids=[1, 2, 3, 4],
-                output_length=3,
+                payload={
+                    "model": "test-model",
+                    "prompt": [1, 2, 3, 4],
+                    "add_special_tokens": False,
+                    "max_tokens": 3,
+                    "min_tokens": 3,
+                    "temperature": 0.0,
+                    "ignore_eos": True,
+                    "seed": 0,
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                },
+                endpoint="/v1/completions",
                 service_url="http://127.0.0.1:8000",
-                model="test-model",
                 api_key="",
                 timeout=5,
                 benchmark_start=now,
                 scheduled_time=now,
                 tracker=benchmark.ActiveRequestTracker(),
+                stream_collector=benchmark.collect_completion_stream,
+                expected_input_tokens=4,
+                expected_output_tokens=3,
             )
 
         self.assertEqual(record["status"], "failed")
