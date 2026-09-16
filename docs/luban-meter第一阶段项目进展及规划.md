@@ -28,7 +28,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | vLLM 离线引擎测试 | 已完成 | 实现 `vllm-engine-offline` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
-| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval（Pass@1）和 wikitext（Perplexity / Bits-per-Byte），并提供四任务标准 Suite；F1、ROUGE、Pass@k 的其他任务待接入 |
+| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval（Pass@1）、lcsts（ROUGE-1/2/L）和 wikitext（Perplexity / Bits-per-Byte），并提供四任务标准 Suite；F1、Pass@k 的其他任务待接入 |
 | 设备和服务内部监控 | 待建设 | GPU 利用率、显存、功耗、服务端队列和 KV Cache 实际使用率尚未采集 |
 
 ## 三、总体架构方案
@@ -157,7 +157,7 @@ input_lengths × output_lengths × request_batch_sizes
      （其中 Token F1、ROUGE、Pass@k、Perplexity 计算能力已具备，数据集评测待接入）；
    - `choice.py` / `choice_result.py`：四选一题目通用评测流程。
 
-2. **已实现三个 Benchmark**：
+2. **已实现六个 Benchmark**：
 
    - `ceval`：C-Eval 选择题 Accuracy，支持 ppl（`echo + logprobs` 回显后按
      `tokenize(prompt)` 与 `tokenize(prompt+续写)` 得到的偏移 `[p:f)` 切片、
@@ -165,12 +165,19 @@ input_lengths × output_lengths × request_batch_sizes
      `prompt_format=base`）和 gen（生成后抽取字母）两种评测模式；
    - `cmmlu`：CMMLU 选择题 Accuracy，复用 choice 协议，验证协议在同族数据集间
      的泛化；
-   - `gsm8k`：GSM8K 数学题，gen 模式生成后经数值抽取与参考答案做 Exact Match 判分。
+   - `gsm8k`：GSM8K 数学题，gen 模式生成后经数值抽取与参考答案做 Exact Match 判分；
+   - `humaneval`：HumanEval 代码补全 Pass@1，gen 模式生成代码后在 Docker 沙箱
+     中执行单元测试，沙箱不可用时禁止宿主机回退；
+   - `lcsts`：LCSTS 中文摘要 ROUGE-1/2/L F-measure，gen 模式生成摘要后经
+     jieba 分词 + rouge-chinese 计算，对齐 OpenCompass JiebaRougeEvaluator；
+   - `wikitext`：WikiText 语言建模 Perplexity / Bits-per-Byte，loss 模式通过
+     `echo + logprobs` 滚动窗口计分。
 
-3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；ceval/cmmlu/gsm8k
-   的样例数据集随包内置在 `inference/data/`，相对 `dataset_path` 未命中时回退
+3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；各 Benchmark 的
+   样例数据集随包内置在 `inference/data/`，相对 `dataset_path` 未命中时回退
    到该内置目录，使默认配置可从任意工作目录开箱即用；离线准备脚本位于
-   `inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k），将官方
+   `inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k、
+   prepare_humaneval、prepare_lcsts、prepare_wikitext），将官方
    数据转换为统一 jsonl 格式。ppl / loss 模式仅允许 `prompt_format=base`，
    组合 ppl + chat 会被 `validate_choice_parameters` 校验拒绝。逐样本记录 Prompt、
    原始输出、解析结果、判定、耗时与 Token 数，元数据记录评测模式、Prompt 版本、
@@ -188,9 +195,9 @@ result.py → result.json` 执行链路和结果协议，指标按
 
 | 指标类别 | 代表指标 | 当前覆盖 | 说明 |
 |---|---|---|---|
-| 模型效果 | Accuracy、Precision、Recall、F1、EM、Pass@k | 部分实现 | `inference` 已实现 ceval、cmmlu、gsm8k 的 Accuracy/EM；Token F1、Pass@k 等计算能力已具备，数据集评测待接入 |
-| 语言模型自身 | Cross-Entropy Loss、Perplexity | 未实现 | 需要模型与标准语料评测 |
-| 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 未实现 | 模型生成质量 |
+| 模型效果 | Accuracy、Precision、Recall、F1、EM、Pass@k | 部分实现 | `inference` 已实现 ceval、cmmlu、gsm8k 的 Accuracy/EM、humaneval 的 Pass@1；Token F1、Pass@k 等计算能力已具备，数据集评测待接入 |
+| 语言模型自身 | Cross-Entropy Loss、Perplexity | 已实现 | `wikitext` 通过 loss 模式计算 Perplexity 和 Bits-per-Byte |
+| 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 部分实现 | `lcsts` 已实现中文摘要 ROUGE-1/2/L F-measure |
 | 生成推理性能 | TTFT、ITL、TPOT、E2EL、Prefill/Decode | 已实现 | 覆盖在线客户端和 vLLM推理引擎两个观察边界 |
 | 服务能力 | request/s、token/s、负载速率、并发 | 已实现 | 支持精确输入/输出长度和固定 Request Rate 矩阵 |
 | Goodput | 满足 SLO 的有效吞吐 | 已实现 | 在线支持 TTFT、TPOT、E2EL SLO；离线 Engine 支持独立内部阈值和 Engine Goodput |
@@ -231,7 +238,7 @@ result.py → result.json` 执行链路和结果协议，指标按
 - Benchmark 自动发现和标准目录协议；
 - `raw_result.json` 与 `result.json` 两阶段结果协议；
 - 通用在线服务测试和 vLLM 离线引擎测试；
-- `inference` 模块模型任务效果评测（ceval、cmmlu、gsm8k、humaneval、wikitext）
+- `inference` 模块模型任务效果评测（ceval、cmmlu、gsm8k、humaneval、lcsts、wikitext）
   与公共评测层、数据集离线准备脚本；
 - 精确输入/输出 Token 长度与开放式固定 Request Rate 负载矩阵；
 - Request View、Service View、Engine Request/Batch Metrics 指标分层；
@@ -258,16 +265,15 @@ result.py → result.json` 执行链路和结果协议，指标按
   答案解析、指标计算），统一采集逐样本任务结果、端到端延迟和 Token 数；
 - 基于现有框架对接脚本执行接口，形成模型生成结果评测的目录与结果协议；
 - 首批落地 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval
-  （Pass@1）和 wikitext（Perplexity / Bits-per-Byte），ppl/gen/loss 三种评测
-  模式打通在线 logprobs 与代码补全链路；
+  （Pass@1）、lcsts（ROUGE-1/2/L）和 wikitext（Perplexity / Bits-per-Byte），
+  ppl/gen/loss 三种评测模式打通在线 logprobs 与代码补全链路；
 - 建成 `inference-standard` Suite，一次顺序执行四个数据集并在统一结果中内嵌
   各任务指标；
 - 指标计算层已具备 Token F1、ROUGE、Pass@k、Perplexity 能力。
 
 剩余工作：
 
-- 补齐 HumanEval 多样本 Pass@k、SQuAD（EM、Token F1）和摘要类（LCSTS
-  ROUGE）任务；
+- 补齐 HumanEval 多样本 Pass@k、SQuAD（EM、Token F1）任务；
 - 建设跨运行对比报告。
 
 `inference` 统一通过在线推理服务调用模型，优先复用 OpenAI-compatible HTTP 接口；
