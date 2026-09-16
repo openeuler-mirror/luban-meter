@@ -58,7 +58,11 @@ REPORT = {
 
 def numeric(record: Mapping[str, Any], name: str) -> float:
     value = record.get(name)
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+    if (
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or value < 0
+    ):
         raise ValueError(f"{name} must be a non-negative number")
     return float(value)
 
@@ -111,6 +115,9 @@ def compute_goodput(
     - tpot_ms only applies when output_tokens > 1 (TPOT is undefined when
       there is no decode phase). If all requests in the case have
       output_tokens == 1, tpot_ms is marked as not_applicable in the result.
+    - When a metric value is missing or None (e.g. non-streaming TTFT),
+      the request is marked as undetermined and excluded from both
+      satisfied and violated counts.
     - When no dimension is applicable (e.g. only tpot_ms configured and all
       requests are single-token, or no successful requests), the function
       returns a not_applicable status.
@@ -159,7 +166,21 @@ def compute_goodput(
 
     slo_satisfied: list[Mapping[str, Any]] = []
     slo_violated: list[Mapping[str, Any]] = []
+    undetermined: list[Mapping[str, Any]] = []
     for record in successful:
+        raw_ttft = record.get("ttft_ms")
+        raw_e2el = record.get("e2el_ms")
+        raw_output = record.get("output_tokens")
+
+        # Check for missing/None metric values (undetermined)
+        if (
+            raw_ttft is None
+            or raw_e2el is None
+            or raw_output is None
+        ):
+            undetermined.append(record)
+            continue
+
         ttft_ms = numeric(record, "ttft_ms")
         e2el_ms = numeric(record, "e2el_ms")
         output_tokens = token_count(record, "output_tokens")
@@ -168,11 +189,9 @@ def compute_goodput(
         if ttft_threshold is not None and ttft_ms > ttft_threshold:
             violated = True
         if not violated and tpot_applicable and output_tokens > 1:
-            decode_duration_ms = e2el_ms - ttft_ms
-            if decode_duration_ms > 0:
-                tpot_ms = decode_duration_ms / (output_tokens - 1)
-                if tpot_ms > tpot_threshold:
-                    violated = True
+            tpot_ms = e2el_ms / output_tokens
+            if tpot_ms > tpot_threshold:
+                violated = True
         if e2el_threshold is not None and e2el_ms > e2el_threshold:
             violated = True
 
@@ -215,6 +234,9 @@ def compute_goodput(
         "not_applicable_dimensions": not_applicable_dimensions,
         "slo_satisfied_count": scalar(satisfied_count, "request"),
         "slo_violated_count": scalar(violated_count, "request"),
+        "undetermined_count": scalar(
+            len(undetermined), "request"
+        ),
         "slo_satisfied_rate": scalar(satisfied_rate, "ratio", precision=4),
         "goodput_request_throughput": scalar(
             satisfied_count / duration_seconds, "req/s"
@@ -280,7 +302,9 @@ def process_case(
                 "successful request token counts must match the case"
             )
         if e2el_ms < ttft_ms:
-            raise ValueError("request e2el_ms must not be smaller than ttft_ms")
+            raise ValueError(
+                "request e2el_ms must not be smaller than ttft_ms"
+            )
 
         raw_itls = record.get("itl_samples_ms")
         if (
@@ -296,7 +320,9 @@ def process_case(
             and value >= 0
         ]
         if len(request_itls) != len(raw_itls):
-            raise ValueError("request ITL samples must be non-negative numbers")
+            raise ValueError(
+                "request ITL samples must be non-negative numbers"
+            )
 
         ttft_samples.append(ttft_ms)
         itl_samples.extend(request_itls)
@@ -306,16 +332,30 @@ def process_case(
         total_input_tokens += input_tokens
         total_output_tokens += output_tokens
         if e2el_ms > 0:
-            output_throughput_samples.append(1000 * output_tokens / e2el_ms)
+            output_throughput_samples.append(
+                1000 * output_tokens / e2el_ms
+            )
+        # TPOT: total time / output tokens (includes TTFT)
+        if output_tokens > 0 and e2el_ms > 0:
+            tpot_ms = e2el_ms / output_tokens
+            tpot_samples.append(tpot_ms)
+        # Decode TPOT: decode time / (output_tokens - 1) (excludes TTFT)
         decode_duration_ms = e2el_ms - ttft_ms
         if output_tokens > 1 and decode_duration_ms > 0:
-            tpot_ms = decode_duration_ms / (output_tokens - 1)
-            tpot_samples.append(tpot_ms)
-            decode_throughput_samples.append(1000 / tpot_ms)
+            decode_tpot_ms = decode_duration_ms / (output_tokens - 1)
+            decode_throughput_samples.append(1000 / decode_tpot_ms)
 
     request_durations = [numeric(record, "duration_ms") for record in records]
-    dispatch_delays = [numeric(record, "dispatch_delay_ms") for record in records]
+    dispatch_delays = [
+        numeric(record, "dispatch_delay_ms") for record in records
+    ]
     start_offsets = [numeric(record, "start_offset_ms") for record in records]
+    scheduled_latencies = [
+        numeric(record, "scheduled_latency_ms")
+        for record in records
+        if isinstance(record.get("scheduled_latency_ms"), (int, float))
+        and not isinstance(record.get("scheduled_latency_ms"), bool)
+    ]
     average_concurrency = sum(request_durations) / (1000 * duration_seconds)
     successful_count = len(successful)
     failed_count = len(failed)
@@ -335,6 +375,9 @@ def process_case(
         "itl": summarize(itl_samples, "ms"),
         "tpot": summarize(tpot_samples, "ms/token"),
         "e2el": summarize(e2el_samples, "ms"),
+        "scheduled_latency": summarize(
+            scheduled_latencies, "ms"
+        ) if scheduled_latencies else summarize([], "ms"),
         "input_tokens": summarize(input_token_samples, "token"),
         "output_tokens": summarize(output_token_samples, "token"),
         "output_token_throughput": summarize(
@@ -357,7 +400,9 @@ def process_case(
         "peak_concurrent_requests": scalar(peak_concurrency, "request"),
         "total_input_tokens": scalar(total_input_tokens, "token"),
         "total_output_tokens": scalar(total_output_tokens, "token"),
-        "request_throughput": scalar(successful_count / duration_seconds, "req/s"),
+        "request_throughput": scalar(
+            successful_count / duration_seconds, "req/s"
+        ),
         "input_token_throughput": scalar(
             total_input_tokens / duration_seconds, "token/s"
         ),

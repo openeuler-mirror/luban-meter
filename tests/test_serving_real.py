@@ -1,7 +1,7 @@
 """Tests for the serving-online benchmark module (dataset mode).
 
 Covers:
-- ShareGPT dataset loading
+- ShareGPT and JSONL dataset loading
 - Arrival process scheduling (constant, poisson, gamma)
 - Result processing with variable input/output lengths
 - SLO / Goodput computation with variable lengths
@@ -94,10 +94,12 @@ def make_raw_case(
 
 
 class ShareGPTLoadingTest(unittest.TestCase):
-    """Verify ShareGPT dataset loading."""
+    """Verify ShareGPT and JSONL dataset loading."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module("serving_real_bench_ds", SERVING_REAL_BENCHMARK)
+        self.benchmark = load_module(
+            "serving_real_bench_ds", SERVING_REAL_BENCHMARK
+        )
 
     def _make_sharegpt_file(self, conversations: list) -> str:
         tmp = tempfile.NamedTemporaryFile(
@@ -107,13 +109,22 @@ class ShareGPTLoadingTest(unittest.TestCase):
         tmp.close()
         return tmp.name
 
+    def _make_jsonl_file(self, records: list) -> str:
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False, encoding="utf-8"
+        )
+        for record in records:
+            tmp.write(json.dumps(record) + "\n")
+        tmp.close()
+        return tmp.name
+
     def test_loads_first_human_message(self) -> None:
         path = self._make_sharegpt_file([
             {
                 "id": "1",
                 "conversations": [
                     {"from": "human", "value": "What is Python?"},
-                    {"from": "gpt", "value": "Python is a programming language."},
+                    {"from": "gpt", "value": "Python is a language."},
                 ],
             },
             {
@@ -124,9 +135,13 @@ class ShareGPTLoadingTest(unittest.TestCase):
                 ],
             },
         ])
-        prompts = self.benchmark.load_sharegpt_prompts(path, num_prompts=10)
+        prompts = self.benchmark.load_prompts(
+            path, num_prompts=10, dataset_format="sharegpt"
+        )
         self.assertEqual(len(prompts), 2)
-        self.assertEqual(prompts[0] in ("What is Python?", "Hello there!"), True)
+        self.assertIn(
+            prompts[0], ("What is Python?", "Hello there!")
+        )
 
     def test_skips_conversations_without_human(self) -> None:
         path = self._make_sharegpt_file([
@@ -145,7 +160,9 @@ class ShareGPTLoadingTest(unittest.TestCase):
                 ],
             },
         ])
-        prompts = self.benchmark.load_sharegpt_prompts(path, num_prompts=10)
+        prompts = self.benchmark.load_prompts(
+            path, num_prompts=10, dataset_format="sharegpt"
+        )
         self.assertEqual(len(prompts), 1)
         self.assertEqual(prompts[0], "Hi")
 
@@ -161,26 +178,75 @@ class ShareGPTLoadingTest(unittest.TestCase):
             for i in range(50)
         ]
         path = self._make_sharegpt_file(conversations)
-        prompts = self.benchmark.load_sharegpt_prompts(path, num_prompts=5)
+        prompts = self.benchmark.load_prompts(
+            path, num_prompts=5, dataset_format="sharegpt"
+        )
         self.assertEqual(len(prompts), 5)
 
     def test_raises_on_missing_file(self) -> None:
         with self.assertRaises(FileNotFoundError):
-            self.benchmark.load_sharegpt_prompts("/nonexistent/path.json", 10)
+            self.benchmark.load_prompts(
+                "/nonexistent/path.json", 10, dataset_format="sharegpt"
+            )
 
     def test_raises_on_no_valid_prompts(self) -> None:
         path = self._make_sharegpt_file([
-            {"id": "1", "conversations": [{"from": "gpt", "value": "No human."}]}
+            {"id": "1", "conversations": [
+                {"from": "gpt", "value": "No human."}
+            ]}
         ])
         with self.assertRaisesRegex(ValueError, "no valid prompts"):
-            self.benchmark.load_sharegpt_prompts(path, 10)
+            self.benchmark.load_prompts(
+                path, 10, dataset_format="sharegpt"
+            )
+
+    def test_loads_jsonl_prompts(self) -> None:
+        path = self._make_jsonl_file([
+            {"prompt": "What is the capital of India?"},
+            {"prompt": "Explain quantum computing."},
+            {"other": "not a prompt"},
+        ])
+        prompts = self.benchmark.load_prompts(
+            path, num_prompts=10, dataset_format="jsonl"
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("What is the capital of India?", prompts)
+
+    def test_jsonl_custom_prompt_field(self) -> None:
+        path = self._make_jsonl_file([
+            {"question": "What is 2+2?"},
+            {"question": "Define AI."},
+        ])
+        prompts = self.benchmark.load_prompts(
+            path, num_prompts=10,
+            dataset_format="jsonl", prompt_field="question",
+        )
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("What is 2+2?", prompts)
+
+    def test_jsonl_raises_on_missing_field(self) -> None:
+        path = self._make_jsonl_file([
+            {"other": "no prompt field"},
+        ])
+        with self.assertRaisesRegex(ValueError, "no valid prompts"):
+            self.benchmark.load_prompts(
+                path, 10, dataset_format="jsonl"
+            )
+
+    def test_unsupported_format_raises(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported dataset_format"):
+            self.benchmark.load_prompts(
+                "/tmp/x.json", 10, dataset_format="unknown"
+            )
 
 
 class ArrivalSchedulingTest(unittest.TestCase):
     """Verify arrival process scheduling."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module("serving_real_bench_arr", SERVING_REAL_BENCHMARK)
+        self.benchmark = load_module(
+            "serving_real_bench_arr", SERVING_REAL_BENCHMARK
+        )
 
     def test_constant_spacing(self) -> None:
         offsets = self.benchmark.schedule_arrival_times(
@@ -236,10 +302,12 @@ class ResultProcessingTest(unittest.TestCase):
     """Verify result processing with variable token lengths."""
 
     def setUp(self) -> None:
-        self.result_module = load_module("serving_real_result", SERVING_REAL_RESULT)
+        self.result_module = load_module(
+            "serving_real_result", SERVING_REAL_RESULT
+        )
 
     def test_variable_lengths_summarized(self) -> None:
-        """Input/output tokens vary per request; result should report distribution."""
+        """Variable lengths summarized in distribution."""
         raw_case = make_raw_case(
             duration_seconds=10.0,
             requests=[
@@ -434,14 +502,24 @@ class CircuitBreakerTest(unittest.TestCase):
             "max_tokens": 2048,
             "seed": 0,
             "request_timeout": 5,
-            "slo": {"p99_ms": 150},
+            "slo": {"ttft_ms": 200, "e2el_ms": 1000},
+            "circuit_breaker": 150,
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case_dataset", side_effect=fake_run_case):
-            with patch.object(self.benchmark, "load_sharegpt_prompts", return_value=["p"] * 10):
-                with patch.object(self.benchmark, "discover_model", return_value="test-model"):
-                    raw_result = self.benchmark.run_benchmark(request, parameters)
+        with patch.object(
+            self.benchmark, "run_case_dataset",
+            side_effect=fake_run_case,
+        ), patch.object(
+            self.benchmark, "load_prompts",
+            return_value=["p"] * 10,
+        ), patch.object(
+            self.benchmark, "discover_model",
+            return_value="test-model",
+        ):
+            raw_result = self.benchmark.run_benchmark(
+                request, parameters
+            )
 
         self.assertIn("circuit_breaker", raw_result["metadata"])
         cb = raw_result["metadata"]["circuit_breaker"]
@@ -481,10 +559,19 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(self.benchmark, "run_case_dataset", side_effect=fake_run_case):
-            with patch.object(self.benchmark, "load_sharegpt_prompts", return_value=["p"] * 10):
-                with patch.object(self.benchmark, "discover_model", return_value="test-model"):
-                    raw_result = self.benchmark.run_benchmark(request, parameters)
+        with patch.object(
+            self.benchmark, "run_case_dataset",
+            side_effect=fake_run_case,
+        ), patch.object(
+            self.benchmark, "load_prompts",
+            return_value=["p"] * 10,
+        ), patch.object(
+            self.benchmark, "discover_model",
+            return_value="test-model",
+        ):
+            raw_result = self.benchmark.run_benchmark(
+                request, parameters
+            )
 
         self.assertNotIn("circuit_breaker", raw_result["metadata"])
         self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
