@@ -73,8 +73,8 @@ class ResultManagerTest(unittest.TestCase):
             benchmark.write_text("", encoding="utf-8")
 
             request = RunRequest(
-                run_id="generate-result-test",
-                category_name="generate",
+                run_id="generation_performance-result-test",
+                category_name="generation_performance",
                 benchmark_name="ttft",
                 config_path=root / "ttft.yaml",
                 model_path=None,
@@ -84,7 +84,7 @@ class ResultManagerTest(unittest.TestCase):
             run = ResolvedRun(
                 request=request,
                 benchmark_definition=BenchmarkDefinition(
-                    category_name="generate",
+                    category_name="generation_performance",
                     benchmark_name="ttft",
                     collector_path=benchmark,
                     processor_path=processor,

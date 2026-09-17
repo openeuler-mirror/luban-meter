@@ -23,9 +23,9 @@ from luban_meter.result.manager import ResultManager
 from luban_meter.result.schema import RESULT_SCHEMA
 
 BENCHMARKS = [
-    ("generate", "serving-online", 4),
-    ("generate", "vllm-engine-offline", 6),
-    ("generate", "vllm_metrics", 0),
+    ("generation_performance", "online_serving", 4),
+    ("generation_performance", "offline_vllm_engine", 6),
+    ("generation_performance", "vllm_service_metrics", 0),
     ("model_service_quality", "ceval", 2),
     ("model_service_quality", "cmmlu", 2),
     ("model_service_quality", "gsm8k", 1),
@@ -131,9 +131,9 @@ def raw_fixture(benchmark):
         "environment": {},
         "metadata": {"source": "synthetic report test"},
     }
-    if benchmark == "serving-online":
+    if benchmark == "online_serving":
         metrics = {"cases": [online_case(rate) for rate in (1, 4, 8)]}
-    elif benchmark == "vllm-engine-offline":
+    elif benchmark == "offline_vllm_engine":
         metrics = {
             "cases": [
                 engine_case(size, length)
@@ -147,7 +147,7 @@ def raw_fixture(benchmark):
             "kv_cache_size_tokens": 160,
             "kv_cache_max_concurrency": 8.0,
         }
-    elif benchmark == "vllm_metrics":
+    elif benchmark == "vllm_service_metrics":
         metrics = {"snapshots": [metrics_snapshot(i) for i in (0, 1)]}
         raw["metadata"]["collect_duration"] = 10
     elif benchmark == "humaneval":
@@ -228,7 +228,7 @@ def test_bundled_processors_export_real_metric_paths(
     payload = json.loads(original)
     assert payload["schema_version"] == RESULT_SCHEMA
     assert isinstance(payload["metrics"], dict)
-    if benchmark == "vllm_metrics":
+    if benchmark == "vllm_service_metrics":
         assert (
             "model_execution_time"
             in payload["metrics"]["latency_decomposition"]

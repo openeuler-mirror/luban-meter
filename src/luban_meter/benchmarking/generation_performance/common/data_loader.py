@@ -1,4 +1,4 @@
-"""Dataset loading and prompt construction for generate benchmarks.
+"""Load datasets and construct prompts for generation performance.
 
 Supports three dataset formats:
 - ``sharegpt``: ShareGPT JSON with ``conversations`` array

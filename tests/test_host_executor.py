@@ -49,7 +49,7 @@ class HostExecutorTest(unittest.TestCase):
             )
             request = RunRequest(
                 run_id="environment-inheritance-test",
-                category_name="generate",
+                category_name="generation_performance",
                 benchmark_name="ttft",
                 config_path=root / "config.yaml",
                 model_path=None,
@@ -59,7 +59,7 @@ class HostExecutorTest(unittest.TestCase):
             run = ResolvedRun(
                 request=request,
                 benchmark_definition=BenchmarkDefinition(
-                    category_name="generate",
+                    category_name="generation_performance",
                     benchmark_name="ttft",
                     collector_path=benchmark,
                     processor_path=root / "calculate_metrics.py",

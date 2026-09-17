@@ -26,8 +26,8 @@ class BenchmarkRegistryTest(unittest.TestCase):
 
             registry = BenchmarkRegistry(root / "benchmarking")
             request = RunRequest(
-                run_id="generate-test",
-                category_name="generate",
+                run_id="generation_performance-test",
+                category_name="generation_performance",
                 benchmark_name="ttft",
                 config_path=config,
                 model_path=None,
@@ -39,9 +39,11 @@ class BenchmarkRegistryTest(unittest.TestCase):
 
             self.assertEqual(
                 tuple(name for name, _ in registry.list_categories()),
-                ("generate", "model_service_quality"),
+                ("generation_performance", "model_service_quality"),
             )
-            self.assertEqual(registry.list_benchmarks("generate"), ("ttft",))
+            self.assertEqual(
+                registry.list_benchmarks("generation_performance"), ("ttft",)
+            )
             self.assertEqual(
                 resolved.benchmark_definition.benchmark_name, "ttft"
             )

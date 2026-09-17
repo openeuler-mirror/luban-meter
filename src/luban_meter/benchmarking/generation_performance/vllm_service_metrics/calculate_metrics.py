@@ -398,7 +398,7 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
         {
             "successful_snapshot_count": len(snapshots),
             "total_snapshot_count": len(raw_snapshots),
-            "measurement": "vllm_metrics_aggregation",
+            "measurement": "vllm_service_metrics_aggregation",
             "report": REPORT,
         }
     )

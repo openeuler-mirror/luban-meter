@@ -1,4 +1,4 @@
-"""Tests for the serving-online benchmark module (dataset mode).
+"""Tests for the online_serving benchmark module (dataset mode).
 
 Covers:
 - ShareGPT and JSONL dataset loading

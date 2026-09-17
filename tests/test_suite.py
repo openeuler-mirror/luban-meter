@@ -46,7 +46,7 @@ class SuiteTest(unittest.TestCase):
             configs_dir.mkdir(parents=True)
 
             for module, benchmark, value in (
-                ("generate", "ttft", 10),
+                ("generation_performance", "ttft", 10),
                 ("model_service_quality", "accuracy", 20),
             ):
                 tool_dir = benchmark_dir / module / benchmark
@@ -68,7 +68,7 @@ class SuiteTest(unittest.TestCase):
                 "name: basic\n"
                 "tasks:\n"
                 "  - name: ttft\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: ttft\n"
                 "    config: configs/ttft.yaml\n"
                 "  - name: accuracy\n"
@@ -169,11 +169,11 @@ class SuiteTest(unittest.TestCase):
             (suites_dir / "bad.yaml").write_text(
                 "tasks:\n"
                 "  - name: repeated\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: ttft\n"
                 "    config: ttft.yaml\n"
                 "  - name: repeated\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: throughput\n"
                 "    config: throughput.yaml\n",
                 encoding="utf-8",
@@ -190,7 +190,7 @@ class SuiteTest(unittest.TestCase):
                 "name: 123\n"
                 "tasks:\n"
                 "  - name: ttft\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: ttft\n"
                 "    config: ttft.yaml\n",
                 encoding="utf-8",
@@ -210,11 +210,11 @@ class SuiteTest(unittest.TestCase):
             (suites_dir / "fail-fast.yaml").write_text(
                 "tasks:\n"
                 "  - name: missing\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: missing\n"
                 "    config: missing.yaml\n"
                 "  - name: later\n"
-                "    module: generate\n"
+                "    module: generation_performance\n"
                 "    benchmark: later\n"
                 "    config: later.yaml\n",
                 encoding="utf-8",

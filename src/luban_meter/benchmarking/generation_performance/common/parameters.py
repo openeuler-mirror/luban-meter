@@ -1,4 +1,4 @@
-"""Parameter parsing helpers for generate benchmarks."""
+"""Parameter parsing helpers for generation_performance benchmarks."""
 
 from __future__ import annotations
 
