@@ -181,6 +181,12 @@ def process(raw_result):
 `result.py` 应尽量只依赖 Python 标准库或 Benchmark 公共工具，不重新调用模型、
 服务或硬件运行时。
 
+`serving-online` 采集记录包含 `last_output_latency_ms`。结果处理器统一采用
+GuideLLM 的 TPOT、ITL、Token 加权统计和 SLO 判定规则，不按口径版本分流。
+历史原始文件缺少最后输出时间时，TPOT 回退到 E2EL/N，ITL 不产生有效样本，
+配置了 `tpot_ms` 的成功请求记为无法判定。公式、统计权重和时间范围见
+[指标说明](metrics.md)。
+
 ### 6.1 统一的 result.json v2
 
 `ResultManager` 为所有脚本构造相同的外层结构，脚本无需自行拼接这些字段。

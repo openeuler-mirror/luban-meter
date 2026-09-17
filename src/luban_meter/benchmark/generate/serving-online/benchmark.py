@@ -166,6 +166,9 @@ def _build_request_record(
         ),
         "duration_ms": round((ended - started) * 1000, 3),
         "ttft_ms": round(ttft_ms, 3),
+        "last_output_latency_ms": round(
+            (event_times[-1] - started) * 1000, 3
+        ),
         "e2el_ms": round((ended - started) * 1000, 3),
         "itl_samples_ms": [round(value, 3) for value in itl_samples_ms],
         "input_tokens": observation.input_tokens,
@@ -866,3 +869,7 @@ def main() -> None:
         json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+if __name__ == "__main__":
+    main()

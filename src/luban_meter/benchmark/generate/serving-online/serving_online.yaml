@@ -56,15 +56,21 @@ ignore_eos: true
 # max_tokens: 2048
 
 # ── Optional Service Level Objective block ──────────────────────────────
+# Token metrics and SLO verdicts follow GuideLLM:
+# report TPOT = time to last content event / output tokens, weighted by
+# output tokens; report ITL excludes the first-token wait, weighted by N-1.
+# The previous SSE-event ITL is retained as stream_event_itl.
 #   Per-request SLO dimensions for Goodput computation.
 #   A request is SLO-satisfied only when ALL configured dimensions are
 #   within their thresholds (AND relation).
 #
 #   ttft_ms  — Requests with TTFT above this value are SLO-violated.
-#   tpot_ms  — Requests with TPOT above this value are SLO-violated.
-#              TPOT = e2el / output_tokens (includes first token).
-#              Skipped for output_tokens == 1.
+#   tpot_ms  — GuideLLM SLO uses request ITL, not report TPOT:
+#              (last_output_latency_ms - ttft_ms) / (output_tokens - 1).
+#              A single-token success is undetermined for this objective.
 #   e2el_ms  — Requests with E2EL above this value are SLO-violated.
+#   Missing configured measurements are undetermined. Failed requests
+#   lower SLO attainment; see docs/metrics.md for counts and denominators.
 #
 # slo:
 #   ttft_ms: 500

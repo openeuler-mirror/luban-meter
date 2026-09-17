@@ -425,9 +425,15 @@ loss 模式）。其中 ppl / loss 模式依赖
 
 现有脚本的摘要范围：
 
+在线报告统一采用 GuideLLM 的 Token 指标口径。TPOT 包含首 Token 等待，ITL
+排除首 Token；两者使用对应 Token 权重，SLO 的 `tpot_ms` 使用 ITL。
+历史原始文件重算也使用当前规则；比较已保存的历史报告前，应核对生成报告时的
+代码版本及指标公式，不能直接比较同名列。
+详细公式和旧文件处理规则见[指标说明](metrics.md#4-在线服务指标)。
+
 | 脚本 | Markdown 核心指标 | 静态图 |
 |---|---|---|
-| `serving-online` | Case 条件、成功/失败请求、请求和输出吞吐、TTFT/TPOT P50/P99 | 同输入输出长度下，吞吐和 TTFT 随请求速率变化 |
+| `serving-online` | Case 条件、成功/失败请求、吞吐、TTFT/TPOT P50/P99、ITL P99 | 同输入输出长度下，吞吐和 TTFT 随请求速率变化 |
 | `vllm-engine-offline` | Case 条件、Engine Prefill/Decode 吞吐、内部 TTFT、Decode Step 和 Engine E2E 延迟 | 同输入输出长度下，吞吐和内部 TTFT 随 Batch Size 变化 |
 | `vllm_metrics` | 服务状态、请求/Token 吞吐、TTFT/TPOT 分位数 | 聚合指标不生成时间曲线 |
 | `ceval`、`cmmlu` | 总体和分学科 Accuracy、评分及失败样本数 | 总体和分学科得分柱状图 |
