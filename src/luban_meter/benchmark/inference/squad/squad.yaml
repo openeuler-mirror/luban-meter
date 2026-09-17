@@ -2,7 +2,7 @@
 service_url: http://127.0.0.1:8000
 api_key: ""
 request_timeout: 60
-dataset_path: data/squad/validation.jsonl
+dataset_path: data/squad/dev-v2.0.json
 split: validation
 # null selects the entire file; set 20 for an initial smoke test.
 max_samples: null
