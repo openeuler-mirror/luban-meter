@@ -13,8 +13,8 @@ class CoreEngineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory)
             request = RunRequest(
-                run_id="generate-test-run",
-                category_name="generate",
+                run_id="generation_performance-test-run",
+                category_name="generation_performance",
                 benchmark_name="missing-benchmark",
                 config_path=Path("missing-config.yaml"),
                 model_path=None,

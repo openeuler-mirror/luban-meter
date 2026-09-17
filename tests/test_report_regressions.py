@@ -41,9 +41,9 @@ def malformed_run(tmp_path, monkeypatch):
     definitions.mkdir()
     (definitions / "regression.yaml").write_text(
         "name: regression\ntasks:\n"
-        "  - name: bad\n    module: generate\n"
+        "  - name: bad\n    module: generation_performance\n"
         "    benchmark: custom\n    config: ../bad.yaml\n"
-        "  - name: good\n    module: generate\n"
+        "  - name: good\n    module: generation_performance\n"
         "    benchmark: custom\n    config: ../good.yaml\n",
         encoding="utf-8",
     )
@@ -65,7 +65,7 @@ def test_invalid_result_is_saved_as_a_diagnostic(malformed_run, capsys):
             [
                 "run",
                 "--module",
-                "generate",
+                "generation_performance",
                 "--benchmark",
                 "custom",
                 "--config",
@@ -114,7 +114,7 @@ def test_unreadable_raw_result_keeps_the_original_failure(
             [
                 "run",
                 "--module",
-                "generate",
+                "generation_performance",
                 "--benchmark",
                 "custom",
                 "--config",

@@ -15,17 +15,8 @@ from luban_meter.core.run_contracts import (
 
 _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _CATEGORY_DESCRIPTIONS = {
-    "generate": "Large-model generation benchmarks",
+    "generation_performance": "Large-model generation benchmarks",
     "model_service_quality": "Model service quality benchmarks",
-}
-_CATEGORY_DIRECTORIES = {
-    "generate": "generation_performance",
-    "model_service_quality": "model_service_quality",
-}
-_BENCHMARK_DIRECTORIES = {
-    "serving-online": "online_serving",
-    "vllm-engine-offline": "offline_vllm_engine",
-    "vllm_metrics": "vllm_service_metrics",
 }
 _ENTRY_FILENAMES = (
     ("collect_raw.py", "calculate_metrics.py"),
@@ -46,16 +37,11 @@ class BenchmarkRegistry:
 
     def _category_directory(self, category_name: str) -> Path:
         self._validate_name("module", category_name)
-        if category_name not in _CATEGORY_DIRECTORIES:
+        if category_name not in _CATEGORY_DESCRIPTIONS:
             raise ConfigurationError(
                 f"unknown functional module: {category_name}"
             )
-        canonical = self._benchmark_root / _CATEGORY_DIRECTORIES[category_name]
-        return (
-            canonical
-            if canonical.is_dir()
-            else self._benchmark_root / category_name
-        )
+        return self._benchmark_root / category_name
 
     @staticmethod
     def _entry_paths(benchmark_directory: Path) -> tuple[Path, Path] | None:
@@ -68,31 +54,18 @@ class BenchmarkRegistry:
 
     def list_benchmarks(self, category_name: str) -> tuple[str, ...]:
         category_directory = self._category_directory(category_name)
-        logical_names = {
-            directory: name
-            for name, directory in _BENCHMARK_DIRECTORIES.items()
-        }
         benchmark_names = []
         for benchmark_directory in category_directory.glob("*"):
             if self._entry_paths(benchmark_directory) is not None:
-                benchmark_names.append(
-                    logical_names.get(
-                        benchmark_directory.name, benchmark_directory.name
-                    )
-                )
+                benchmark_names.append(benchmark_directory.name)
         return tuple(sorted(benchmark_names))
 
     def resolve(self, request: RunRequest) -> ResolvedRun:
         self._validate_name("benchmark", request.benchmark_name)
         category_directory = self._category_directory(request.category_name)
-        directory_name = _BENCHMARK_DIRECTORIES.get(
-            request.benchmark_name, request.benchmark_name
+        entry_paths = self._entry_paths(
+            category_directory / request.benchmark_name
         )
-        entry_paths = self._entry_paths(category_directory / directory_name)
-        if entry_paths is None and directory_name != request.benchmark_name:
-            entry_paths = self._entry_paths(
-                category_directory / request.benchmark_name
-            )
         if entry_paths is None:
             raise UnknownBenchmarkError(
                 request.category_name, request.benchmark_name

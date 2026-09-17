@@ -167,7 +167,7 @@ def collect_raw_result(
         "schema_version": "luban-meter.raw/v1",
         "status": "success",
         "metadata": {
-            "measurement": "vllm_metrics_scrape",
+            "measurement": "vllm_service_metrics_scrape",
             "service_url": service_url,
             "model": served_model_name,
             "collect_interval": collect_interval,

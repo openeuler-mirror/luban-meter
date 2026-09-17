@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from luban_meter.core.benchmark_registry import BenchmarkRegistry
+from luban_meter.core.errors import ConfigurationError, UnknownBenchmarkError
 from luban_meter.core.run_contracts import RunRequest
 from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.suite.suite_contracts import SuiteTask, SuiteTaskResult
@@ -16,7 +17,7 @@ from luban_meter.utils.json_io import to_jsonable
     "category_directory,collector_name,processor_name",
     [
         ("generation_performance", "collect_raw.py", "calculate_metrics.py"),
-        ("generate", "benchmark.py", "result.py"),
+        ("generation_performance", "benchmark.py", "result.py"),
     ],
 )
 def test_collector_protocol_survives_internal_renames(
@@ -33,7 +34,7 @@ def test_collector_protocol_survives_internal_renames(
         "parser.add_argument('--output')\n"
         "args = parser.parse_args()\n"
         "request = json.loads(Path(args.request).read_text())['request']\n"
-        "assert request['module'] == 'generate'\n"
+        "assert request['module'] == 'generation_performance'\n"
         "assert request['benchmark'] == 'smoke'\n"
         "assert request['model_name'] == 'served-model'\n"
         "assert 'benchmark_name' not in request\n"
@@ -51,7 +52,7 @@ def test_collector_protocol_survives_internal_renames(
     config_path.write_text("{}", encoding="utf-8")
     request = RunRequest(
         run_id="naming-smoke",
-        category_name="generate",
+        category_name="generation_performance",
         benchmark_name="smoke",
         config_path=config_path,
         model_path=None,
@@ -59,14 +60,14 @@ def test_collector_protocol_survives_internal_renames(
         output_dir=tmp_path / "runs",
     )
     registry = BenchmarkRegistry(benchmark_root)
-    assert registry.list_benchmarks("generate") == ("smoke",)
+    assert registry.list_benchmarks("generation_performance") == ("smoke",)
     result = RunCoordinator(registry).run(request)
     assert result.status == "success"
     saved = json.loads(
         (request.output_dir / request.run_id / "result.json").read_text()
     )
     assert saved["metrics"] == {"count": 3}
-    assert saved["module"] == "generate"
+    assert saved["module"] == "generation_performance"
     assert saved["benchmark"] == "smoke"
     assert saved["model"] == {"name": "served-model", "path": None}
     assert not {"category_name", "benchmark_name", "model_info"} & saved.keys()
@@ -95,9 +96,9 @@ def test_nested_suite_contracts_keep_serialized_field_names():
 @pytest.mark.parametrize(
     "benchmark_name,directory_name",
     [
-        ("serving-online", "online_serving"),
-        ("vllm-engine-offline", "offline_vllm_engine"),
-        ("vllm_metrics", "vllm_service_metrics"),
+        ("online_serving", "online_serving"),
+        ("offline_vllm_engine", "offline_vllm_engine"),
+        ("vllm_service_metrics", "vllm_service_metrics"),
     ],
 )
 def test_public_benchmark_names_resolve_to_python_directories(
@@ -107,7 +108,7 @@ def test_public_benchmark_names_resolve_to_python_directories(
     config_path.write_text("{}", encoding="utf-8")
     request = RunRequest(
         "resolution",
-        "generate",
+        "generation_performance",
         benchmark_name,
         config_path,
         None,
@@ -120,3 +121,32 @@ def test_public_benchmark_names_resolve_to_python_directories(
     assert definition.collector_path.parent.name == directory_name
     assert definition.collector_path.name == "collect_raw.py"
     assert definition.processor_path.name == "calculate_metrics.py"
+
+
+@pytest.mark.parametrize(
+    "category_name,benchmark_name,error_type",
+    [
+        ("generate", "online_serving", ConfigurationError),
+        ("generation_performance", "serving-online", UnknownBenchmarkError),
+        (
+            "generation_performance",
+            "vllm-engine-offline",
+            UnknownBenchmarkError,
+        ),
+        ("generation_performance", "vllm_metrics", UnknownBenchmarkError),
+    ],
+)
+def test_removed_cli_aliases_are_rejected(
+    tmp_path, category_name, benchmark_name, error_type
+):
+    request = RunRequest(
+        "old-name",
+        category_name,
+        benchmark_name,
+        tmp_path / "config.yaml",
+        None,
+        None,
+        tmp_path,
+    )
+    with pytest.raises(error_type):
+        BenchmarkRegistry().resolve(request)

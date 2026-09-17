@@ -157,7 +157,7 @@ def resolve_model_reference(request: Mapping[str, Any]) -> str:
     model_reference = request.get("model_path") or request.get("model_name")
     if not isinstance(model_reference, str) or not model_reference:
         raise ValueError(
-            "vllm-engine-offline requires --model-path or --model-name"
+            "offline_vllm_engine requires --model-path or --model-name"
         )
     return model_reference
 
@@ -168,7 +168,7 @@ def build_engine(
     try:
         from vllm import LLM
     except ImportError as exc:
-        raise RuntimeError("vLLM is required for vllm-engine-offline") from exc
+        raise RuntimeError("vLLM is required for offline_vllm_engine") from exc
 
     kwargs: dict[str, Any] = {
         "model": resolve_model_reference(request),
@@ -347,7 +347,7 @@ def collect_raw_result(
     try:
         from vllm import SamplingParams
     except ImportError as exc:
-        raise RuntimeError("vLLM is required for vllm-engine-offline") from exc
+        raise RuntimeError("vLLM is required for offline_vllm_engine") from exc
 
     warmup_rounds = non_negative_integer(parameters, "warmup_rounds", 2)
     rounds = positive_integer(parameters, "rounds", 10)

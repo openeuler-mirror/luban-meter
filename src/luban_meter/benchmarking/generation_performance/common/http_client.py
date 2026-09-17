@@ -1,4 +1,4 @@
-"""HTTP client helpers for generate benchmarks."""
+"""HTTP client helpers for generation_performance benchmarks."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Arrival time scheduling for generate benchmarks."""
+"""Arrival time scheduling for generation_performance benchmarks."""
 
 from __future__ import annotations
 

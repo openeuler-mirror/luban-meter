@@ -22,7 +22,7 @@ class CliTest(unittest.TestCase):
             schema_version="luban-meter.result/v2",
             run_id="test-run",
             status="success",
-            category_name="generate",
+            category_name="generation_performance",
             benchmark_name="ttft",
             config_path="configs/benchmarks/ttft.yaml",
         )
@@ -33,7 +33,7 @@ class CliTest(unittest.TestCase):
                     [
                         "run",
                         "--module",
-                        "generate",
+                        "generation_performance",
                         "--benchmark",
                         "ttft",
                         "--config",

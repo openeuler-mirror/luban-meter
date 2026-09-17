@@ -148,8 +148,10 @@ class EngineSloConfigTest(unittest.TestCase):
         )
 
     def test_registry_exposes_offline_benchmark_name(self) -> None:
-        benchmarks = BenchmarkRegistry().list_benchmarks("generate")
-        self.assertIn("vllm-engine-offline", benchmarks)
+        benchmarks = BenchmarkRegistry().list_benchmarks(
+            "generation_performance"
+        )
+        self.assertIn("offline_vllm_engine", benchmarks)
         self.assertNotIn("vllm-engine-stage", benchmarks)
 
     def test_valid_partial_config_is_normalized(self) -> None:
