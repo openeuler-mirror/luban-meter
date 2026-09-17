@@ -9,8 +9,9 @@
 - [架构说明](docs/architecture.md)
 - [Benchmark 脚本开发指南](docs/develop-benchmark.md)
 - [生成式推理指标说明](docs/metrics.md)
-- [Inference 评测指标说明](docs/inference.md)
+- [模型服务质量评测指标说明](docs/model_service_quality.md)
 - [使用说明](docs/usage.md)
+- [命名约定与迁移说明](docs/naming.md)
 - [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
 
 ## 1. 开发入口与适用范围
@@ -31,16 +32,16 @@
 
 ```text
 CLI
-→ BenchmarkRegistry
-→ CoreEngine
+→ ScenarioRegistry
+→ RunCoordinator
 → ExecutionSession
-→ benchmark.py
+→ collect_raw.py
 → raw_result.json
-→ result.py
+→ calculate_metrics.py
 → result.json
 ```
 
-`CoreEngine` 是一次运行的统一边界。它负责解析 Benchmark、创建执行会话、运行采集
+`RunCoordinator` 是一次运行的统一边界。它负责解析 Benchmark、创建执行会话、运行采集
 脚本、处理结果，并将各阶段异常转换为标准失败结果。
 
 ### 2.2 Suite 执行链路
@@ -50,7 +51,7 @@ Suite YAML
 → SuiteLoader
 → SuiteRunner
 → 多个 RunRequest
-→ CoreEngine
+→ RunCoordinator
 → 每个任务独立输出结果
 → suite_result.json
 ```
@@ -59,9 +60,9 @@ Suite YAML
 
 ```text
 src/luban_meter/
-├── benchmark/
-│   ├── generate/     # 生成式性能场景及 common 公共能力
-│   └── inference/    # 效果评测场景、common 能力及 scripts 数据准备
+├── benchmarking/
+│   ├── generation_performance/     # 生成式性能场景及 common 公共能力
+│   └── model_service_quality/    # 模型服务质量评测场景、common 能力及 scripts 数据准备
 ├── core/
 ├── execution/
 ├── result/
@@ -73,7 +74,7 @@ src/luban_meter/
 
 各目录的主要职责如下：
 
-- `benchmark/`：具体评测场景、配置和指标处理实现；
+- `benchmarking/`：具体评测场景、配置和指标处理实现；
 - `core/`：请求模型、配置解析、Benchmark 发现和运行编排；
 - `execution/`：执行命令、会话和运行过程管理；
 - `result/`：原始结果处理、标准结果构造和写入；
@@ -100,18 +101,21 @@ src/luban_meter/
 新增 Benchmark 使用以下结构：
 
 ```text
-src/luban_meter/benchmark/<module>/<benchmark>/
-├── benchmark.py
-├── result.py
+src/luban_meter/benchmarking/<category_directory>/<scenario_directory>/
+├── collect_raw.py
+├── calculate_metrics.py
 └── config.example.yaml
 ```
 
-`benchmark.py` 和 `result.py` 同时存在后，`BenchmarkRegistry` 才会发现该 Benchmark。
+`collect_raw.py` 和 `calculate_metrics.py` 同时存在后，`ScenarioRegistry` 才会发现该 Benchmark。
 Benchmark 名称使用小写字母、数字、连字符或下划线，并以字母或数字开头。
+
+Python目录使用下划线。CLI和结果协议保留现有类别及场景名称，由注册表映射到
+实际目录；新增或调整名称时查阅[命名约定](docs/naming.md)。
 
 ### 3.3 采集与计算
 
-`benchmark.py` 负责：
+`collect_raw.py` 负责：
 
 - 读取并校验运行请求和配置；
 - 调用在线服务、Engine 或数据集任务；
@@ -119,7 +123,7 @@ Benchmark 名称使用小写字母、数字、连字符或下划线，并以字�
 - 记录环境、日志、产物和错误信息；
 - 写出符合 `luban-meter.raw/v1` 的结果。
 
-`result.py` 负责：
+`calculate_metrics.py` 负责：
 
 - 校验原始结果结构和数据范围；
 - 从原始数据计算派生指标；
@@ -133,11 +137,11 @@ Benchmark 名称使用小写字母、数字、连字符或下划线，并以字�
 并发度、Batch Size、输入输出长度和超时等测试条件均通过配置或运行请求表达。
 
 多个生成式 Benchmark 需要复用的流式解析、Token 计数和统计逻辑放在
-`benchmark/generate/common/`。只服务于单个场景的逻辑保留在对应 Benchmark 目录。
+`benchmarking/generation_performance/common/`。只服务于单个场景的逻辑保留在对应 Benchmark 目录。
 
-多个 `inference` Benchmark 需要复用的在线服务调用、数据集加载、Prompt 渲染、
-答案解析和指标计算逻辑放在 `benchmark/inference/common/`；数据集离线准备脚本
-放在 `benchmark/inference/scripts/`，Benchmark 运行时只读取本地数据集文件。
+多个 `model_service_quality` Benchmark 需要复用的在线服务调用、数据集加载、Prompt 渲染、
+答案解析和指标计算逻辑放在 `benchmarking/model_service_quality/common/`；数据集离线准备脚本
+放在 `benchmarking/model_service_quality/scripts/`，Benchmark 运行时只读取本地数据集文件。
 
 完整请求、原始结果和最终结果协议参见
 [Benchmark 脚本开发指南](docs/develop-benchmark.md)。
@@ -157,7 +161,7 @@ Benchmark 名称使用小写字母、数字、连字符或下划线，并以字�
 
 - 新增 Benchmark 时，创建标准目录、示例配置和对应测试；
 - 编排多个 Benchmark 时，增加或修改 Suite 定义；
-- 多个生成式场景出现相同逻辑时，将稳定能力提取到 `generate/common/`；
+- 多个生成式场景出现相同逻辑时，将稳定能力提取到 `generation_performance/common/`；
 - 修改公开接口、配置或指标语义时，更新对应专题文档；
 - 功能依赖真实服务、模型或 Engine 时，在目标环境完成冒烟测试；
 - 任务包含代码交付时，再执行提交、推送和交付检查。

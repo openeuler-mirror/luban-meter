@@ -8,9 +8,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from luban_meter.reporting.charts import _fonts
-from luban_meter.reporting.data import Task, numeric
-from luban_meter.reporting.tables import display
+from luban_meter.reporting.charts import available_chart_fonts
+from luban_meter.reporting.result_reader import ReportTask, is_finite_number
+from luban_meter.reporting.tables import format_metric_value
 
 LABELS = {
     "vendor": "厂商",
@@ -48,7 +48,8 @@ for _stat in ("avg", "p50", "p90", "p99"):
         }
     )
 
-# scope, field, Chinese title, English title, unit, legacy chart filename
+# scope, field, Chinese title, English title, unit, legacy chart
+# filename
 PANELS = (
     (
         "devices",
@@ -94,13 +95,15 @@ PANELS = (
 )
 
 
-def _mapping(value: Any) -> Mapping[str, Any]:
+def _as_mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _wrap(text: str, width: int, cjk: bool) -> str:
-    """Wrap long identifiers and CJK text without hiding recorded values."""
-    if not cjk:
+def _wrap(text: str, width: int, supports_cjk: bool) -> str:
+    """Wrap long identifiers and CJK text without hiding recorded
+    values.
+    """
+    if not supports_cjk:
         text = "".join(
             char.encode("unicode_escape").decode("ascii")
             if unicodedata.east_asian_width(char) in "WF"
@@ -121,25 +124,28 @@ def _wrap(text: str, width: int, cjk: bool) -> str:
     return "\n".join(lines)
 
 
-def _facts(value: Any, cjk: bool, prefix: str = ""):
+def _iter_hardware_facts(value: Any, supports_cjk: bool, prefix: str = ""):
     """Keep every static or aggregate field, including unknown fields."""
     if isinstance(value, Mapping):
         for key, item in sorted(value.items(), key=lambda item: str(item[0])):
-            label = LABELS.get(key, key) if cjk else key
+            label = LABELS.get(key, key) if supports_cjk else key
             path = f"{prefix} / {label}" if prefix else str(label)
-            yield from _facts(item, cjk, path)
+            yield from _iter_hardware_facts(item, supports_cjk, path)
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            # Device identifiers may differ from their position in the list.
-            identity = _mapping(item).get("index", index)
-            yield from _facts(item, cjk, f"{prefix} {identity}")
+            # Device identifiers may differ from their position in the
+            # list.
+            identity = _as_mapping(item).get("index", index)
+            yield from _iter_hardware_facts(
+                item, supports_cjk, f"{prefix} {identity}"
+            )
     else:
-        yield prefix, display(value)
+        yield prefix, format_metric_value(value)
 
 
-def _table_rows(facts, cjk):
+def _table_rows(facts, supports_cjk):
     cells = [
-        (_wrap(label, 36, cjk), _wrap(value, 42, cjk))
+        (_wrap(label, 36, supports_cjk), _wrap(value, 42, supports_cjk))
         for label, value in facts
     ]
     rows = []
@@ -150,7 +156,7 @@ def _table_rows(facts, cjk):
     return rows
 
 
-def _curves(monitoring):
+def _collect_monitoring_curves(monitoring):
     raw = monitoring.get("timeseries", [])
     if not isinstance(raw, list):
         return []
@@ -158,7 +164,8 @@ def _curves(monitoring):
         (
             sample
             for sample in raw
-            if isinstance(sample, Mapping) and numeric(sample.get("elapsed"))
+            if isinstance(sample, Mapping)
+            and is_finite_number(sample.get("elapsed"))
         ),
         key=lambda sample: sample["elapsed"],
     )
@@ -177,11 +184,11 @@ def _curves(monitoring):
             if isinstance(values, list)
             else {}
         )
-        cpu.append(_mapping(sample.get("cpu")))
+        cpu.append(_as_mapping(sample.get("cpu")))
     indices = sorted({key for sample in devices for key in sample})
     elapsed = [sample["elapsed"] for sample in samples]
     panels = []
-    for scope, field, cn, en, unit, _filename in PANELS:
+    for scope, field, chinese_title, english_title, unit, _filename in PANELS:
         series = {}
         records = (
             {
@@ -193,16 +200,19 @@ def _curves(monitoring):
         )
         for label, rows in records.items():
             values = [row.get(field) for row in rows]
-            if any(numeric(value) for value in values):
+            if any(is_finite_number(value) for value in values):
                 series[label] = [
-                    value if numeric(value) else math.nan for value in values
+                    value if is_finite_number(value) else math.nan
+                    for value in values
                 ]
         if series:
-            panels.append((cn, en, unit, elapsed, series))
+            panels.append(
+                (chinese_title, english_title, unit, elapsed, series)
+            )
     return panels
 
 
-def _saved_charts(task: Task, monitoring):
+def _load_saved_charts(task: ReportTask, monitoring):
     """Use existing PNGs if a saved v2 result has no drawable samples."""
     from matplotlib.image import imread
 
@@ -212,14 +222,18 @@ def _saved_charts(task: Task, monitoring):
     directories = []
     if task.source:
         directories.append(task.source.parent / "raw" / "artifacts")
-    declared = _mapping(task.data.get("artifacts")).get("directory")
+    declared = _as_mapping(task.result_payload.get("artifacts")).get(
+        "directory"
+    )
     if isinstance(declared, str):
         directory = Path(declared)
         if not directory.is_absolute() and task.source:
             directory = task.source.parent / directory
         directories.append(directory)
     charts = []
-    for name in dict.fromkeys(n for n in names if isinstance(n, str)):
+    for name in dict.fromkeys(
+        chart_name for chart_name in names if isinstance(chart_name, str)
+    ):
         if Path(name).name != name or Path(name).suffix.lower() != ".png":
             continue
         for directory in directories:
@@ -232,13 +246,15 @@ def _saved_charts(task: Task, monitoring):
     return charts
 
 
-def build_hardware_figure(task: Task):
-    """Build one figure, without querying hardware or changing the result."""
-    environment = _mapping(task.data.get("environment"))
-    monitoring = _mapping(environment.get("device_monitoring"))
-    hardware = _mapping(environment.get("hardware_environment"))
+def build_hardware_figure(task: ReportTask):
+    """Build one figure, without querying hardware or changing the
+    result.
+    """
+    environment = _as_mapping(task.result_payload.get("environment"))
+    monitoring = _as_mapping(environment.get("device_monitoring"))
+    hardware = _as_mapping(environment.get("hardware_environment"))
     if not hardware:
-        hardware = _mapping(monitoring.get("hardware_environment"))
+        hardware = _as_mapping(monitoring.get("hardware_environment"))
     summary = {
         key: value
         for key, value in monitoring.items()
@@ -251,43 +267,58 @@ def build_hardware_figure(task: Task):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
 
-    fonts = _fonts()
-    cjk = len(fonts) > 1
+    fonts = available_chart_fonts()
+    supports_cjk = len(fonts) > 1
     sections = []
-    for cn, en, data in (
+    for chinese_title, english_title, data in (
         ("硬件环境", "Hardware environment", hardware),
         ("监控摘要", "Monitoring summary", summary),
     ):
-        rows = _table_rows(_facts(data, cjk), cjk)
+        rows = _table_rows(
+            _iter_hardware_facts(data, supports_cjk), supports_cjk
+        )
         if rows:
-            sections.append((cn if cjk else en, rows))
-    curves = _curves(monitoring)
-    saved = [] if curves else _saved_charts(task, monitoring)
+            sections.append(
+                (chinese_title if supports_cjk else english_title, rows)
+            )
+    curves = _collect_monitoring_curves(monitoring)
+    saved = [] if curves else _load_saved_charts(task, monitoring)
     if not sections and not curves and not saved:
         return None
 
     heights = [
         0.4
-        + sum(max(cell.count("\n") + 1 for cell in row) * 0.24 for row in rows)
+        + sum(
+            max(
+                escape_markdown_cell.count("\n") + 1
+                for escape_markdown_cell in row
+            )
+            * 0.24
+            for row in rows
+        )
         for _, rows in sections
     ]
     count = len(curves) or len(saved)
     heights.extend([3.2] * ((count + 1) // 2))
     with matplotlib.rc_context({"font.family": fonts, "font.size": 9}):
-        fig = Figure(figsize=(14, sum(heights) + 0.85), layout="constrained")
-        FigureCanvasAgg(fig)
-        grid = fig.add_gridspec(len(heights), 2, height_ratios=heights)
-        title = "硬件环境与监控总览" if cjk else "Hardware overview"
-        name = _mapping(task.data.get("metadata")).get("display_name")
-        fig.suptitle(
-            _wrap(f"{title} · {name or task.name}", 125, cjk),
+        figure = Figure(
+            figsize=(14, sum(heights) + 0.85), layout="constrained"
+        )
+        FigureCanvasAgg(figure)
+        grid = figure.add_gridspec(len(heights), 2, height_ratios=heights)
+        title = "硬件环境与监控总览" if supports_cjk else "Hardware overview"
+        name = _as_mapping(task.result_payload.get("metadata")).get(
+            "display_name"
+        )
+        figure.suptitle(
+            _wrap(f"{title} · {name or task.name}", 125, supports_cjk),
             fontsize=14,
         )
         for index, (title, rows) in enumerate(sections):
-            ax = fig.add_subplot(grid[index, :])
-            ax.axis("off")
-            ax.set_title(title, loc="left", fontsize=11)
-            table = ax.table(
+            axes = figure.add_subplot(grid[index, :])
+            axes.axis("off")
+            axes.set_title(title, loc="left", fontsize=11)
+            table = axes.table(
                 cellText=rows,
                 cellLoc="left",
                 colWidths=[0.19, 0.31, 0.19, 0.31],
@@ -295,31 +326,61 @@ def build_hardware_figure(task: Task):
             )
             table.auto_set_font_size(False)
             table.set_fontsize(9)
-            units = [max(cell.count("\n") + 1 for cell in row) for row in rows]
-            for (row, column), cell in table.get_celld().items():
-                cell.set_height(units[row] / sum(units))
-                cell.set_edgecolor("#dce3ec")
-                cell.set_facecolor("#edf2f8" if column % 2 == 0 else "white")
-                cell.PAD = 0.04
-        for index, (cn, en, unit, elapsed, series) in enumerate(curves):
-            ax = fig.add_subplot(grid[len(sections) + index // 2, index % 2])
+            units = [
+                max(
+                    escape_markdown_cell.count("\n") + 1
+                    for escape_markdown_cell in row
+                )
+                for row in rows
+            ]
+            for (
+                row,
+                column,
+            ), escape_markdown_cell in table.get_celld().items():
+                escape_markdown_cell.set_height(units[row] / sum(units))
+                escape_markdown_cell.set_edgecolor("#dce3ec")
+                escape_markdown_cell.set_facecolor(
+                    "#edf2f8" if column % 2 == 0 else "white"
+                )
+                escape_markdown_cell.PAD = 0.04
+        for index, (
+            chinese_title,
+            english_title,
+            unit,
+            elapsed,
+            series,
+        ) in enumerate(curves):
+            axes = figure.add_subplot(
+                grid[len(sections) + index // 2, index % 2]
+            )
             for label, values in series.items():
-                ax.plot(elapsed, values, label=label, linewidth=1.4)
-            ax.set_title(cn if cjk else en, loc="left", fontsize=11)
-            ax.set_xlabel("经过时间 (s)" if cjk else "Elapsed (s)")
-            ax.set_ylabel(unit)
-            ax.grid(alpha=0.25)
-            ax.legend(fontsize=8)
+                axes.plot(elapsed, values, label=label, linewidth=1.4)
+            axes.set_title(
+                chinese_title if supports_cjk else english_title,
+                loc="left",
+                fontsize=11,
+            )
+            axes.set_xlabel("经过时间 (s)" if supports_cjk else "Elapsed (s)")
+            axes.set_ylabel(unit)
+            axes.grid(alpha=0.25)
+            axes.legend(fontsize=8)
         for index, (name, pixels) in enumerate(saved):
-            ax = fig.add_subplot(grid[len(sections) + index // 2, index % 2])
-            ax.imshow(pixels)
-            ax.axis("off")
-            labels = {p[5]: p[2] if cjk else p[3] for p in PANELS}
-            ax.set_title(labels.get(name, Path(name).stem), fontsize=11)
-    return fig
+            axes = figure.add_subplot(
+                grid[len(sections) + index // 2, index % 2]
+            )
+            axes.imshow(pixels)
+            axes.axis("off")
+            labels = {
+                panel_definition[5]: panel_definition[2]
+                if supports_cjk
+                else panel_definition[3]
+                for panel_definition in PANELS
+            }
+            axes.set_title(labels.get(name, Path(name).stem), fontsize=11)
+    return figure
 
 
-def write_hardware_overview(task: Task, output: Path, index: int):
+def write_hardware_overview(task: ReportTask, output: Path, index: int):
     figure = build_hardware_figure(task)
     if figure is None:
         return None

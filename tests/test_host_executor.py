@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from luban_meter.core.models import BenchmarkSpec, CommandSpec, ResolvedRun, RunRequest
+from luban_meter.core.run_contracts import (
+    CommandSpec,
+    ResolvedRun,
+    RunRequest,
+    ScenarioDefinition,
+)
 from luban_meter.execution.command import LocalCommandRunner
 from luban_meter.execution.host import HostSession
 
@@ -23,7 +28,7 @@ class HostExecutorTest(unittest.TestCase):
     def test_benchmark_inherits_current_environment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            benchmark = root / "benchmark.py"
+            benchmark = root / "collect_raw.py"
             benchmark.write_text(
                 "import argparse, json, os\n"
                 "parser = argparse.ArgumentParser()\n"
@@ -44,20 +49,20 @@ class HostExecutorTest(unittest.TestCase):
             )
             request = RunRequest(
                 run_id="environment-inheritance-test",
-                module="generate",
-                benchmark="ttft",
-                config=root / "config.yaml",
+                category_name="generate",
+                scenario_name="ttft",
+                config_path=root / "config.yaml",
                 model_path=None,
                 model_name=None,
                 output_dir=root / "runs",
             )
             run = ResolvedRun(
                 request=request,
-                benchmark=BenchmarkSpec(
-                    module="generate",
-                    benchmark="ttft",
-                    benchmark_entry=benchmark,
-                    result_handler=root / "result.py",
+                scenario_definition=ScenarioDefinition(
+                    category_name="generate",
+                    scenario_name="ttft",
+                    collector_path=benchmark,
+                    processor_path=root / "calculate_metrics.py",
                 ),
                 parameters={},
             )
@@ -68,7 +73,9 @@ class HostExecutorTest(unittest.TestCase):
             raw = json.loads(artifacts.raw_result.read_text(encoding="utf-8"))
             self.assertEqual(raw["metadata"]["inherited"], "exported")
             self.assertFalse(
-                (request.output_dir / request.run_id / "environment.json").exists()
+                (
+                    request.output_dir / request.run_id / "environment.json"
+                ).exists()
             )
 
 

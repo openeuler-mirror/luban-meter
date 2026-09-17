@@ -20,8 +20,8 @@ LuBan-Meter 按“测试场景和采集边界”组织 Benchmark，不按最终�
 
 因此：
 
-- `benchmark.py` 负责执行负载并采集原始事实；
-- `result.py` 负责校验原始数据并计算全部适用指标；
+- `collect_raw.py` 负责执行负载并采集原始事实；
+- `calculate_metrics.py` 负责校验原始数据并计算全部适用指标；
 - 用户通过配置选择测试场景、输入/输出长度、请求数量和并发度；
 - 用户不需要逐项选择 Mean、P50、P90 或 P99；
 - 只有采集代价较高的服务端监控、设备监控和逐事件明细才需要独立开关。
@@ -389,7 +389,7 @@ Case 或取消在途请求。配置了这些停止条件时，不配置 SLO 也�
 
 #### Goodput 计算
 
-`result.py` 从 `metadata.slo_config` 读取 SLO，
+`calculate_metrics.py` 从 `metadata.slo_config` 读取 SLO，
 采用 GuideLLM 的逐请求判定：
 
 - `ttft_ms`：检查 TTFT 是否小于等于阈值；
@@ -773,7 +773,7 @@ online_extra_latency ~= online_TTFT - engine_internal_TTFT
 - `serving-online` 的精确输入/输出长度、固定请求速率、Request View 与客户端
   推导的 Service View；
 - `vllm-engine-offline` 的 Engine Request/Batch Metrics；
-- `vllm-metrics` 的 vLLM 服务端 /metrics 指标采集与聚合，包括 KV Cache 使用率、
+- `vllm_metrics` 的 vLLM 服务端 /metrics 指标采集与聚合，包括 KV Cache 使用率、
   请求排队数、TTFT/TPOT/E2EL 延迟分解、Prefix Cache 命中率及瓶颈推断；
 - 通用 Mean、P50、P90、P99、Min、Max 和 Stddev；
 - Engine KV Cache 容量环境信息；

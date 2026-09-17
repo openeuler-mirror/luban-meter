@@ -9,12 +9,13 @@ import threading
 from time import monotonic
 
 from luban_meter.core.errors import ExecutionError
-from luban_meter.core.models import CommandResult, CommandSpec
+from luban_meter.core.run_contracts import CommandResult, CommandSpec
 
 
 class LocalCommandRunner:
     def run(self, command: CommandSpec) -> CommandResult:
-        # A normal SIGTERM must unwind HostSession's finally, just like Ctrl-C.
+        # A normal SIGTERM must unwind HostSession's finally, just like
+        # Ctrl-C.
         handle_term = threading.current_thread() is threading.main_thread()
         previous = signal.getsignal(signal.SIGTERM) if handle_term else None
 
@@ -39,13 +40,16 @@ class LocalCommandRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=None if command.env is None else {**os.environ, **command.env},
+                env=None
+                if command.env is None
+                else {**os.environ, **command.env},
                 start_new_session=os.name == "posix",
             )
             try:
                 stdout, stderr = process.communicate(timeout=command.timeout)
             finally:
-                # Descendants can retain pipes or continue creating resources even
+                # Descendants can retain pipes or continue creating
+                # resources even
                 # after the immediate benchmark process has exited.
                 if os.name == "posix":
                     try:

@@ -8,14 +8,17 @@ import re
 
 import pytest
 
-from luban_meter.benchmark.generate.common.prometheus import (
+from luban_meter.benchmarking.generation_performance.common.prometheus import (
     parse_prometheus_text,
 )
-from luban_meter.core.models import RawRunArtifacts, RunRequest
-from luban_meter.core.registry import BenchmarkRegistry
-from luban_meter.reporting.data import load_report, lookup
+from luban_meter.core.run_contracts import RawRunArtifacts, RunRequest
+from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.reporting.render import write_report
-from luban_meter.reporting.tables import tables_for
+from luban_meter.reporting.result_reader import (
+    load_report,
+    resolve_metric_pointer,
+)
+from luban_meter.reporting.tables import build_task_tables
 from luban_meter.result.manager import ResultManager
 from luban_meter.result.schema import RESULT_SCHEMA
 
@@ -23,10 +26,10 @@ BENCHMARKS = [
     ("generate", "serving-online", 4),
     ("generate", "vllm-engine-offline", 6),
     ("generate", "vllm_metrics", 0),
-    ("inference", "ceval", 2),
-    ("inference", "cmmlu", 2),
-    ("inference", "gsm8k", 1),
-    ("inference", "humaneval", 1),
+    ("model_service_quality", "ceval", 2),
+    ("model_service_quality", "cmmlu", 2),
+    ("model_service_quality", "gsm8k", 1),
+    ("model_service_quality", "humaneval", 1),
 ]
 
 
@@ -108,6 +111,7 @@ def metrics_snapshot(index):
     for name in (
         "time_to_first_token_seconds",
         "request_time_per_output_token_seconds",
+        "request_inference_time_seconds",
     ):
         lines += [
             f"# TYPE vllm:{name} histogram",
@@ -187,9 +191,9 @@ def processed_fixture(root, module, benchmark):
     config.write_text("example: true\n", encoding="utf-8")
     request = RunRequest(
         run_id=run_id,
-        module=module,
-        benchmark=benchmark,
-        config=config,
+        category_name=module,
+        scenario_name=benchmark,
+        config_path=config,
         model_name="synthetic-model",
         model_path=None,
         output_dir=root,
@@ -197,7 +201,7 @@ def processed_fixture(root, module, benchmark):
     )
     manager = ResultManager()
     result = manager.process(
-        BenchmarkRegistry().resolve(request),
+        ScenarioRegistry().resolve(request),
         RawRunArtifacts(
             raw_result=raw_path,
             stdout_log=raw_dir / "stdout.log",
@@ -213,17 +217,24 @@ def processed_fixture(root, module, benchmark):
 def test_bundled_processors_export_real_metric_paths(
     tmp_path, module, benchmark, image_count, monkeypatch
 ):
-    # Exercise font fallback, including the overall bar without an x path.
+    # Exercise font fallback, including the overall bar without an x
+    # path.
     monkeypatch.setattr(
-        "luban_meter.reporting.charts._fonts", lambda: ["DejaVu Sans"]
+        "luban_meter.reporting.charts.available_chart_fonts",
+        lambda: ["DejaVu Sans"],
     )
     source = processed_fixture(tmp_path, module, benchmark)
     original = source.read_bytes()
     payload = json.loads(original)
     assert payload["schema_version"] == RESULT_SCHEMA
     assert isinstance(payload["metrics"], dict)
+    if benchmark == "vllm_metrics":
+        assert (
+            "model_execution_time"
+            in payload["metrics"]["latency_decomposition"]
+        )
     report = load_report(source)
-    tables = tables_for(report.tasks[0])
+    tables = build_task_tables(report.tasks[0])
     assert not report.tasks[0].notes
     for table in tables:
         assert table.records
@@ -242,7 +253,7 @@ def test_bundled_processors_export_real_metric_paths(
         rows = list(csv.DictReader(stream))
     assert rows
     for row in rows:
-        value, unit = lookup(payload["metrics"], row["metric"])
+        value, unit = resolve_metric_pointer(payload["metrics"], row["metric"])
         assert row["value"] == (str(value) if value is not None else "")
         assert row["unit"] == unit
     assert source.read_bytes() == original

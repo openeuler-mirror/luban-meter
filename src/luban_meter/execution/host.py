@@ -1,8 +1,9 @@
 """Execute a Benchmark tool directly on the current host.
 
-Hardware monitoring is optional: if a Prometheus exporter URL is provided,
-a background daemon samples GPU/CPU metrics during the benchmark run.
-If no URL is provided, monitoring is skipped entirely.
+Hardware monitoring is optional: if a Prometheus exporter URL is
+provided, a background daemon samples GPU/CPU metrics during the
+benchmark run. If no URL is provided, monitoring is skipped
+entirely.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import json
 import sys
 
 from luban_meter.core.errors import ExecutionError
-from luban_meter.core.models import (
+from luban_meter.core.run_contracts import (
     CommandSpec,
     RawRunArtifacts,
     ResolvedRun,
@@ -19,11 +20,14 @@ from luban_meter.core.models import (
 from luban_meter.execution.command import LocalCommandRunner
 from luban_meter.execution.device_monitor import DeviceMonitorDaemon
 from luban_meter.execution.session import (
-    collected_artifacts,
+    build_run_artifact_paths,
     prepare_run_directory,
     write_command_logs,
 )
-from luban_meter.utils.docker_sandbox import DockerSandboxConfig, DockerSandboxScope
+from luban_meter.utils.docker_sandbox import (
+    DockerSandboxConfig,
+    DockerSandboxScope,
+)
 
 
 class HostSession:
@@ -51,21 +55,25 @@ class HostSession:
 
         scope = None
         if (
-            run.benchmark.module == "inference"
-            and run.benchmark.benchmark == "humaneval"
+            run.scenario_definition.category_name == "model_service_quality"
+            and run.scenario_definition.scenario_name == "humaneval"
         ):
             scope = DockerSandboxScope(
                 artifact_dir / "sandbox-registry",
                 DockerSandboxConfig(
                     docker_host=str(
-                        run.parameters.get("docker_host", "unix:///var/run/docker.sock")
+                        run.parameters.get(
+                            "docker_host", "unix:///var/run/docker.sock"
+                        )
                     ),
                     image=str(
                         run.parameters.get(
                             "sandbox_image", "luban-meter-humaneval-sandbox:v1"
                         )
                     ),
-                    docker_binary=str(run.parameters.get("docker_binary", "docker")),
+                    docker_binary=str(
+                        run.parameters.get("docker_binary", "docker")
+                    ),
                 ),
             )
         try:
@@ -75,7 +83,7 @@ class HostSession:
                 CommandSpec(
                     argv=(
                         sys.executable,
-                        str(run.benchmark.benchmark_entry),
+                        str(run.scenario_definition.collector_path),
                         "--request",
                         str(run_dir / "request.json"),
                         "--output",
@@ -94,7 +102,8 @@ class HostSession:
                     daemon.stop()
         write_command_logs(raw_dir, result.stdout, result.stderr)
 
-        # Inject the already-stopped monitor's summary after a successful command.
+        # Inject the already-stopped monitor's summary after a
+        # successful command.
         if daemon is not None:
             self._inject_monitoring_summary(raw_result, daemon.summary())
 
@@ -107,19 +116,21 @@ class HostSession:
             raise ExecutionError(
                 f"benchmark did not produce required output: {raw_result}"
             )
-        return collected_artifacts(raw_dir, artifact_dir)
+        return build_run_artifact_paths(raw_dir, artifact_dir)
 
     def close(self) -> None:
         return None
 
     @staticmethod
     def _inject_monitoring_summary(raw_result, summary) -> None:
-        """Read raw_result.json, inject device monitoring summary, write back."""
+        """Read raw_result.json, inject device monitoring summary,
+        write back.
+        """
         if summary is None:
             return
         try:
-            with raw_result.open("r", encoding="utf-8") as f:
-                data = json.load(f)
+            with raw_result.open("r", encoding="utf-8") as raw_result_stream:
+                data = json.load(raw_result_stream)
         except (OSError, json.JSONDecodeError):
             return
 
@@ -135,22 +146,28 @@ class HostSession:
         artifact_dir = raw_result.parent / "artifacts"
         if timeseries:
             try:
-                from luban_meter.result.charts import generate_monitoring_charts
+                from luban_meter.result.charts import (
+                    generate_monitoring_charts,
+                )
+
                 charts = generate_monitoring_charts(timeseries, artifact_dir)
                 monitoring["charts"] = charts
             except Exception:
                 pass  # matplotlib may not be installed
 
-        # Put hardware_environment at the top of the result for easy access
-        hw_env = monitoring.pop("hardware_environment", None)
-        if hw_env:
-            new_data = {"hardware_environment": hw_env}
+        # Put hardware_environment at the top of the result for easy
+        # access
+        hardware_environment = monitoring.pop("hardware_environment", None)
+        if hardware_environment:
+            new_data = {"hardware_environment": hardware_environment}
             new_data.update(data)
             data = new_data
 
         data["device_monitoring"] = monitoring
         try:
-            with raw_result.open("w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            with raw_result.open("w", encoding="utf-8") as raw_result_stream:
+                json.dump(
+                    data, raw_result_stream, ensure_ascii=False, indent=2
+                )
         except OSError:
             pass

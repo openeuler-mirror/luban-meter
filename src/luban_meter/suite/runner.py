@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from luban_meter.core.engine import CoreEngine
 from luban_meter.core.errors import ConfigurationError
-from luban_meter.core.models import RunRequest
+from luban_meter.core.run_contracts import RunRequest
+from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.result.schema import SUITE_SCHEMA
-from luban_meter.suite.models import (
+from luban_meter.suite.suite_contracts import (
     SuiteDefinition,
     SuiteRequest,
     SuiteResult,
@@ -17,7 +17,7 @@ from luban_meter.utils.run_id import create_run_id
 
 
 class SuiteRunner:
-    def __init__(self, engine: CoreEngine) -> None:
+    def __init__(self, engine: RunCoordinator) -> None:
         self._engine = engine
 
     def run(
@@ -47,8 +47,8 @@ class SuiteRunner:
                 task_results.append(
                     SuiteTaskResult(
                         name=task.name,
-                        module=task.module,
-                        benchmark=task.benchmark,
+                        category_name=task.category_name,
+                        scenario_name=task.scenario_name,
                         status="skipped",
                     )
                 )
@@ -57,9 +57,11 @@ class SuiteRunner:
             run_id = create_run_id(task.name)
             run_request = RunRequest(
                 run_id=run_id,
-                module=task.module,
-                benchmark=task.benchmark,
-                config=request.task_configs.get(task.name, task.config),
+                category_name=task.category_name,
+                scenario_name=task.scenario_name,
+                config_path=request.task_configs.get(
+                    task.name, task.config_path
+                ),
                 model_path=request.model_path,
                 model_name=request.model_name,
                 output_dir=tasks_dir,
@@ -71,8 +73,8 @@ class SuiteRunner:
             task_results.append(
                 SuiteTaskResult(
                     name=task.name,
-                    module=task.module,
-                    benchmark=task.benchmark,
+                    category_name=task.category_name,
+                    scenario_name=task.scenario_name,
                     status=result.status,
                     run_id=run_id,
                     result=str(result_path),

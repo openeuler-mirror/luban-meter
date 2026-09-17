@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from luban_meter.core.engine import CoreEngine
 from luban_meter.core.errors import ConfigurationError
-from luban_meter.core.registry import BenchmarkRegistry
+from luban_meter.core.run_coordinator import RunCoordinator
+from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.suite.loader import SuiteLoader
-from luban_meter.suite.models import SuiteRequest
 from luban_meter.suite.runner import SuiteRunner
+from luban_meter.suite.suite_contracts import SuiteRequest
 
 BENCHMARK_SOURCE = """\
 import argparse
@@ -40,22 +40,22 @@ class SuiteTest(unittest.TestCase):
     def test_loads_and_runs_suite_sequentially(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            benchmark_dir = root / "benchmark"
+            benchmark_dir = root / "benchmarking"
             suites_dir = root / "suite" / "definitions"
             configs_dir = suites_dir / "configs"
             configs_dir.mkdir(parents=True)
 
             for module, benchmark, value in (
                 ("generate", "ttft", 10),
-                ("inference", "accuracy", 20),
+                ("model_service_quality", "accuracy", 20),
             ):
                 tool_dir = benchmark_dir / module / benchmark
                 tool_dir.mkdir(parents=True)
-                (tool_dir / "benchmark.py").write_text(
+                (tool_dir / "collect_raw.py").write_text(
                     BENCHMARK_SOURCE,
                     encoding="utf-8",
                 )
-                (tool_dir / "result.py").write_text(
+                (tool_dir / "calculate_metrics.py").write_text(
                     RESULT_SOURCE,
                     encoding="utf-8",
                 )
@@ -72,13 +72,13 @@ class SuiteTest(unittest.TestCase):
                 "    benchmark: ttft\n"
                 "    config: configs/ttft.yaml\n"
                 "  - name: accuracy\n"
-                "    module: inference\n"
+                "    module: model_service_quality\n"
                 "    benchmark: accuracy\n"
                 "    config: configs/accuracy.yaml\n",
                 encoding="utf-8",
             )
 
-            registry = BenchmarkRegistry(benchmark_dir)
+            registry = ScenarioRegistry(benchmark_dir)
             definition = SuiteLoader(suites_dir).load("basic")
             override_config = root / "accuracy-override.yaml"
             override_config.write_text("value: 99\n", encoding="utf-8")
@@ -91,24 +91,36 @@ class SuiteTest(unittest.TestCase):
                 task_configs={"accuracy": override_config},
             )
 
-            result = SuiteRunner(CoreEngine(registry)).run(request, definition)
+            result = SuiteRunner(RunCoordinator(registry)).run(
+                request, definition
+            )
 
             self.assertEqual(result.status, "success")
             self.assertFalse(hasattr(result, "vendor"))
-            self.assertEqual([task.name for task in result.tasks], ["ttft", "accuracy"])
-            self.assertTrue(all(task.status == "success" for task in result.tasks))
+            self.assertEqual(
+                [task.name for task in result.tasks], ["ttft", "accuracy"]
+            )
+            self.assertTrue(
+                all(task.status == "success" for task in result.tasks)
+            )
             self.assertEqual(
                 result.schema_version, "luban-meter.suite-result/v2"
             )
             self.assertEqual(result.tasks[0].output["metrics"], {"value": 10})
             self.assertEqual(result.tasks[1].output["metrics"], {"value": 99})
             for task in result.tasks:
-                task_result = json.loads(Path(task.result).read_text(encoding="utf-8"))
+                task_result = json.loads(
+                    Path(task.result).read_text(encoding="utf-8")
+                )
                 self.assertEqual(task_result["status"], "success")
                 self.assertEqual(task.output, task_result)
-            suite_result = root / "runs" / request.suite_id / "suite_result.json"
+            suite_result = (
+                root / "runs" / request.suite_id / "suite_result.json"
+            )
             self.assertTrue(suite_result.is_file())
-            suite_payload = json.loads(suite_result.read_text(encoding="utf-8"))
+            suite_payload = json.loads(
+                suite_result.read_text(encoding="utf-8")
+            )
             self.assertEqual(
                 suite_payload["tasks"][0]["output"]["metrics"], {"value": 10}
             )
@@ -116,28 +128,39 @@ class SuiteTest(unittest.TestCase):
                 suite_payload["tasks"][1]["output"]["metrics"], {"value": 99}
             )
 
-    def test_loads_bundled_inference_standard_suite(self) -> None:
-        definition = SuiteLoader().load("inference-standard")
+    def test_loads_bundled_model_service_quality_standard_suite(self) -> None:
+        definition = SuiteLoader().load("model_service_quality_standard")
         self.assertEqual(
             [task.name for task in definition.tasks],
             ["ceval", "cmmlu", "gsm8k", "humaneval"],
         )
-        self.assertTrue(all(task.module == "inference" for task in definition.tasks))
-        self.assertTrue(all(task.config.is_file() for task in definition.tasks))
+        self.assertTrue(
+            all(
+                task.category_name == "model_service_quality"
+                for task in definition.tasks
+            )
+        )
+        self.assertTrue(
+            all(task.config_path.is_file() for task in definition.tasks)
+        )
 
     def test_rejects_task_config_for_unknown_suite_task(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            definition = SuiteLoader().load("inference-standard")
+            definition = SuiteLoader().load("model_service_quality_standard")
             request = SuiteRequest(
                 suite_id="unknown-override-test",
-                suite="inference-standard",
+                suite="model_service_quality_standard",
                 model_path=None,
                 model_name=None,
                 output_dir=Path(directory) / "runs",
                 task_configs={"missing": Path("missing.yaml")},
             )
-            with self.assertRaisesRegex(ConfigurationError, "unknown tasks: missing"):
-                SuiteRunner(CoreEngine(BenchmarkRegistry())).run(request, definition)
+            with self.assertRaisesRegex(
+                ConfigurationError, "unknown tasks: missing"
+            ):
+                SuiteRunner(RunCoordinator(ScenarioRegistry())).run(
+                    request, definition
+                )
 
     def test_rejects_duplicate_task_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -173,13 +196,15 @@ class SuiteTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with self.assertRaisesRegex(ConfigurationError, "non-empty string"):
+            with self.assertRaisesRegex(
+                ConfigurationError, "non-empty string"
+            ):
                 SuiteLoader(suites_dir).load("bad")
 
     def test_fail_fast_marks_remaining_tasks_as_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            benchmark_dir = root / "benchmark"
+            benchmark_dir = root / "benchmarking"
             suites_dir = root / "suite" / "definitions"
             suites_dir.mkdir(parents=True)
             (suites_dir / "fail-fast.yaml").write_text(
@@ -195,7 +220,7 @@ class SuiteTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = BenchmarkRegistry(benchmark_dir)
+            registry = ScenarioRegistry(benchmark_dir)
             definition = SuiteLoader(suites_dir).load("fail-fast")
             request = SuiteRequest(
                 suite_id="fail-fast-test",
@@ -206,7 +231,9 @@ class SuiteTest(unittest.TestCase):
                 fail_fast=True,
             )
 
-            result = SuiteRunner(CoreEngine(registry)).run(request, definition)
+            result = SuiteRunner(RunCoordinator(registry)).run(
+                request, definition
+            )
 
             self.assertEqual(result.status, "failed")
             self.assertEqual(

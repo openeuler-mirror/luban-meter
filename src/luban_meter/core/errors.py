@@ -19,9 +19,11 @@ class UnknownModuleError(BenchmarkToolkitError):
         super().__init__(f"unknown module: {name}")
 
 
-class UnknownBenchmarkError(BenchmarkToolkitError):
-    def __init__(self, module: str, benchmark: str) -> None:
-        super().__init__(f"unknown benchmark for {module}: {benchmark}")
+class UnknownScenarioError(BenchmarkToolkitError):
+    def __init__(self, category_name: str, scenario_name: str) -> None:
+        super().__init__(
+            f"unknown benchmark for {category_name}: {scenario_name}"
+        )
 
 
 class ExecutionError(BenchmarkToolkitError):

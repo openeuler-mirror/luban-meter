@@ -10,16 +10,14 @@ from typing import Any
 import yaml
 
 from luban_meter.core.errors import ConfigurationError
-from luban_meter.suite.models import SuiteDefinition, SuiteTask
+from luban_meter.suite.suite_contracts import SuiteDefinition, SuiteTask
 
 _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 class SuiteLoader:
     def __init__(self, suites_dir: Path | None = None) -> None:
-        self._suites_dir = (
-            suites_dir or Path(__file__).parent / "definitions"
-        )
+        self._suites_dir = suites_dir or Path(__file__).parent / "definitions"
 
     def load(self, suite: str) -> SuiteDefinition:
         self._validate_name("suite", suite)
@@ -30,11 +28,15 @@ class SuiteLoader:
         data = self._read_yaml(source)
         name = data.get("name", suite)
         if not isinstance(name, str) or not name:
-            raise ConfigurationError(f"suite name must be a non-empty string: {source}")
+            raise ConfigurationError(
+                f"suite name must be a non-empty string: {source}"
+            )
         self._validate_name("suite name", name)
         task_values = data.get("tasks")
         if not isinstance(task_values, list) or not task_values:
-            raise ConfigurationError(f"suite tasks must be a non-empty list: {source}")
+            raise ConfigurationError(
+                f"suite tasks must be a non-empty list: {source}"
+            )
 
         tasks = tuple(
             self._load_task(value, source, index)
@@ -42,7 +44,9 @@ class SuiteLoader:
         )
         names = [task.name for task in tasks]
         if len(names) != len(set(names)):
-            raise ConfigurationError(f"suite task names must be unique: {source}")
+            raise ConfigurationError(
+                f"suite task names must be unique: {source}"
+            )
         return SuiteDefinition(
             name=name,
             source=source,
@@ -55,9 +59,13 @@ class SuiteLoader:
             with path.open("r", encoding="utf-8") as stream:
                 data = yaml.safe_load(stream)
         except (OSError, yaml.YAMLError) as exc:
-            raise ConfigurationError(f"invalid suite config {path}: {exc}") from exc
+            raise ConfigurationError(
+                f"invalid suite config {path}: {exc}"
+            ) from exc
         if not isinstance(data, Mapping):
-            raise ConfigurationError(f"suite config must contain a mapping: {path}")
+            raise ConfigurationError(
+                f"suite config must contain a mapping: {path}"
+            )
         return data
 
     def _load_task(self, value: Any, source: Path, index: int) -> SuiteTask:
@@ -71,7 +79,8 @@ class SuiteLoader:
             item = value.get(field)
             if not isinstance(item, str) or not item:
                 raise ConfigurationError(
-                    f"suite task at index {index} requires string field {field!r}"
+                    f"suite task at index {index} "
+                    f"requires string field {field!r}"
                 )
             fields[field] = item
 
@@ -80,10 +89,13 @@ class SuiteLoader:
 
         timeout = value.get("timeout")
         if timeout is not None and (
-            not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0
+            not isinstance(timeout, int)
+            or isinstance(timeout, bool)
+            or timeout <= 0
         ):
             raise ConfigurationError(
-                f"suite task {fields['name']!r} timeout must be a positive integer"
+                f"suite task {fields['name']!r} timeout "
+                "must be a positive integer"
             )
 
         config = Path(fields["config"]).expanduser()
@@ -91,9 +103,9 @@ class SuiteLoader:
             config = source.parent / config
         return SuiteTask(
             name=fields["name"],
-            module=fields["module"],
-            benchmark=fields["benchmark"],
-            config=config,
+            category_name=fields["module"],
+            scenario_name=fields["benchmark"],
+            config_path=config,
             timeout=timeout,
         )
 
