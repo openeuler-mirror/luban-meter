@@ -57,6 +57,7 @@ def make_request_record(
         "dispatch_delay_ms": dispatch_delay_ms,
         "duration_ms": duration_ms,
         "ttft_ms": ttft_ms,
+        "last_output_latency_ms": ttft_ms if output_tokens == 1 else e2el_ms,
         "e2el_ms": e2el_ms,
         "itl_samples_ms": itl_samples_ms,
         "input_tokens": input_tokens,

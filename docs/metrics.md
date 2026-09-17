@@ -52,19 +52,33 @@ LuBan-Meter 按“测试场景和采集边界”组织 Benchmark，不按最终�
 |---|---|
 | `unit` | 单位，例如 `ms`、`ms/token`、`token/s` |
 | `count` | 有效样本数 |
-| `mean` | 算术平均值 |
+| `mean` | 平均值；在线 TPOT、ITL 使用下述 Token 权重 |
 | `median` | 中位数，与当前 `p50` 相同 |
 | `p50` | 第 50 百分位数 |
 | `p90` | 第 90 百分位数 |
+| `p95` | 第 95 百分位数 |
 | `p99` | 第 99 百分位数 |
+| `p999` | 第 99.9 百分位数 |
 | `min` | 最小值 |
 | `max` | 最大值 |
 | `stddev` | 总体标准差 |
 
-LuBan-Meter 当前使用线性插值计算分位数。比较不同运行时，必须同时检查样本数；
-样本很少时，特别是 P99，统计稳定性不足。
+普通样本使用线性插值计算分位数。在线 TPOT、ITL 使用
+Token 加权累计分布：取累计权重首次达到目标比例的样本值，不做插值。加权指标
+的 `count` 仍表示有效请求数，`weight_sum` 表示权重总和，并输出
+`aggregation=token_weighted`、`percentile_method=weighted_cdf`。
+比较不同运行时，必须同时检查统计方法和样本数。
 
 ## 4. 在线服务指标
+
+在线结果统一采用 GuideLLM
+`6eab76f67514bbe17cc673f8e0ae048dae0955fa` 的单请求 TPOT、ITL、Token 加权
+统计和 SLO 判定规则。字段结构、普通指标统计及 Case 窗口仍采用 LuBan 协议，
+不能据此宣称整个压测行为与 GuideLLM 完全相同。
+
+公式来源：[请求指标](https://github.com/vllm-project/guidellm/blob/6eab76f67514bbe17cc673f8e0ae048dae0955fa/src/guidellm/schemas/base/request_stats.py#L257-L298)、
+[聚合权重](https://github.com/vllm-project/guidellm/blob/6eab76f67514bbe17cc673f8e0ae048dae0955fa/src/guidellm/benchmark/schemas/metrics.py#L1131-L1149)、
+[Goodput 判定](https://github.com/vllm-project/guidellm/blob/6eab76f67514bbe17cc673f8e0ae048dae0955fa/src/guidellm/benchmark/schemas/metrics.py#L948-L985)。
 
 `serving-online` 支持两种工作负载模式，由 `workload_mode` 配置决定。
 
@@ -126,6 +140,7 @@ Token 数按 Mean、P50、P90、P99 统计分布。
 | `end_offset_ms` | 完整流式响应结束时刻相对测试起点的偏移 |
 | `duration_ms` | 请求完整持续时间 |
 | `ttft_ms` | 请求开始至第一个非空生成事件到达的时间 |
+| `last_output_latency_ms` | 请求开始至最后一个非空生成事件到达的时间 |
 | `e2el_ms` | 请求开始至完整流式响应结束的时间 |
 | `itl_samples_ms` | 相邻非空生成事件的到达时间间隔 |
 | `input_tokens` | API `usage.prompt_tokens` 报告的输入 Token 数 |
@@ -154,35 +169,45 @@ TTFT = first_output_event_time - request_start_time
 
 #### ITL
 
-Inter-Token Latency，在线流中相邻非空生成事件的到达间隔：
+Inter-Token Latency，首个输出之后的平均每 Token 时间，采用 GuideLLM
+请求级公式。设 N 为实际输出 Token 数：
 
 ```text
-ITL[i] = output_event_time[i] - output_event_time[i - 1]
+ITL = (last_output_latency_ms - ttft_ms) / (N - 1)
 ```
 
 - 输出名：`metrics.cases[].request_view.itl`
-- 单位：`ms`
-- 汇总范围：所有成功请求的全部相邻事件间隔。
+- 单位：`ms/token`
+- 每个成功请求贡献一个样本，权重为 `N - 1`。
+- N <= 1 或缺少最后输出时间时没有样本；全无样本时 `count=0`、统计值为 null。
+- 即使一个事件带多个 Token，也使用实际 Token 数作分母；时间差为零是有效样本。
 
-当前采集器记录的是 SSE 生成事件，而不是由客户端 tokenizer 逐 Token 解码得到
-的时间戳。只有服务保证一个非空事件对应一个 Token 时，该值才是严格的逐 Token
-ITL；如果一个事件包含多个 Token，它表示事件间隔。
+原有 SSE 事件间隔仍从 `itl_samples_ms` 汇总，输出到
+`request_view.stream_event_itl`，单位 ms，按事件等权、线性插值。只有服务保证
+每个非空事件对应一个 Token 时，事件间隔才能直接解释为逐 Token 延迟。
 
 #### TPOT
 
-Time Per Output Token，首个输出之后，平均生成一个后续 Token 的时间：
+Time Per Output Token，从请求开始到最后有效输出的耗时分摊到全部输出 Token，
+包含首 Token 等待时间：
 
 ```text
-decode_duration = E2EL - TTFT
-TPOT = decode_duration / (output_tokens - 1)
+TPOT = last_output_latency_ms / output_tokens
 ```
 
 - 输出名：`metrics.cases[].request_view.tpot`
 - 单位：`ms/token`
-- 仅在 `output_tokens > 1` 且 Decode 时间大于 0 时产生样本。
+- 每个成功请求贡献一个样本，权重为 `output_tokens`。
+- 输出一个 Token 时也可计算；实际输出 Token 数必须大于零。
+- 没有最后输出时间时，TPOT 回退为 `E2EL / output_tokens`，但 ITL 仍不可计算。
 
-首 Token 由 TTFT 表示，因此分母使用 `output_tokens - 1`。输出长度为 1 的纯
-TTFT 测试不能计算 TPOT。
+新采集器总是记录最后一个非空文本输出时间，不把末尾 usage、DONE 或连接收尾
+时间算入 TPOT。当前支持文本流式 Completion 和 Chat Completion；仍要求服务
+返回 usage，不实现 GuideLLM 缺少 usage 时的事件数估算，也不扩展非流式、
+工具调用和独立推理内容事件协议。
+
+例如首输出为 900ms、最后输出为 1000ms、输出 2 Token，即使完整流结束于
+1500ms，TPOT 仍为 500ms/token、ITL 为 100ms/token，E2EL 为 1500ms。
 
 #### E2EL
 
@@ -195,13 +220,16 @@ E2EL = request_end_time - request_start_time
 - 输出名：`metrics.cases[].request_view.e2el`
 - 单位：`ms`
 
-近似关系为：
+对有最后输出时间的成功请求：
 
 ```text
-E2EL ~= TTFT + TPOT * (output_tokens - 1)
+last_output_latency_ms = TPOT * output_tokens
+last_output_latency_ms = TTFT + ITL * (output_tokens - 1)  # N > 1
+E2EL >= last_output_latency_ms
 ```
 
-该关系受网络抖动、流式事件聚合和结束事件传输开销影响，不要求逐样本完全相等。
+这些关系描述单请求，不能直接代入不同权重的 Case 均值；保存时的四舍五入也会
+产生微小误差。
 
 #### 单请求输出 Token 吞吐量
 
@@ -218,13 +246,14 @@ request_output_token_throughput = output_tokens / E2EL
 #### 单请求 Decode Token 吞吐量
 
 ```text
-request_decode_token_throughput = 1 / TPOT
+request_decode_token_throughput = 1000 / ITL_ms
 ```
 
 - 输出名：`metrics.cases[].request_view.decode_token_throughput`
 - 单位：`token/s`
 
-它排除首 Token 前的等待，更接近用户看到首 Token 后的平均生成速度。
+它排除首 Token 前的等待和末尾收尾时间。仅当请求 ITL 大于零时产生样本，
+然后按请求等权汇总，不能直接取 Case 平均 ITL 的倒数。
 
 #### Dispatch Delay
 
@@ -330,114 +359,89 @@ average_concurrency = sum(all_request_duration) / benchmark_duration
 
 ### 4.6 SLO 与 Goodput
 
-SLO（Service Level Objective）是服务质量的量化边界。LuBan-Meter 在在线服务
-Benchmark 中支持可选的 SLO 配置块，用于两个目的：
-
-1. **熔断**：执行期 Case 级 P99 E2EL 超过阈值时，停止后续 Case；
-2. **Goodput**：区分“有量无质”和“有效产出”，只统计满足 SLO 的成功请求吞吐。
-
-#### SLO 配置
-
-SLO 块在 `serving_online.yaml` 中以 `slo` 字段配置，可选：
+SLO 用于判定单请求是否满足质量要求；Case 级熔断使用独立配置。
 
 ```yaml
 slo:
-  p99_ms: 2000    # 熔断阈值：Case 级 P99 E2EL
-  ttft_ms: 500    # Goodput 维度：首 Token 延迟
-  tpot_ms: 50     # Goodput 维度：每 Token 生成时间
-  e2el_ms: 8000   # Goodput 维度：端到端延迟
+  ttft_ms: 500
+  tpot_ms: 50     # 判定排除首 Token 的 ITL，不是报告 TPOT
+  e2el_ms: 8000
+circuit_breaker:
+  p99_e2el_ms: 2000
 ```
 
-| 字段 | 用途 | 单位 |
-|---|---|---|
-| `p99_ms` | 熔断判定 | `ms` |
-| `ttft_ms` | Goodput 判定 | `ms` |
-| `tpot_ms` | Goodput 判定 | `ms/token` |
-| `e2el_ms` | Goodput 判定 | `ms` |
-
-SLO 块整体可选。省略时既不触发熔断，也不计算 Goodput。配置了 SLO 块时至少
-需要一个阈值字段。
+`ttft_ms`、`e2el_ms` 单位为 ms，`tpot_ms` 单位为 ms/token。SLO 可省略，
+配置时至少包含一个正数阈值。当前熔断读取顶层 `circuit_breaker`，也可直接写
+`circuit_breaker: 2000`；历史 `slo.p99_ms` 配置需迁移到这个字段。
 
 #### 熔断机制
 
-熔断在 `benchmark.py` 的 Case 循环中执行：
+每个 Case 完成后，对成功请求的 E2EL 计算 P99。至少需要 10 个成功样本，
+分位数沿用普通样本的线性插值。超过阈值时保留当前 Case 结果，跳过后续所有
+Case。熔断不使用 TPOT 或 Token 加权分位数。
 
-1. 每个 Case 完成后，从成功请求的 E2EL 样本计算 P99；
-2. 若 P99 超过 `p99_ms` 阈值，设置 `circuit_breaker` 并跳过后续全部 Case；
-3. 当前 Case 的结果正常输出，不中断；
-4. 后续被跳过的 Case 不执行，只记录维度信息。
+结果记录在 `metadata.circuit_breaker`，包括 `triggered`、
+`threshold_p99_ms`、`actual_p99_ms`、`triggered_at_case` 和
+`remaining_cases_skipped`；跳过列表位于 `metadata.skipped_cases`。
 
-P99 计算复用 `common/statistics.py` 的 `percentile(samples, 0.99)` 函数，与
-现有统计字段保持一致。成功样本数少于 10 时不计算 P99，避免小样本统计不稳定。
-
-熔断结果记录在 `metadata.circuit_breaker`：
-
-| 字段 | 含义 |
-|---|---|
-| `triggered` | 是否触发 |
-| `threshold_p99_ms` | 配置的阈值 |
-| `actual_p99_ms` | 触发时的实际 P99 |
-| `triggered_at_case` | 触发位置（input/output/rate） |
-| `remaining_cases_skipped` | 被跳过的 Case 数 |
-
-被跳过的 Case 列表记录在 `metadata.skipped_cases`。
+`max_duration` 和 `max_error_rate` 也在 Case 完成后检查；前者不能中断当前
+Case 或取消在途请求。配置了这些停止条件时，不配置 SLO 也可能停止后续 Case。
 
 #### Goodput 计算
 
-Goodput 在 `result.py` 的 `process_case()` 中计算。SLO 配置从
-`metadata.slo_config` 读取，逐请求判定。
+`result.py` 从 `metadata.slo_config` 读取 SLO，
+采用 GuideLLM 的逐请求判定：
 
-**判定逻辑**（AND 关系）：
+- `ttft_ms`：检查 TTFT 是否小于等于阈值；
+- `tpot_ms`：检查请求级 ITL 是否小于等于阈值，排除首 Token 等待；
+- `e2el_ms`：检查完整请求 E2EL 是否小于等于阈值；
+- 任何已配置维度缺少测量值，成功请求均记为 `undetermined`，即使其他维度
+  已超阈值；未配置的维度不影响判定；
+- 所有已配置维度都有值时，全部通过才记为 satisfied，否则记为 violated；
+- 单 Token 请求的报告 TPOT 有值，但 ITL 无定义。因此配置 `tpot_ms` 时，
+  单 Token 成功请求属于 undetermined；只配置 TTFT/E2EL 时仍可正常判定；
+- 失败请求计入判定总体并降低满足率，不因缺少延迟而排除。
 
-一个成功请求被判定为 SLO-satisfied，当且仅当所有已配置维度均满足阈值：
+输出位于 `metrics.cases[].service_view.goodput`：
 
-- `ttft_ms` 配置时：`TTFT <= ttft_ms`；
-- `tpot_ms` 配置时且 `output_tokens > 1` 时：`TPOT <= tpot_ms`；
-- `e2el_ms` 配置时：`E2EL <= e2el_ms`。
+| 字段 | 含义 |
+|---|---|
+| `status` | 有判定总体时 applicable，否则 not_applicable |
+| `slo_config` | 配置的阈值 |
+| `tpot_metric` | 固定为 inter_token_latency，说明阈值采用 ITL |
+| `applicable_dimensions` | 至少一个成功请求有测量值的配置维度 |
+| `not_applicable_dimensions` | 成功请求均缺少测量值的配置维度 |
+| `slo_satisfied_count` | 满足所有目标的成功请求数 |
+| `slo_violated_count` | 可判定且违反目标的成功请求数 |
+| `failed_count` | 失败请求数，与 violated 分开记录 |
+| `undetermined_count` | 无法判定的成功请求数 |
+| `determined_count` | satisfied + violated + failed |
+| `slo_satisfied_rate` | satisfied / determined |
+| `goodput_request_throughput` | satisfied / Case 正式时长 |
+| `goodput_output_token_throughput` | satisfied 请求输出 Token 总数 / Case 正式时长 |
 
-任一维度违反，该请求记为 SLO-violated。TPOT 仅在 `output_tokens > 1` 时
-判定，因为单 Token 输出没有 Decode 阶段，TPOT 未定义。
+若 determined=0，仍保留计数字段，满足率和两种 Goodput 吞吐为 null，不填0。
+若全是失败请求，则 determined>0，满足率和 Goodput 都是0。
 
-**输出字段**：
+判定与满足率分母采用 GuideLLM 规则；吞吐率仍使用 LuBan 正式 Case 窗口，包含
+发送和排空时间、不含预热。当前调度器等待所有请求完成，不引入 GuideLLM 的
+持续时间截断、取消请求或其速率分布统计，因此这不是全部 Goodput 行为的对齐。
 
-Goodput 结果输出在 `metrics.cases[].service_view.goodput`：
+#### 历史原始文件重算
 
-| 字段 | 含义 | 单位 |
-|---|---|---|
-| `status` | 适用性状态：`applicable` 或 `not_applicable` | — |
-| `slo_config` | 配置的 SLO 阈值（含 None 维度） | — |
-| `applicable_dimensions` | 实际生效的维度列表 | — |
-| `not_applicable_dimensions` | 不适用维度列表（如全部单 Token 时 TPOT 不适用） | — |
-| `slo_satisfied_count` | 满足 SLO 的成功请求数 | `request` |
-| `slo_violated_count` | 违反 SLO 的成功请求数 | `request` |
-| `slo_satisfied_rate` | 满足率 | `ratio` |
-| `goodput_request_throughput` | 满足 SLO 的请求吞吐 | `req/s` |
-| `goodput_output_token_throughput` | 满足 SLO 的输出 Token 吞吐 | `token/s` |
+所有原始文件统一使用当前处理器的 TPOT、ITL 和 SLO 规则，不写入口径版本
+标记，也不切换旧处理逻辑。历史原始文件缺少 `last_output_latency_ms` 时，
+TPOT 按 GuideLLM 的缺失时间回退规则使用 E2EL/N；ITL 不产生有效样本，
+配置了 `tpot_ms` 的成功请求记为 undetermined。仍保留原始 SSE 事件间隔，
+不使用事件数量代替 Token 数或推测缺失的最后输出时间。
 
-当 `status` 为 `not_applicable` 时，仅输出 `status`、`reason`、`slo_config`、
-`applicable_dimensions` 和 `not_applicable_dimensions`，不包含统计字段。
+因此，历史原始文件重算后的加权统计、分位数和 SLO 满足率可能与旧报告不同。
+已经生成的历史 `result.json` 不会被修改；需要复现当时报告时，应使用当时的
+处理器。比较报告时应核对代码版本、指标公式和统计方法。
 
-```text
-goodput_request_throughput = slo_satisfied_count / benchmark_duration
-goodput_output_token_throughput = sum(satisfied output_tokens) / benchmark_duration
-```
-
-Goodput 与 `request_throughput` 的区别：
-
-- `request_throughput` 统计全部成功请求；
-- `goodput_request_throughput` 只统计满足 SLO 的成功请求。
-
-当所有请求均满足 SLO 时两者相等；否则 Goodput 低于 request throughput，
-反映出“有量无质”的差距。
-
-#### 向后兼容性
-
-SLO 块省略时：
-
-- `metadata` 中不出现 `slo_config` 和 `circuit_breaker`；
-- `service_view` 中不出现 `goodput` 字段；
-- 所有 Case 正常执行；
-- 结果与未引入 SLO 前完全一致。
+新口径的 ITL 已变为请求级 Token 平均时间，旧 SSE 事件间隔迁至
+`request_view.stream_event_itl`。新旧 TPOT/ITL、SLO 满足率不可直接混合比较。
+不配置 SLO 时，结果不输出 `goodput`；独立的熔断和停止条件仍按配置生效。
 
 ## 5. 离线 Engine 指标
 
@@ -687,7 +691,8 @@ KV Cache 使用率或并发度。
 |---|---|---|---|
 | Request TTFT | `internal_ttft` | 否 | 在线包含 HTTP/API/网络；Engine 边界由 vLLM 定义 |
 | Request TTFT | `prefill_latency` | 否 | Prefill 从 `scheduled_ts` 开始，不包含在线链路和可能的排队 |
-| Request TPOT | `mean_decode_step_latency` | 仅可趋势对照 | 在线包含流式传输，Engine 只看内部时间戳 |
+| Request TPOT | `mean_decode_step_latency` | 否 | 新在线 TPOT 包含首 Token 等待，Engine 只统计 Decode |
+| Request ITL | `mean_decode_step_latency` | 仅可趋势对照 | 在线使用首末输出事件，Engine 使用内部时间戳 |
 | Request Decode Throughput | `per_sequence_decode_rate` | 仅可趋势对照 | 时间边界不同 |
 | Service Output Throughput | Aggregate Decode Throughput | 否 | 在线按完整测试窗口，Engine 按 Decode 窗口 |
 | E2EL | Engine Execution Latency | 否 | E2EL 覆盖完整客户端链路 |

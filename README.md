@@ -92,6 +92,11 @@ benchmark/<module>/<benchmark>/
   支持 Poisson、Gamma 和恒定到达过程调度请求，输出变长输入/输出的分布统计、
   到达过程指标和服务容量评估。
 
+在线结果统一采用 GuideLLM 的 Token 指标口径：TPOT 包含首 Token 等待，ITL
+排除首 Token；两者按对应 Token 数加权。SLO 中的 `tpot_ms` 判定 ITL。
+具体公式和历史原始文件重算规则见
+[指标说明](docs/metrics.md#4-在线服务指标)。
+
 `generate/vllm-engine-offline` 直接调用 vLLM Engine 进行离线推理，遍历输入长度、输出长度和请求
 批量矩阵，输出内部 TTFT、Prefill/Decode 时延与吞吐量、Engine Execution Latency，
 并记录 KV Cache 静态容量环境；可选的 `engine_slo` 根据 Engine 内部时间线计算

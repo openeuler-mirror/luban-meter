@@ -154,6 +154,14 @@ inference   ceval,cmmlu,gsm8k,humaneval,lcsts,wikitext
 request_rate` 确定，输出 Token 数与配置值严格校验；dataset 模式的 Case
 由 `request_rate + arrival_process` 确定，输入/输出 Token 数按分布统计。
 
+在线结果统一采用 GuideLLM 的 Token 指标和 SLO 判定规则。
+报告 TPOT 包含首 Token 等待并按输出 Token 数加权，ITL 排除首 Token 并按
+后续 Token 数加权；SLO 的 `tpot_ms` 使用 ITL。采集器保存最后非空输出的时间，
+旧 SSE 事件间隔输出到 `stream_event_itl`。历史原始文件重算时同样使用当前
+规则；缺少最后输出时间时，TPOT 回退到 E2EL/N，ITL 及对应 SLO 无法判定。
+具体公式与边界见
+[生成式推理指标说明](metrics.md#4-在线服务指标)。
+
 ### 硬件监控
 
 硬件监控是**可选功能**。用户通过 CLI `--monitor-url` 参数指定 Prometheus

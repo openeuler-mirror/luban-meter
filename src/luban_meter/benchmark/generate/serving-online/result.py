@@ -10,12 +10,14 @@ are summarised as distributions rather than validated against fixed values.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from luban_meter.benchmark.generate.common.statistics import (
     scalar,
     summarize,
+    summarize_weighted,
 )
 from luban_meter.result.report_spec import line, table
 
@@ -37,6 +39,7 @@ REPORT = {
                 "/request_view/ttft/p99": "TTFT P99",
                 "/request_view/tpot/p50": "TPOT P50",
                 "/request_view/tpot/p99": "TPOT P99",
+                "/request_view/itl/p99": "ITL P99",
             },
             charts=[
                 line(
@@ -61,6 +64,7 @@ def numeric(record: Mapping[str, Any], name: str) -> float:
     if (
         not isinstance(value, (int, float))
         or isinstance(value, bool)
+        or not math.isfinite(value)
         or value < 0
     ):
         raise ValueError(f"{name} must be a non-negative number")
@@ -98,154 +102,122 @@ def object_list(value: Any, name: str) -> list[Mapping[str, Any]]:
     return list(value)
 
 
+def guidellm_token_latencies(
+    record: Mapping[str, Any],
+) -> tuple[float, float | None]:
+    """Return TPOT including first-token wait and ITL excluding it.
+
+    Follow GuideLLM 6eab76f request_stats.py. The final content event
+    bounds token time; E2EL includes stream teardown and usage events.
+    """
+    output_tokens = positive_token_count(record, "output_tokens")
+    ttft_ms = numeric(record, "ttft_ms")
+    e2el_ms = numeric(record, "e2el_ms")
+    if e2el_ms < ttft_ms:
+        raise ValueError("request e2el_ms must not be smaller than ttft_ms")
+    if record.get("last_output_latency_ms") is None:
+        return e2el_ms / output_tokens, None
+    last_ms = numeric(record, "last_output_latency_ms")
+    if not ttft_ms <= last_ms <= e2el_ms:
+        raise ValueError(
+            "last_output_latency_ms must be between ttft_ms and e2el_ms"
+        )
+    itl_ms = (
+        (last_ms - ttft_ms) / (output_tokens - 1)
+        if output_tokens > 1 else None
+    )
+    return last_ms / output_tokens, itl_ms
+
+
 def compute_goodput(
     *,
     successful: list[Mapping[str, Any]],
+    failed_count: int,
     duration_seconds: float,
     slo_config: Mapping[str, float],
 ) -> dict[str, Any]:
-    """Compute Goodput: throughput of successful requests that satisfy SLO.
+    """Apply GuideLLM objectives; failures lower SLO attainment.
 
-    SLO is an AND-relation across all applicable thresholds. A request is
-    counted as SLO-satisfied only when every applicable dimension is within
-    its threshold.
-
-    Applicability rules:
-    - ttft_ms and e2el_ms apply to all requests.
-    - tpot_ms only applies when output_tokens > 1 (TPOT is undefined when
-      there is no decode phase). If all requests in the case have
-      output_tokens == 1, tpot_ms is marked as not_applicable in the result.
-    - When a metric value is missing or None (e.g. non-streaming TTFT),
-      the request is marked as undetermined and excluded from both
-      satisfied and violated counts.
-    - When no dimension is applicable (e.g. only tpot_ms configured and all
-      requests are single-token, or no successful requests), the function
-      returns a not_applicable status.
+    ``tpot_ms`` is the decode-only ITL objective, not the report TPOT.
+    Any missing configured measurement makes a success undetermined,
+    even when another configured objective is already violated.
+    The rate denominator remains this benchmark's formal case window.
     """
-    ttft_threshold = slo_config.get("ttft_ms")
-    tpot_threshold = slo_config.get("tpot_ms")
-    e2el_threshold = slo_config.get("e2el_ms")
-
-    if not successful:
-        return {
-            "status": "not_applicable",
-            "reason": "no successful requests to evaluate",
-            "slo_config": {
-                "ttft_ms": ttft_threshold,
-                "tpot_ms": tpot_threshold,
-                "e2el_ms": e2el_threshold,
-            },
-            "applicable_dimensions": [],
-            "not_applicable_dimensions": [],
-        }
-
-    all_single_token = all(
-        token_count(record, "output_tokens") == 1 for record in successful
-    )
-    tpot_applicable = tpot_threshold is not None and not all_single_token
-    any_dimension_applicable = (
-        ttft_threshold is not None
-        or e2el_threshold is not None
-        or tpot_applicable
-    )
-    if not any_dimension_applicable:
-        return {
-            "status": "not_applicable",
-            "reason": "tpot_ms is the only configured dimension and all "
-            "requests have output_tokens == 1 (TPOT undefined)",
-            "slo_config": {
-                "ttft_ms": ttft_threshold,
-                "tpot_ms": tpot_threshold,
-                "e2el_ms": e2el_threshold,
-            },
-            "applicable_dimensions": [],
-            "not_applicable_dimensions": (
-                ["tpot_ms"] if tpot_threshold is not None else []
-            ),
-        }
-
-    slo_satisfied: list[Mapping[str, Any]] = []
-    slo_violated: list[Mapping[str, Any]] = []
-    undetermined: list[Mapping[str, Any]] = []
-    for record in successful:
-        raw_ttft = record.get("ttft_ms")
-        raw_e2el = record.get("e2el_ms")
-        raw_output = record.get("output_tokens")
-
-        # Check for missing/None metric values (undetermined)
-        if (
-            raw_ttft is None
-            or raw_e2el is None
-            or raw_output is None
-        ):
-            undetermined.append(record)
-            continue
-
-        ttft_ms = numeric(record, "ttft_ms")
-        e2el_ms = numeric(record, "e2el_ms")
-        output_tokens = token_count(record, "output_tokens")
-
-        violated = False
-        if ttft_threshold is not None and ttft_ms > ttft_threshold:
-            violated = True
-        if not violated and tpot_applicable and output_tokens > 1:
-            tpot_ms = e2el_ms / output_tokens
-            if tpot_ms > tpot_threshold:
-                violated = True
-        if e2el_threshold is not None and e2el_ms > e2el_threshold:
-            violated = True
-
-        if violated:
-            slo_violated.append(record)
-        else:
-            slo_satisfied.append(record)
-
-    satisfied_count = len(slo_satisfied)
-    violated_count = len(slo_violated)
-    total_satisfied_output_tokens = sum(
-        token_count(record, "output_tokens") for record in slo_satisfied
-    )
-    satisfied_rate = (
-        satisfied_count / (satisfied_count + violated_count)
-        if (satisfied_count + violated_count) > 0
-        else 0.0
-    )
-
-    applicable_dimensions = []
-    if ttft_threshold is not None:
-        applicable_dimensions.append("ttft_ms")
-    if tpot_applicable:
-        applicable_dimensions.append("tpot_ms")
-    if e2el_threshold is not None:
-        applicable_dimensions.append("e2el_ms")
-
-    not_applicable_dimensions = []
-    if tpot_threshold is not None and not tpot_applicable:
-        not_applicable_dimensions.append("tpot_ms")
-
-    goodput: dict[str, Any] = {
-        "status": "applicable",
-        "slo_config": {
-            "ttft_ms": ttft_threshold,
-            "tpot_ms": tpot_threshold,
-            "e2el_ms": e2el_threshold,
-        },
-        "applicable_dimensions": applicable_dimensions,
-        "not_applicable_dimensions": not_applicable_dimensions,
-        "slo_satisfied_count": scalar(satisfied_count, "request"),
-        "slo_violated_count": scalar(violated_count, "request"),
-        "undetermined_count": scalar(
-            len(undetermined), "request"
-        ),
-        "slo_satisfied_rate": scalar(satisfied_rate, "ratio", precision=4),
-        "goodput_request_throughput": scalar(
-            satisfied_count / duration_seconds, "req/s"
-        ),
-        "goodput_output_token_throughput": scalar(
-            total_satisfied_output_tokens / duration_seconds, "token/s"
-        ),
+    thresholds = {
+        name: positive_numeric(slo_config, name)
+        for name in ("ttft_ms", "tpot_ms", "e2el_ms")
+        if name in slo_config
     }
-    return goodput
+    if not thresholds:
+        raise ValueError("SLO requires at least one objective")
+    satisfied = violated = undetermined = output_tokens = 0
+    measurable: set[str] = set()
+    for record in successful:
+        measured = {
+            name: numeric(record, name)
+            if record.get(name) is not None else None
+            for name in ("ttft_ms", "e2el_ms")
+        }
+        measured["tpot_ms"] = None
+        if "tpot_ms" in thresholds and all(
+            record.get(name) is not None
+            for name in (
+                "ttft_ms", "e2el_ms", "output_tokens",
+                "last_output_latency_ms",
+            )
+        ):
+            _, measured["tpot_ms"] = guidellm_token_latencies(record)
+        measurable.update(
+            name for name in thresholds if measured[name] is not None
+        )
+        if any(measured[name] is None for name in thresholds):
+            undetermined += 1
+        elif any(
+            measured[name] > limit for name, limit in thresholds.items()
+        ):
+            violated += 1
+        else:
+            satisfied += 1
+            output_tokens += token_count(record, "output_tokens")
+
+    determined = satisfied + violated + failed_count
+    result = {
+        "status": "applicable" if determined else "not_applicable",
+        "slo_config": {
+            name: thresholds.get(name)
+            for name in ("ttft_ms", "tpot_ms", "e2el_ms")
+        },
+        "tpot_metric": "inter_token_latency",
+        "applicable_dimensions": [
+            name for name in thresholds if name in measurable
+        ],
+        "not_applicable_dimensions": [
+            name for name in thresholds if name not in measurable
+        ],
+        "slo_satisfied_count": scalar(satisfied, "request"),
+        "slo_violated_count": scalar(violated, "request"),
+        "failed_count": scalar(failed_count, "request"),
+        "undetermined_count": scalar(undetermined, "request"),
+        "determined_count": scalar(determined, "request"),
+        "slo_satisfied_rate": {
+            "value": round(satisfied / determined, 4)
+            if determined else None,
+            "unit": "ratio",
+        },
+        "goodput_request_throughput": {
+            "value": round(satisfied / duration_seconds, 3)
+            if determined else None,
+            "unit": "req/s",
+        },
+        "goodput_output_token_throughput": {
+            "value": round(output_tokens / duration_seconds, 3)
+            if determined else None,
+            "unit": "token/s",
+        },
+    }
+    if not determined:
+        result["reason"] = "no requests with determined SLO outcomes"
+    return result
 
 
 def process_case(
@@ -277,7 +249,8 @@ def process_case(
     ]
     ttft_samples: list[float] = []
     itl_samples: list[float] = []
-    tpot_samples: list[float] = []
+    weighted_tpots: list[tuple[float, int]] = []
+    weighted_itls: list[tuple[float, int]] = []
     e2el_samples: list[float] = []
     input_token_samples: list[float] = []
     output_token_samples: list[float] = []
@@ -335,15 +308,12 @@ def process_case(
             output_throughput_samples.append(
                 1000 * output_tokens / e2el_ms
             )
-        # TPOT: total time / output tokens (includes TTFT)
-        if output_tokens > 0 and e2el_ms > 0:
-            tpot_ms = e2el_ms / output_tokens
-            tpot_samples.append(tpot_ms)
-        # Decode TPOT: decode time / (output_tokens - 1) (excludes TTFT)
-        decode_duration_ms = e2el_ms - ttft_ms
-        if output_tokens > 1 and decode_duration_ms > 0:
-            decode_tpot_ms = decode_duration_ms / (output_tokens - 1)
-            decode_throughput_samples.append(1000 / decode_tpot_ms)
+        tpot_ms, itl_ms = guidellm_token_latencies(record)
+        weighted_tpots.append((tpot_ms, output_tokens))
+        if itl_ms is not None:
+            weighted_itls.append((itl_ms, output_tokens - 1))
+            if itl_ms > 0:
+                decode_throughput_samples.append(1000 / itl_ms)
 
     request_durations = [numeric(record, "duration_ms") for record in records]
     dispatch_delays = [
@@ -372,8 +342,9 @@ def process_case(
 
     request_view = {
         "ttft": summarize(ttft_samples, "ms"),
-        "itl": summarize(itl_samples, "ms"),
-        "tpot": summarize(tpot_samples, "ms/token"),
+        "itl": summarize_weighted(weighted_itls, "ms/token"),
+        "tpot": summarize_weighted(weighted_tpots, "ms/token"),
+        "stream_event_itl": summarize(itl_samples, "ms"),
         "e2el": summarize(e2el_samples, "ms"),
         "scheduled_latency": summarize(
             scheduled_latencies, "ms"
@@ -423,6 +394,7 @@ def process_case(
         if goodput_slo:
             service_view["goodput"] = compute_goodput(
                 successful=successful,
+                failed_count=failed_count,
                 duration_seconds=duration_seconds,
                 slo_config=goodput_slo,
             )

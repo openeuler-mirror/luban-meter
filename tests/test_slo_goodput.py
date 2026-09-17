@@ -54,6 +54,7 @@ def make_request_record(
         "dispatch_delay_ms": dispatch_delay_ms,
         "duration_ms": duration_ms,
         "ttft_ms": ttft_ms,
+        "last_output_latency_ms": ttft_ms if output_tokens == 1 else e2el_ms,
         "e2el_ms": e2el_ms,
         "itl_samples_ms": itl_samples_ms,
         "input_tokens": input_tokens,
@@ -564,8 +565,8 @@ class GoodputComputationTest(unittest.TestCase):
         self.assertEqual(goodput["slo_violated_count"]["value"], 1)
         self.assertEqual(goodput["slo_satisfied_rate"]["value"], 0.5)
 
-    def test_tpot_skipped_for_single_token_output(self) -> None:
-        """output_tokens=1: TPOT not_applicable, TTFT/E2EL normal."""
+    def test_tpot_slo_undetermined_for_single_token_output(self) -> None:
+        """A missing ITL makes the combined SLO undetermined."""
         raw_case = make_raw_case(
             input_length=10,
             output_length=1,
@@ -585,17 +586,19 @@ class GoodputComputationTest(unittest.TestCase):
         }
         result = self._run_process(raw_result)
         goodput = result["metrics"]["cases"][0]["service_view"]["goodput"]
-        self.assertEqual(goodput["slo_satisfied_count"]["value"], 10)
+        self.assertEqual(goodput["slo_satisfied_count"]["value"], 0)
         self.assertEqual(goodput["slo_violated_count"]["value"], 0)
-        self.assertEqual(goodput["status"], "applicable")
+        self.assertEqual(goodput["undetermined_count"]["value"], 10)
+        self.assertIsNone(goodput["slo_satisfied_rate"]["value"])
+        self.assertEqual(goodput["status"], "not_applicable")
         self.assertIn("tpot_ms", goodput["not_applicable_dimensions"])
         self.assertNotIn("tpot_ms", goodput["applicable_dimensions"])
         self.assertIn("ttft_ms", goodput["applicable_dimensions"])
         self.assertIn("e2el_ms", goodput["applicable_dimensions"])
 
     def test_tpot_violation(self) -> None:
-        """TTFT/E2EL within SLO but TPOT violation fails request."""
-        # tpot = e2el / output_tokens = 1000 / 3 = 333.33 > 50 → violation
+        """TTFT/E2EL pass, but ITL violates the tpot_ms objective."""
+        # ITL = (1000 - 100) / (3 - 1) = 450 > 50.
         raw_case = make_raw_case(
             duration_seconds=10.0,
             requests=[
@@ -615,7 +618,7 @@ class GoodputComputationTest(unittest.TestCase):
         goodput = result["metrics"]["cases"][0]["service_view"]["goodput"]
         self.assertEqual(goodput["slo_violated_count"]["value"], 2)
 
-    def test_failed_requests_not_in_goodput(self) -> None:
+    def test_failed_requests_lower_slo_attainment(self) -> None:
         raw_case = make_raw_case(
             duration_seconds=10.0,
             requests=[
@@ -635,6 +638,8 @@ class GoodputComputationTest(unittest.TestCase):
         goodput = result["metrics"]["cases"][0]["service_view"]["goodput"]
         self.assertEqual(goodput["slo_satisfied_count"]["value"], 1)
         self.assertEqual(goodput["slo_violated_count"]["value"], 0)
+        self.assertEqual(goodput["failed_count"]["value"], 1)
+        self.assertEqual(goodput["slo_satisfied_rate"]["value"], 0.5)
 
     def test_multiple_cases_independent_goodput(self) -> None:
         raw_case_1 = make_raw_case(

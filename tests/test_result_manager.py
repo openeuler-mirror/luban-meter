@@ -161,6 +161,7 @@ class ServingMetricsTest(unittest.TestCase):
                                 "dispatch_delay_ms": 0.1,
                                 "duration_ms": 1000.0,
                                 "ttft_ms": 100.0,
+                                "last_output_latency_ms": 300.0,
                                 "e2el_ms": 1000.0,
                                 "itl_samples_ms": [90.0, 110.0],
                                 "input_tokens": 10,
@@ -172,6 +173,7 @@ class ServingMetricsTest(unittest.TestCase):
                                 "dispatch_delay_ms": 0.2,
                                 "duration_ms": 500.0,
                                 "ttft_ms": 50.0,
+                                "last_output_latency_ms": 150.0,
                                 "e2el_ms": 500.0,
                                 "itl_samples_ms": [100.0],
                                 "input_tokens": 10,
@@ -198,10 +200,13 @@ class ServingMetricsTest(unittest.TestCase):
         request_view = case["request_view"]
         service_view = case["service_view"]
 
-        self.assertEqual(len(request_view), 10)
+        self.assertEqual(len(request_view), 11)
         self.assertEqual(len(service_view), 15)
         self.assertEqual(request_view["ttft"]["count"], 2)
-        self.assertEqual(request_view["itl"]["count"], 3)
+        self.assertEqual(request_view["itl"]["count"], 2)
+        self.assertEqual(request_view["itl"]["mean"], 75.0)
+        self.assertEqual(request_view["itl"]["weight_sum"], 4)
+        self.assertEqual(request_view["stream_event_itl"]["count"], 3)
         self.assertEqual(request_view["tpot"]["count"], 2)
         self.assertEqual(request_view["tpot"]["unit"], "ms/token")
         self.assertEqual(request_view["dispatch_delay"]["mean"], 0.2)
