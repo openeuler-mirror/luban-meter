@@ -1,0 +1,18 @@
+name: model_service_quality_standard
+tasks:
+  - name: ceval
+    module: model_service_quality
+    benchmark: ceval
+    config: ../../benchmarking/model_service_quality/ceval/ceval.yaml
+  - name: cmmlu
+    module: model_service_quality
+    benchmark: cmmlu
+    config: ../../benchmarking/model_service_quality/cmmlu/cmmlu.yaml
+  - name: gsm8k
+    module: model_service_quality
+    benchmark: gsm8k
+    config: ../../benchmarking/model_service_quality/gsm8k/gsm8k.yaml
+  - name: humaneval
+    module: model_service_quality
+    benchmark: humaneval
+    config: ../../benchmarking/model_service_quality/humaneval/humaneval.yaml

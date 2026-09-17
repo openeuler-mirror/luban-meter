@@ -1,4 +1,6 @@
-"""Unit and optional integration tests for the HumanEval Docker sandbox."""
+"""Unit and optional integration tests for the HumanEval Docker
+sandbox.
+"""
 
 from __future__ import annotations
 
@@ -10,14 +12,13 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmark.inference.humaneval.executor import (
+from luban_meter.benchmarking.model_service_quality.humaneval import (
+    sandbox_runner,
+)
+from luban_meter.benchmarking.model_service_quality.humaneval.executor import (
     DockerSandboxExecutor,
     SandboxConfig,
     SandboxUnavailable,
-)
-from luban_meter.benchmark.inference.humaneval.sandbox_runner import (
-    RESULT_PREFIX,
-    execute_payload,
 )
 from luban_meter.utils.docker_sandbox import DockerSandbox
 
@@ -30,30 +31,36 @@ def sandbox_config() -> SandboxConfig:
 
 
 def test_sandbox_runner_outcomes() -> None:
-    passed = execute_payload({"program": "assert 1 + 1 == 2", "timeout_seconds": 1})
+    passed = sandbox_runner.execute_payload(
+        {"program": "assert 1 + 1 == 2", "timeout_seconds": 1}
+    )
     assert passed["status"] == "passed"
     assert passed["passed"] is True
 
-    failed = execute_payload({"program": "assert False", "timeout_seconds": 1})
+    failed = sandbox_runner.execute_payload(
+        {"program": "assert False", "timeout_seconds": 1}
+    )
     assert failed["status"] == "failed_test"
 
-    syntax = execute_payload(
+    syntax = sandbox_runner.execute_payload(
         {"program": "def broken(:\n    pass", "timeout_seconds": 1}
     )
     assert syntax["status"] == "syntax_error"
 
-    runtime = execute_payload(
+    runtime = sandbox_runner.execute_payload(
         {"program": "raise RuntimeError('x')", "timeout_seconds": 1}
     )
     assert runtime["status"] == "runtime_error"
 
 
 def test_sandbox_runner_timeout_and_output_limit() -> None:
-    timeout = execute_payload(
+    timeout = sandbox_runner.execute_payload(
         {"program": "while True:\n    pass", "timeout_seconds": 0.01}
     )
     assert timeout["status"] == "timeout"
-    output = execute_payload({"program": "print('x' * 20000)", "timeout_seconds": 1})
+    output = sandbox_runner.execute_payload(
+        {"program": "print('x' * 20000)", "timeout_seconds": 1}
+    )
     assert output["status"] == "passed"
     assert output["stdout_truncated"] is True
     assert len(output["stdout"]) <= 8192
@@ -70,7 +77,9 @@ def test_sandbox_config_rejects_unsafe_host() -> None:
 def test_preflight_requires_seccomp(monkeypatch: pytest.MonkeyPatch) -> None:
     executor = DockerSandboxExecutor(sandbox_config())
 
-    def fake_run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess:
+    def fake_run(
+        command: list[str], **_kwargs: Any
+    ) -> subprocess.CompletedProcess:
         if "info" in command:
             stdout = json.dumps(
                 {
@@ -90,7 +99,9 @@ def test_preflight_requires_seccomp(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _FakeProcess:
-    def __init__(self, command: list[str], *_args: Any, **_kwargs: Any) -> None:
+    def __init__(
+        self, command: list[str], *_args: Any, **_kwargs: Any
+    ) -> None:
         self.command = command
         self.stdin = io.BytesIO()
         payload = {
@@ -105,7 +116,9 @@ class _FakeProcess:
             "error_message": None,
         }
         self.stdout = io.BytesIO(
-            (RESULT_PREFIX + json.dumps(payload) + "\n").encode("utf-8")
+            (sandbox_runner.RESULT_PREFIX + json.dumps(payload) + "\n").encode(
+                "utf-8"
+            )
         )
         self.stderr = io.BytesIO()
         self.returncode = 0
@@ -122,7 +135,9 @@ def test_executor_uses_hardened_docker_arguments(
 ) -> None:
     created: list[_FakeProcess] = []
 
-    def fake_popen(command: list[str], *args: Any, **kwargs: Any) -> _FakeProcess:
+    def fake_popen(
+        command: list[str], *args: Any, **kwargs: Any
+    ) -> _FakeProcess:
         process = _FakeProcess(command, *args, **kwargs)
         created.append(process)
         return process
@@ -171,12 +186,16 @@ def test_executor_uses_hardened_docker_arguments(
     reason="set LUBAN_METER_RUN_DOCKER_TESTS=1 for the real sandbox test",
 )
 def test_real_docker_sandbox() -> None:
-    host = os.environ.get("LUBAN_METER_DOCKER_HOST", "unix:///var/run/docker.sock")
+    host = os.environ.get(
+        "LUBAN_METER_DOCKER_HOST", "unix:///var/run/docker.sock"
+    )
     image = os.environ.get(
         "LUBAN_METER_HUMANEVAL_IMAGE",
         "luban-meter-humaneval-sandbox:v1",
     )
-    executor = DockerSandboxExecutor(SandboxConfig(docker_host=host, image=image))
+    executor = DockerSandboxExecutor(
+        SandboxConfig(docker_host=host, image=image)
+    )
     environment = executor.preflight()
     assert environment["image_id"]
     assert executor.execute("assert 2 + 2 == 4").passed is True

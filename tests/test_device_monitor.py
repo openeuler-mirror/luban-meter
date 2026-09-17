@@ -2,33 +2,40 @@
 
 import pytest
 
-from luban_meter.benchmark.generate.common import device_monitor
-from luban_meter.reporting.data import from_payload
+from luban_meter.benchmarking.generation_performance.common import (
+    device_monitor,
+)
 from luban_meter.reporting.hardware import build_hardware_figure
+from luban_meter.reporting.result_reader import build_report_from_result
 from tests.test_hardware_overview import table_text
 from tests.test_reports_v2 import result
 
-DCGM_METRICS = '\n'.join([
-    'DCGM_FI_DEV_GPU_UTIL{gpu="0",modelName="NVIDIA H20"} 0',
-    'DCGM_FI_DEV_FB_USED{gpu="0",modelName="NVIDIA H20"} 0',
-    'DCGM_FI_DEV_FB_FREE{gpu="0",modelName="NVIDIA H20"} 97356',
-    'DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName="NVIDIA A100"} 45',
-])
+DCGM_METRICS = "\n".join(
+    [
+        'DCGM_FI_DEV_GPU_UTIL{gpu="0",modelName="NVIDIA H20"} 0',
+        'DCGM_FI_DEV_FB_USED{gpu="0",modelName="NVIDIA H20"} 0',
+        'DCGM_FI_DEV_FB_FREE{gpu="0",modelName="NVIDIA H20"} 97356',
+        'DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName="NVIDIA A100"} 45',
+    ]
+)
 
 
-@pytest.mark.parametrize(("metrics", "expected_name"), [
-    (
-        'DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName="NVIDIA H20"} 0',
-        "NVIDIA H20",
-    ),
-    ('DCGM_FI_DEV_GPU_UTIL{gpu="3"} 0', "GPU-3"),
-    ('DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName=""} 0', "GPU-3"),
-    ('DCGM_FI_DEV_NAME{gpu="3"} "Legacy GPU"', "Legacy GPU"),
-    (
-        'DCGM_FI_DEV_NAME{gpu="3",modelName="NVIDIA H20"} 1',
-        "NVIDIA H20",
-    ),
-])
+@pytest.mark.parametrize(
+    ("metrics", "expected_name"),
+    [
+        (
+            'DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName="NVIDIA H20"} 0',
+            "NVIDIA H20",
+        ),
+        ('DCGM_FI_DEV_GPU_UTIL{gpu="3"} 0', "GPU-3"),
+        ('DCGM_FI_DEV_GPU_UTIL{gpu="3",modelName=""} 0', "GPU-3"),
+        ('DCGM_FI_DEV_NAME{gpu="3"} "Legacy GPU"', "Legacy GPU"),
+        (
+            'DCGM_FI_DEV_NAME{gpu="3",modelName="NVIDIA H20"} 1',
+            "NVIDIA H20",
+        ),
+    ],
+)
 def test_detect_device_model_labels_and_fallbacks(metrics, expected_name):
     devices = device_monitor.detect_devices(metrics)
 
@@ -61,7 +68,8 @@ def test_model_names_reach_environment_and_samples(monkeypatch):
         {"index": 3, "name": "NVIDIA A100"},
     ]
     assert [sample.name for sample in snapshot.devices] == [
-        "NVIDIA H20", "NVIDIA A100",
+        "NVIDIA H20",
+        "NVIDIA A100",
     ]
     assert snapshot.error is None
     assert snapshot.devices[0].memory_used_mb == 0
@@ -74,7 +82,7 @@ def test_exported_model_names_appear_in_hardware_report(tmp_path):
     payload["environment"]["hardware_environment"] = (
         device_monitor.collect_hardware_environment(DCGM_METRICS)
     )
-    task = from_payload(payload, tmp_path / "result.json").tasks[0]
+    task = build_report_from_result(payload, tmp_path / "result.json").tasks[0]
     figure = build_hardware_figure(task)
 
     try:

@@ -8,12 +8,12 @@ import math
 from functools import lru_cache
 from pathlib import Path
 
-from luban_meter.reporting.data import numeric
-from luban_meter.reporting.tables import Table, display
+from luban_meter.reporting.result_reader import is_finite_number
+from luban_meter.reporting.tables import MetricTable, format_metric_value
 
 
 @lru_cache(maxsize=1)
-def _fonts() -> list[str]:
+def available_chart_fonts() -> list[str]:
     from matplotlib import font_manager
 
     installed = {font.name for font in font_manager.fontManager.ttflist}
@@ -32,7 +32,7 @@ def _fonts() -> list[str]:
 
 
 def plot_table(
-    table: Table,
+    table: MetricTable,
     output: Path,
     prefix: str,
 ) -> list[tuple[str, Path]]:
@@ -44,31 +44,33 @@ def plot_table(
 
     labels = {column["path"]: column["label"] for column in table.columns}
     images = []
-    fonts = _fonts()
-    cjk = len(fonts) > 1
+    fonts = available_chart_fonts()
+    supports_cjk = len(fonts) > 1
     for index, chart in enumerate(table.charts):
         groups = {}
         for record in table.records:
-            value, unit = table.reading(record, chart["y"])
-            dims = [
-                table.reading(record, p)[0]
-                for p in chart.get("group_by", [])
+            value, unit = table.read_metric(record, chart["y"])
+            dimension_values = [
+                table.read_metric(record, dimension_path)[0]
+                for dimension_path in chart.get("group_by", [])
             ]
-            x, x_unit = (
-                table.reading(record, chart["x"])
+            x_value, x_unit = (
+                table.read_metric(record, chart["x"])
                 if chart.get("x")
                 else ("Overall", "")
             )
             key = (
-                json.dumps(dims, ensure_ascii=False, sort_keys=True),
+                json.dumps(
+                    dimension_values, ensure_ascii=False, sort_keys=True
+                ),
                 unit,
                 x_unit,
             )
-            if chart["type"] == "line" and not numeric(x):
+            if chart["type"] == "line" and not is_finite_number(x_value):
                 continue
-            groups.setdefault(key, []).append((x, value))
+            groups.setdefault(key, []).append((x_value, value))
         for (group, unit, x_unit), points in groups.items():
-            if not any(numeric(value) for _, value in points):
+            if not any(is_finite_number(value) for _, value in points):
                 continue
             if chart["type"] == "line":
                 points.sort(key=lambda point: point[0])
@@ -77,7 +79,7 @@ def plot_table(
                 page = points[start : start + page_size]
                 title = labels.get(chart["y"], chart["y"])
                 dimensions = ", ".join(
-                    f"{labels.get(key, key)}={display(value)}"
+                    f"{labels.get(key, key)}={format_metric_value(value)}"
                     for key, value in zip(
                         chart.get("group_by", []), json.loads(group)
                     )
@@ -91,18 +93,29 @@ def plot_table(
                 output.mkdir(parents=True, exist_ok=True)
                 path = output / f"{digest}.png"
                 with matplotlib.rc_context({"font.family": fonts}):
-                    fig = Figure(figsize=(10, 4.5), layout="constrained")
-                    FigureCanvasAgg(fig)
-                    ax = fig.subplots()
-                    values = [v if numeric(v) else math.nan for _, v in page]
+                    figure = Figure(figsize=(10, 4.5), layout="constrained")
+                    FigureCanvasAgg(figure)
+                    axes = figure.subplots()
+                    values = [
+                        metric_value
+                        if is_finite_number(metric_value)
+                        else math.nan
+                        for _, metric_value in page
+                    ]
                     if chart["type"] == "line":
-                        ax.plot([x for x, _ in page], values, marker="o")
+                        axes.plot(
+                            [x_value for x_value, _ in page],
+                            values,
+                            marker="o",
+                        )
                     else:
-                        ticks = [str(x) for x, _ in page]
-                        if not cjk:
+                        ticks = [str(x_value) for x_value, _ in page]
+                        if not supports_cjk:
                             aliases = [
-                                tick if tick.isascii() else f"Item {i + 1}"
-                                for i, tick in enumerate(ticks)
+                                tick
+                                if tick.isascii()
+                                else f"Item {tick_index + 1}"
+                                for tick_index, tick in enumerate(ticks)
                             ]
                             renamed = [
                                 f"{alias}={tick}"
@@ -112,22 +125,28 @@ def plot_table(
                             if renamed:
                                 caption += " · " + "; ".join(renamed)
                             ticks = aliases
-                        ax.bar(range(len(page)), values, width=0.6)
-                        ax.set_xticks(range(len(page)), ticks, rotation=30)
+                        axes.bar(range(len(page)), values, width=0.6)
+                        axes.set_xticks(range(len(page)), ticks, rotation=30)
                         margin = max(0.5, (4 - len(page)) / 2)
-                        ax.set_xlim(-margin, len(page) - 1 + margin)
+                        axes.set_xlim(-margin, len(page) - 1 + margin)
                     x_path = chart.get("x") or ""
                     xlabel = labels.get(x_path, x_path)
-                    ylabel = title if cjk or title.isascii() else chart["y"]
-                    if not cjk and not xlabel.isascii():
+                    ylabel = (
+                        title
+                        if supports_cjk or title.isascii()
+                        else chart["y"]
+                    )
+                    if not supports_cjk and not xlabel.isascii():
                         xlabel = chart.get("x", "")
-                    ax.set_xlabel(display(xlabel, x_unit))
-                    ax.set_ylabel(display(ylabel, unit))
-                    ax.grid(axis="y", alpha=0.25)
+                    axes.set_xlabel(format_metric_value(xlabel, x_unit))
+                    axes.set_ylabel(format_metric_value(ylabel, unit))
+                    axes.grid(axis="y", alpha=0.25)
                     if unit == "ratio" and all(
-                        not numeric(v) or 0 <= v <= 1 for v in values
+                        not is_finite_number(metric_value)
+                        or 0 <= metric_value <= 1
+                        for metric_value in values
                     ):
-                        ax.set_ylim(0, 1.05)
-                    fig.savefig(path, dpi=150)
+                        axes.set_ylim(0, 1.05)
+                    figure.savefig(path, dpi=150)
                 images.append((caption, path))
     return images

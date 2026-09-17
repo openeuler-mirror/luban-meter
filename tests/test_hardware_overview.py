@@ -5,18 +5,21 @@ import json
 import math
 import re
 
-from luban_meter.reporting.data import from_payload, load_report
 from luban_meter.reporting.hardware import build_hardware_figure
 from luban_meter.reporting.render import write_report
+from luban_meter.reporting.result_reader import (
+    build_report_from_result,
+    load_report,
+)
 from tests.test_reports_v2 import result, save, suite
 
 
 def table_text(figure):
     return "\n".join(
-        cell.get_text().get_text()
+        escape_markdown_cell.get_text().get_text()
         for axes in figure.axes
         for table in axes.tables
-        for cell in table.get_celld().values()
+        for escape_markdown_cell in table.get_celld().values()
     )
 
 
@@ -30,7 +33,7 @@ def test_environment_only_preserves_all_fields_and_long_names(tmp_path):
         "extra_field": "extra-" * 35,
     }
     original = copy.deepcopy(payload)
-    report = from_payload(payload, tmp_path / "result.json")
+    report = build_report_from_result(payload, tmp_path / "result.json")
     figure = build_hardware_figure(report.tasks[0])
     text = table_text(figure)
     assert "Example CPU" in text
@@ -53,7 +56,7 @@ def test_per_device_timestamps_keep_missing_samples_and_zero(tmp_path):
             {"elapsed": None, "devices": [{"index": 0, "utilization": 90}]},
         ]
     }
-    task = from_payload(payload, tmp_path / "result.json").tasks[0]
+    task = build_report_from_result(payload, tmp_path / "result.json").tasks[0]
     figure = build_hardware_figure(task)
     curves = {
         line.get_label(): line for axes in figure.axes for line in axes.lines
@@ -69,7 +72,8 @@ def test_per_device_timestamps_keep_missing_samples_and_zero(tmp_path):
 
 def test_cpu_only_and_summary_without_timeseries(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "luban_meter.reporting.hardware._fonts", lambda: ["DejaVu Sans"]
+        "luban_meter.reporting.hardware.available_chart_fonts",
+        lambda: ["DejaVu Sans"],
     )
     payload = result()
     monitoring = {
@@ -81,7 +85,7 @@ def test_cpu_only_and_summary_without_timeseries(tmp_path, monkeypatch):
         ],
     }
     payload["environment"]["device_monitoring"] = monitoring
-    task = from_payload(payload, tmp_path / "result.json").tasks[0]
+    task = build_report_from_result(payload, tmp_path / "result.json").tasks[0]
     figure = build_hardware_figure(task)
     axes = [axes for axes in figure.axes if axes.lines]
     assert len(axes) == 2
@@ -129,5 +133,7 @@ def test_missing_and_malformed_monitoring_does_not_invent_hardware(tmp_path):
     payload = result()
     for monitoring in (None, [], {"timeseries": [None, {}], "charts": []}):
         payload["environment"]["device_monitoring"] = monitoring
-        task = from_payload(payload, tmp_path / "result.json").tasks[0]
+        task = build_report_from_result(
+            payload, tmp_path / "result.json"
+        ).tasks[0]
         assert build_hardware_figure(task) is None

@@ -24,6 +24,7 @@ def generate_monitoring_charts(
     Returns a list of generated file names (relative to *output_dir*).
     """
     import matplotlib
+
     matplotlib.use("Agg")  # non-interactive backend
     import matplotlib.pyplot as plt
 
@@ -33,28 +34,46 @@ def generate_monitoring_charts(
     output_dir.mkdir(parents=True, exist_ok=True)
     generated: list[str] = []
 
-    elapsed = [t.get("elapsed", 0) for t in timeseries]
+    elapsed = [snapshot.get("elapsed", 0) for snapshot in timeseries]
 
     # Extract per-device timeseries
     device_data: dict[int, dict[str, list]] = {}
-    for t in timeseries:
-        for dev in t.get("devices", []):
-            idx = dev.get("index", 0)
-            if idx not in device_data:
-                device_data[idx] = {
+    for snapshot in timeseries:
+        for device_sample in snapshot.get("devices", []):
+            device_index = device_sample.get("index", 0)
+            if device_index not in device_data:
+                device_data[device_index] = {
                     "utilization": [],
                     "power": [],
                     "temperature": [],
                     "memory_used": [],
                 }
-            device_data[idx]["utilization"].append(dev.get("utilization"))
-            device_data[idx]["power"].append(dev.get("power"))
-            device_data[idx]["temperature"].append(dev.get("temperature"))
-            device_data[idx]["memory_used"].append(dev.get("memory_used"))
+            device_data[device_index]["utilization"].append(
+                device_sample.get("utilization")
+            )
+            device_data[device_index]["power"].append(
+                device_sample.get("power")
+            )
+            device_data[device_index]["temperature"].append(
+                device_sample.get("temperature")
+            )
+            device_data[device_index]["memory_used"].append(
+                device_sample.get("memory_used")
+            )
 
     # CPU timeseries
-    cpu_util = [t.get("cpu", {}).get("utilization") if t.get("cpu") else None for t in timeseries]
-    cpu_mem = [t.get("cpu", {}).get("memory_used") if t.get("cpu") else None for t in timeseries]
+    cpu_utilization = [
+        snapshot.get("cpu", {}).get("utilization")
+        if snapshot.get("cpu")
+        else None
+        for snapshot in timeseries
+    ]
+    cpu_memory_used = [
+        snapshot.get("cpu", {}).get("memory_used")
+        if snapshot.get("cpu")
+        else None
+        for snapshot in timeseries
+    ]
 
     def _plot(
         title: str,
@@ -63,62 +82,110 @@ def generate_monitoring_charts(
         key: str,
         filename: str,
     ) -> None:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        for idx in sorted(data_dict):
-            values = data_dict[idx][key]
+        figure, axes = plt.subplots(figsize=(10, 4))
+        for device_index in sorted(data_dict):
+            values = data_dict[device_index][key]
             # Convert None to NaN so matplotlib creates gaps, not errors
-            y = [v if v is not None else np.nan for v in values]
-            ax.plot(elapsed, y, label=f"GPU {idx}", linewidth=1.2)
-        ax.set_xlabel("Elapsed (s)")
-        ax.set_ylabel(ylabel)
-        ax.set_title(title)
-        ax.legend(loc="upper right", fontsize=8)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
+            plot_values = [
+                sample_value if sample_value is not None else np.nan
+                for sample_value in values
+            ]
+            axes.plot(
+                elapsed,
+                plot_values,
+                label=f"GPU {device_index}",
+                linewidth=1.2,
+            )
+        axes.set_xlabel("Elapsed (s)")
+        axes.set_ylabel(ylabel)
+        axes.set_title(title)
+        axes.legend(loc="upper right", fontsize=8)
+        axes.grid(True, alpha=0.3)
+        figure.tight_layout()
         path = output_dir / filename
-        fig.savefig(path, dpi=150)
-        plt.close(fig)
+        figure.savefig(path, dpi=150)
+        plt.close(figure)
         generated.append(filename)
 
     # GPU charts
     if device_data:
-        _plot("GPU Utilization", "Utilization (%)", device_data, "utilization", "gpu_utilization.png")
+        _plot(
+            "GPU Utilization",
+            "Utilization (%)",
+            device_data,
+            "utilization",
+            "gpu_utilization.png",
+        )
         _plot("GPU Power", "Power (W)", device_data, "power", "gpu_power.png")
-        _plot("GPU Temperature", "Temperature (C)", device_data, "temperature", "gpu_temperature.png")
-        _plot("GPU Memory Used", "Memory (MB)", device_data, "memory_used", "gpu_memory.png")
+        _plot(
+            "GPU Temperature",
+            "Temperature (C)",
+            device_data,
+            "temperature",
+            "gpu_temperature.png",
+        )
+        _plot(
+            "GPU Memory Used",
+            "Memory (MB)",
+            device_data,
+            "memory_used",
+            "gpu_memory.png",
+        )
 
     # CPU chart
-    has_cpu_data = any(v is not None for v in cpu_util)
+    has_cpu_data = any(
+        sample_value is not None for sample_value in cpu_utilization
+    )
     if has_cpu_data:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        y = [v if v is not None else np.nan for v in cpu_util]
-        ax.plot(elapsed, y, label="CPU Utilization", color="tab:blue", linewidth=1.2)
-        ax.set_xlabel("Elapsed (s)")
-        ax.set_ylabel("Utilization (%)")
-        ax.set_title("CPU Utilization")
-        ax.legend(loc="upper right", fontsize=8)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
+        figure, axes = plt.subplots(figsize=(10, 4))
+        plot_values = [
+            sample_value if sample_value is not None else np.nan
+            for sample_value in cpu_utilization
+        ]
+        axes.plot(
+            elapsed,
+            plot_values,
+            label="CPU Utilization",
+            color="tab:blue",
+            linewidth=1.2,
+        )
+        axes.set_xlabel("Elapsed (s)")
+        axes.set_ylabel("Utilization (%)")
+        axes.set_title("CPU Utilization")
+        axes.legend(loc="upper right", fontsize=8)
+        axes.grid(True, alpha=0.3)
+        figure.tight_layout()
         filename = "cpu_utilization.png"
-        fig.savefig(output_dir / filename, dpi=150)
-        plt.close(fig)
+        figure.savefig(output_dir / filename, dpi=150)
+        plt.close(figure)
         generated.append(filename)
 
     # Memory chart
-    has_mem_data = any(v is not None for v in cpu_mem)
+    has_mem_data = any(
+        sample_value is not None for sample_value in cpu_memory_used
+    )
     if has_mem_data:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        y = [v if v is not None else np.nan for v in cpu_mem]
-        ax.plot(elapsed, y, label="Memory Used", color="tab:orange", linewidth=1.2)
-        ax.set_xlabel("Elapsed (s)")
-        ax.set_ylabel("Memory (MB)")
-        ax.set_title("System Memory Used")
-        ax.legend(loc="upper right", fontsize=8)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
+        figure, axes = plt.subplots(figsize=(10, 4))
+        plot_values = [
+            sample_value if sample_value is not None else np.nan
+            for sample_value in cpu_memory_used
+        ]
+        axes.plot(
+            elapsed,
+            plot_values,
+            label="Memory Used",
+            color="tab:orange",
+            linewidth=1.2,
+        )
+        axes.set_xlabel("Elapsed (s)")
+        axes.set_ylabel("Memory (MB)")
+        axes.set_title("System Memory Used")
+        axes.legend(loc="upper right", fontsize=8)
+        axes.grid(True, alpha=0.3)
+        figure.tight_layout()
         filename = "memory_usage.png"
-        fig.savefig(output_dir / filename, dpi=150)
-        plt.close(fig)
+        figure.savefig(output_dir / filename, dpi=150)
+        plt.close(figure)
         generated.append(filename)
 
     return generated

@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from luban_meter.benchmark.generate.common.streaming import (
+from luban_meter.benchmarking.generation_performance.common.streaming import (
     collect_completion_stream,
 )
-from luban_meter.core.models import (
-    BenchmarkSpec,
+from luban_meter.core.run_contracts import (
+    BenchmarkDefinition,
     RawRunArtifacts,
     ResolvedRun,
     RunRequest,
@@ -18,13 +18,13 @@ from luban_meter.core.models import (
 from luban_meter.result.manager import ResultManager
 
 ROOT = Path(__file__).parents[1]
-SERVING_RESULT_HANDLER = (
-    ROOT
-    / "src/luban_meter/benchmark/generate/serving-online/result.py"
+SERVING_RESULT_HANDLER = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/calculate_metrics.py"
 )
-SERVING_BENCHMARK_ENTRY = (
-    ROOT
-    / "src/luban_meter/benchmark/generate/serving-online/benchmark.py"
+SERVING_BENCHMARK_ENTRY = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/collect_raw.py"
 )
 
 
@@ -57,7 +57,7 @@ class ResultManagerTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            processor = root / "result.py"
+            processor = root / "calculate_metrics.py"
             processor.write_text(
                 "def process(raw_result):\n"
                 "    samples = raw_result['metrics']['samples_ms']\n"
@@ -69,25 +69,25 @@ class ResultManagerTest(unittest.TestCase):
                 "    }\n",
                 encoding="utf-8",
             )
-            benchmark = root / "benchmark.py"
+            benchmark = root / "collect_raw.py"
             benchmark.write_text("", encoding="utf-8")
 
             request = RunRequest(
                 run_id="generate-result-test",
-                module="generate",
-                benchmark="ttft",
-                config=root / "ttft.yaml",
+                category_name="generate",
+                benchmark_name="ttft",
+                config_path=root / "ttft.yaml",
                 model_path=None,
                 model_name=None,
                 output_dir=root,
             )
             run = ResolvedRun(
                 request=request,
-                benchmark=BenchmarkSpec(
-                    module="generate",
-                    benchmark="ttft",
-                    benchmark_entry=benchmark,
-                    result_handler=processor,
+                benchmark_definition=BenchmarkDefinition(
+                    category_name="generate",
+                    benchmark_name="ttft",
+                    collector_path=benchmark,
+                    processor_path=processor,
                 ),
                 parameters={"concurrency": 1},
             )
@@ -102,7 +102,7 @@ class ResultManagerTest(unittest.TestCase):
 
             self.assertEqual(result.status, "success")
             self.assertFalse(hasattr(result, "vendor"))
-            self.assertEqual(result.benchmark, "ttft")
+            self.assertEqual(result.benchmark_name, "ttft")
             self.assertEqual(result.metrics["mean_ms"], 12.0)
             self.assertEqual(result.environment["runtime"]["name"], "test")
             self.assertTrue(result.metadata["processed"])
@@ -132,8 +132,7 @@ class StreamingCollectionTest(unittest.TestCase):
 
     def test_requires_stream_usage(self) -> None:
         stream = io.BytesIO(
-            b'data: {"choices": [{"text": "A"}]}\n\n'
-            b"data: [DONE]\n\n"
+            b'data: {"choices": [{"text": "A"}]}\n\ndata: [DONE]\n\n'
         )
 
         with self.assertRaisesRegex(
@@ -235,8 +234,7 @@ class FakeStreamingResponse(io.BytesIO):
                 f'{{"prompt_tokens": {prompt_tokens}, '
                 f'"completion_tokens": {output_tokens}}}}}\n\n'
             ).encode()
-            +
-            b"data: [DONE]\n\n"
+            + b"data: [DONE]\n\n"
         )
 
     def __enter__(self):
@@ -255,10 +253,8 @@ class FakeJsonResponse(io.BytesIO):
 
 
 class ServingCollectionTest(unittest.TestCase):
-    def test_collects_complete_serving_scenario(self) -> None:
-        benchmark = load_module(
-            "serving_benchmark", SERVING_BENCHMARK_ENTRY
-        )
+    def test_collects_complete_serving_benchmark(self) -> None:
+        benchmark = load_module("serving_benchmark", SERVING_BENCHMARK_ENTRY)
         parameters = {
             "service_url": "http://127.0.0.1:8000",
             "warmup": 0,
@@ -291,7 +287,7 @@ class ServingCollectionTest(unittest.TestCase):
             "urlopen",
             side_effect=fake_urlopen,
         ):
-            raw_result = benchmark.run_benchmark(request, parameters)
+            raw_result = benchmark.collect_raw_result(request, parameters)
         result = load_module(
             "serving_result_complete", SERVING_RESULT_HANDLER
         ).process(raw_result)
@@ -311,10 +307,7 @@ class ServingCollectionTest(unittest.TestCase):
         self.assertEqual(result["metadata"]["total_successful_requests"], 8)
         self.assertEqual(len(completion_payloads), 8)
         self.assertTrue(
-            all(
-                len(payload["prompt"]) == 4
-                for payload in completion_payloads
-            )
+            all(len(payload["prompt"]) == 4 for payload in completion_payloads)
         )
         self.assertTrue(
             all(

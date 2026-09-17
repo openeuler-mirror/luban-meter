@@ -1,0 +1,132 @@
+"""Extract and normalize model service quality answers."""
+
+from __future__ import annotations
+
+import re
+import string
+
+_CHOICE_PATTERNS = (
+    re.compile(r"答案是\s*[:：]?\s*([A-D])"),
+    re.compile(r"选\s*[:：]?\s*([A-D])"),
+    re.compile(r"[Aa]nswer\s*(?:is)?\s*[:：]?\s*([A-D])", re.IGNORECASE),
+    re.compile(r"^([A-D])(?![a-zA-Z])"),
+    re.compile(r"(?<![A-Za-z])([A-D])(?![a-z])"),
+)
+
+_GSM8K_DELIMITED = re.compile(r"####\s*([-+]?[0-9][0-9,]*(?:\.[0-9]+)?)")
+_NUMBER = re.compile(r"[-+]?[0-9][0-9,]*(?:\.[0-9]+)?")
+
+_ARTICLES = re.compile(r"\b(a|an|the)\b")
+_PUNCTUATION = set(string.punctuation + "。，、；：？！“”‘’（）《》【】…—·")
+_CODE_FENCE = re.compile(
+    r"```(?:python)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
+)
+
+
+def extract_choice(text: str) -> str | None:
+    """Extract an A-D letter from generated text; None when
+    unparseable.
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    for pattern in _CHOICE_PATTERNS:
+        match = pattern.search(stripped)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
+def extract_number(text: str) -> float | None:
+    """Extract the final numeric answer, preferring the #### delimiter."""
+    if not text:
+        return None
+    match = _GSM8K_DELIMITED.search(text)
+    if match:
+        candidate = match.group(1)
+    else:
+        matches = _NUMBER.findall(text)
+        if not matches:
+            return None
+        candidate = matches[-1]
+    try:
+        return float(candidate.replace(",", ""))
+    except ValueError:
+        return None
+
+
+def normalize_answer(text: str) -> str:
+    """SQuAD-style normalization: lowercase, strip
+    punctuation/articles/space.
+    """
+    text = text.lower()
+    text = _ARTICLES.sub(" ", text)
+    text = "".join(char for char in text if char not in _PUNCTUATION)
+    return " ".join(text.split())
+
+
+def split_tokens(text: str) -> list[str]:
+    """Whitespace tokens of the normalized answer."""
+    return normalize_answer(text).split()
+
+
+def extract_code(text: str) -> str:
+    """Strip markdown code fences when present."""
+    match = _CODE_FENCE.search(text or "")
+    if match:
+        return match.group(1)
+    return text or ""
+
+
+def extract_humaneval_completion(text: str, prompt: str) -> str:
+    """Extract a completion while preserving function-body indentation.
+
+    HumanEval's canonical contract is completion-only: the returned
+    text is appended directly to the prompt. An exact repeated
+    prompt is stripped, but Markdown fences and other generated text
+    are deliberately preserved so the sandbox judges the model's
+    actual base completion.
+    """
+    candidate = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    candidate = candidate.removeprefix(prompt)
+    while candidate.startswith("\n"):
+        candidate = candidate[1:]
+    if not candidate.strip():
+        return ""
+    return candidate.rstrip() + "\n"
+
+
+def lcsts_postprocess(text: str) -> str:
+    """First-layer post-processing for LCSTS predictions.
+
+    Matches OpenCompass ``lcsts_postprocess`` in
+    ``opencompass/datasets/lcsts.py``: take the first line, strip
+    numbered / bulleted prefixes, strip surrounding Chinese
+    punctuation.  Applied only to the prediction (not the reference).
+    """
+    text = text.strip().split("\n")[0].strip()
+    if text.startswith("1. "):
+        text = text[3:]
+    if text.startswith("- "):
+        text = text[2:]
+    text = text.strip("\u201c\u201d\uff0c\u3002\uff01\u201d")
+    return text
+
+
+def general_postprocess(text: str) -> str:
+    """Second-layer post-processing before ROUGE scoring.
+
+    Matches OpenCompass ``general_postprocess`` in
+    ``opencompass/utils/text_postprocessors.py``: truncate at the
+    first newline / period / comma, remove punctuation, remove
+    English articles, collapse whitespace.  Applied to both
+    prediction and reference.
+
+    Note: for Chinese text the truncation only fires on ASCII
+    ``.``, ``,``, or ``\\n``; Chinese punctuation is removed by the
+    ``[^\\w\\s]`` substitution (``\\w`` matches CJK characters).
+    """
+    truncated = re.split(r"[\n.,]", text, 1)[0]
+    no_punct = re.sub(r"[^\w\s]", "", truncated)
+    no_articles = re.sub(r"\b(a|an|the)\b", "", no_punct, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", no_articles).strip()

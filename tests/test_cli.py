@@ -6,8 +6,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from luban_meter.cli import main
-from luban_meter.core.models import BenchmarkResult
-from luban_meter.suite.models import SuiteResult
+from luban_meter.core.run_contracts import RunResult
+from luban_meter.suite.suite_contracts import SuiteResult
 
 
 class CliTest(unittest.TestCase):
@@ -18,15 +18,15 @@ class CliTest(unittest.TestCase):
 
     def test_model_arguments_are_in_request(self) -> None:
         output = io.StringIO()
-        result = BenchmarkResult(
+        result = RunResult(
             schema_version="luban-meter.result/v2",
             run_id="test-run",
             status="success",
-            module="generate",
-            benchmark="ttft",
-            config="configs/benchmarks/ttft.yaml",
+            category_name="generate",
+            benchmark_name="ttft",
+            config_path="configs/benchmarks/ttft.yaml",
         )
-        with patch("luban_meter.cli.CoreEngine") as engine_type:
+        with patch("luban_meter.cli.RunCoordinator") as engine_type:
             engine_type.return_value.run.return_value = result
             with redirect_stdout(output):
                 exit_code = main(
@@ -51,9 +51,9 @@ class CliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(request.model_path.as_posix(), "/models/Qwen3-8B")
         self.assertEqual(request.model_name, "Qwen3-8B")
-        self.assertEqual(request.benchmark, "ttft")
+        self.assertEqual(request.benchmark_name, "ttft")
         self.assertEqual(
-            request.config.as_posix(),
+            request.config_path.as_posix(),
             "configs/benchmarks/ttft.yaml",
         )
 
@@ -62,7 +62,7 @@ class CliTest(unittest.TestCase):
         result = SuiteResult(
             schema_version="luban-meter.suite-result/v2",
             suite_id="test-suite",
-            name="inference-standard",
+            name="model_service_quality_standard",
             status="success",
             tasks=(),
         )
@@ -77,7 +77,7 @@ class CliTest(unittest.TestCase):
                     [
                         "suite",
                         "--suite",
-                        "inference-standard",
+                        "model_service_quality_standard",
                         "--task-config",
                         "humaneval=/data/config/humaneval.yaml",
                         "--output",

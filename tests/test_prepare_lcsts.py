@@ -13,8 +13,8 @@ SCRIPT_PATH = (
     ROOT
     / "src"
     / "luban_meter"
-    / "benchmark"
-    / "inference"
+    / "benchmarking"
+    / "model_service_quality"
     / "scripts"
     / "prepare_lcsts.py"
 )
@@ -61,9 +61,7 @@ def test_strip_prefix_absent(mod) -> None:
 
 def test_strip_prefix_empty_after(mod) -> None:
     """Return empty string if only prefix present."""
-    result = mod.strip_instruction_prefix(
-        mod.LCSTS_INSTRUCTION_PREFIX
-    )
+    result = mod.strip_instruction_prefix(mod.LCSTS_INSTRUCTION_PREFIX)
     assert result == ""
 
 
@@ -86,10 +84,7 @@ def test_load_jsonl_valid(tmp_path: Path, mod) -> None:
         },
     ]
     data_file.write_text(
-        "\n".join(
-            json.dumps(r, ensure_ascii=False)
-            for r in records
-        ),
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in records),
         encoding="utf-8",
     )
     loaded = mod.load_jsonl(data_file)
@@ -98,9 +93,7 @@ def test_load_jsonl_valid(tmp_path: Path, mod) -> None:
     assert loaded[1]["output"] == "summary2"
 
 
-def test_load_jsonl_skips_empty_lines(
-    tmp_path: Path, mod
-) -> None:
+def test_load_jsonl_skips_empty_lines(tmp_path: Path, mod) -> None:
     """Skip empty lines in JSONL."""
     data_file = tmp_path / "data.json"
     data_file.write_text(
@@ -119,9 +112,7 @@ def test_load_jsonl_file_not_found(mod) -> None:
         mod.load_jsonl(Path("/nonexistent/file.json"))
 
 
-def test_load_jsonl_empty_file(
-    tmp_path: Path, mod
-) -> None:
+def test_load_jsonl_empty_file(tmp_path: Path, mod) -> None:
     """Raise ValueError for empty file."""
     data_file = tmp_path / "empty.json"
     data_file.write_text("", encoding="utf-8")
@@ -129,29 +120,19 @@ def test_load_jsonl_empty_file(
         mod.load_jsonl(data_file)
 
 
-def test_load_jsonl_invalid_json(
-    tmp_path: Path, mod
-) -> None:
+def test_load_jsonl_invalid_json(tmp_path: Path, mod) -> None:
     """Raise ValueError for invalid JSON."""
     data_file = tmp_path / "bad.json"
-    data_file.write_text(
-        "not valid json", encoding="utf-8"
-    )
+    data_file.write_text("not valid json", encoding="utf-8")
     with pytest.raises(ValueError, match="invalid JSON"):
         mod.load_jsonl(data_file)
 
 
-def test_load_jsonl_non_object(
-    tmp_path: Path, mod
-) -> None:
+def test_load_jsonl_non_object(tmp_path: Path, mod) -> None:
     """Raise ValueError for non-object records."""
     data_file = tmp_path / "arr.json"
-    data_file.write_text(
-        '[1, 2, 3]', encoding="utf-8"
-    )
-    with pytest.raises(
-        ValueError, match="must be an object"
-    ):
+    data_file.write_text("[1, 2, 3]", encoding="utf-8")
+    with pytest.raises(ValueError, match="must be an object"):
         mod.load_jsonl(data_file)
 
 
@@ -161,8 +142,7 @@ def test_load_jsonl_non_object(
 def test_validate_record_valid(mod) -> None:
     """Valid record passes validation."""
     record = {
-        "input": mod.LCSTS_INSTRUCTION_PREFIX
-        + "\u6587\u672c",
+        "input": mod.LCSTS_INSTRUCTION_PREFIX + "\u6587\u672c",
         "output": "\u6458\u8981",
         "id": 0,
     }
@@ -172,27 +152,21 @@ def test_validate_record_valid(mod) -> None:
 def test_validate_record_missing_input(mod) -> None:
     """Raise ValueError for missing input."""
     record = {"output": "summary", "id": 0}
-    with pytest.raises(
-        ValueError, match="missing 'input'"
-    ):
+    with pytest.raises(ValueError, match="missing 'input'"):
         mod.validate_record(record, 1, "test.json")
 
 
 def test_validate_record_missing_output(mod) -> None:
     """Raise ValueError for missing output."""
     record = {"input": "text", "id": 0}
-    with pytest.raises(
-        ValueError, match="missing 'output'"
-    ):
+    with pytest.raises(ValueError, match="missing 'output'"):
         mod.validate_record(record, 1, "test.json")
 
 
 def test_validate_record_non_string_input(mod) -> None:
     """Raise ValueError for non-string input."""
     record = {"input": 123, "output": "summary"}
-    with pytest.raises(
-        ValueError, match="'input' must be string"
-    ):
+    with pytest.raises(ValueError, match="'input' must be string"):
         mod.validate_record(record, 1, "test.json")
 
 
@@ -202,22 +176,17 @@ def test_validate_record_empty_content(mod) -> None:
         "input": mod.LCSTS_INSTRUCTION_PREFIX,
         "output": "\u6458\u8981",
     }
-    with pytest.raises(
-        ValueError, match="'input' is empty"
-    ):
+    with pytest.raises(ValueError, match="'input' is empty"):
         mod.validate_record(record, 1, "test.json")
 
 
 def test_validate_record_empty_output(mod) -> None:
     """Raise ValueError for empty output."""
     record = {
-        "input": mod.LCSTS_INSTRUCTION_PREFIX
-        + "\u6587\u672c",
+        "input": mod.LCSTS_INSTRUCTION_PREFIX + "\u6587\u672c",
         "output": "",
     }
-    with pytest.raises(
-        ValueError, match="'output' is empty"
-    ):
+    with pytest.raises(ValueError, match="'output' is empty"):
         mod.validate_record(record, 1, "test.json")
 
 
@@ -256,20 +225,14 @@ def test_convert_record_no_prefix(mod) -> None:
 def test_validate_integrity_correct(mod) -> None:
     """Pass with correct count."""
     records = [{"a": 1}] * 725
-    mod.validate_dataset_integrity(
-        records, 725, "test.json"
-    )
+    mod.validate_dataset_integrity(records, 725, "test.json")
 
 
 def test_validate_integrity_wrong(mod) -> None:
     """Raise ValueError for wrong count."""
     records = [{"a": 1}] * 100
-    with pytest.raises(
-        ValueError, match="expected 725"
-    ):
-        mod.validate_dataset_integrity(
-            records, 725, "test.json"
-        )
+    with pytest.raises(ValueError, match="expected 725"):
+        mod.validate_dataset_integrity(records, 725, "test.json")
 
 
 # ---- validate_all_records ----
@@ -279,8 +242,7 @@ def test_validate_all_valid(mod) -> None:
     """Pass with all valid records."""
     records = [
         {
-            "input": mod.LCSTS_INSTRUCTION_PREFIX
-            + f"\u6587\u672c{i}",
+            "input": mod.LCSTS_INSTRUCTION_PREFIX + f"\u6587\u672c{i}",
             "output": f"\u6458\u8981{i}",
         }
         for i in range(3)
@@ -292,15 +254,12 @@ def test_validate_all_one_invalid(mod) -> None:
     """Raise ValueError if any record is invalid."""
     records = [
         {
-            "input": mod.LCSTS_INSTRUCTION_PREFIX
-            + "\u6587\u672c",
+            "input": mod.LCSTS_INSTRUCTION_PREFIX + "\u6587\u672c",
             "output": "\u6458\u8981",
         },
         {"output": "\u6458\u8981"},  # missing input
     ]
-    with pytest.raises(
-        ValueError, match="missing 'input'"
-    ):
+    with pytest.raises(ValueError, match="missing 'input'"):
         mod.validate_all_records(records, "test.json")
 
 
@@ -315,9 +274,7 @@ def test_write_jsonl(tmp_path: Path, mod) -> None:
     ]
     out_file = tmp_path / "out.jsonl"
     mod.write_jsonl(records, out_file)
-    lines = out_file.read_text(
-        encoding="utf-8"
-    ).strip().split("\n")
+    lines = out_file.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 2
     assert json.loads(lines[0])["id"] == "a"
     assert json.loads(lines[1])["content"] == "p"
@@ -332,8 +289,8 @@ def test_real_data_integrity(mod) -> None:
         ROOT
         / "src"
         / "luban_meter"
-        / "benchmark"
-        / "inference"
+        / "benchmarking"
+        / "model_service_quality"
         / "data"
         / "lcsts"
         / "test.jsonl"
@@ -355,8 +312,8 @@ def test_real_data_fields(mod) -> None:
         ROOT
         / "src"
         / "luban_meter"
-        / "benchmark"
-        / "inference"
+        / "benchmarking"
+        / "model_service_quality"
         / "data"
         / "lcsts"
         / "test.jsonl"
@@ -383,8 +340,8 @@ def test_real_data_no_prefix(mod) -> None:
         ROOT
         / "src"
         / "luban_meter"
-        / "benchmark"
-        / "inference"
+        / "benchmarking"
+        / "model_service_quality"
         / "data"
         / "lcsts"
         / "test.jsonl"
@@ -398,9 +355,9 @@ def test_real_data_no_prefix(mod) -> None:
             if not line:
                 continue
             record = json.loads(line)
-            assert not record["content"].startswith(
-                prefix
-            ), f"line {idx} still has prefix"
+            assert not record["content"].startswith(prefix), (
+                f"line {idx} still has prefix"
+            )
 
 
 def test_real_data_unique_ids(mod) -> None:
@@ -409,8 +366,8 @@ def test_real_data_unique_ids(mod) -> None:
         ROOT
         / "src"
         / "luban_meter"
-        / "benchmark"
-        / "inference"
+        / "benchmarking"
+        / "model_service_quality"
         / "data"
         / "lcsts"
         / "test.jsonl"
@@ -427,9 +384,7 @@ def test_real_data_unique_ids(mod) -> None:
     assert len(ids) == len(set(ids))
 
 
-def test_end_to_end_local_source(
-    tmp_path: Path, mod
-) -> None:
+def test_end_to_end_local_source(tmp_path: Path, mod) -> None:
     """End-to-end test with local source files."""
     # Create fake source data
     source_dir = tmp_path / "source"
@@ -452,17 +407,11 @@ def test_end_to_end_local_source(
         for i in range(mod.EXPECTED_TRAIN_COUNT)
     ]
     (source_dir / "test.json").write_text(
-        "\n".join(
-            json.dumps(r, ensure_ascii=False)
-            for r in test_records
-        ),
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in test_records),
         encoding="utf-8",
     )
     (source_dir / "train.json").write_text(
-        "\n".join(
-            json.dumps(r, ensure_ascii=False)
-            for r in train_records
-        ),
+        "\n".join(json.dumps(r, ensure_ascii=False) for r in train_records),
         encoding="utf-8",
     )
     out_dir = tmp_path / "output"
@@ -475,30 +424,28 @@ def test_end_to_end_local_source(
     )
     assert count == mod.EXPECTED_TEST_COUNT
     # Verify output
-    lines = (out_dir / "test.jsonl").read_text(
-        encoding="utf-8"
-    ).strip().split("\n")
+    lines = (
+        (out_dir / "test.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+        .split("\n")
+    )
     assert len(lines) == mod.EXPECTED_TEST_COUNT
     first = json.loads(lines[0])
     assert first["id"] == "lcsts-test-0"
     assert first["content"] == "\u6587\u7ae00"
     assert first["abst"] == "\u6458\u89810"
     # Process few-shot
-    train_recs = mod.load_jsonl(
-        source_dir / "train.json"
+    train_recs = mod.load_jsonl(source_dir / "train.json")
+    mod.validate_all_records(train_recs, "train.json")
+    few_shot = mod.convert_records(train_recs[:8], "lcsts-fs")
+    mod.write_jsonl(few_shot, out_dir / "few_shot.jsonl")
+    fs_lines = (
+        (out_dir / "few_shot.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+        .split("\n")
     )
-    mod.validate_all_records(
-        train_recs, "train.json"
-    )
-    few_shot = mod.convert_records(
-        train_recs[:8], "lcsts-fs"
-    )
-    mod.write_jsonl(
-        few_shot, out_dir / "few_shot.jsonl"
-    )
-    fs_lines = (out_dir / "few_shot.jsonl").read_text(
-        encoding="utf-8"
-    ).strip().split("\n")
     assert len(fs_lines) == 8
     fs_first = json.loads(fs_lines[0])
     assert fs_first["id"] == "lcsts-fs-0"

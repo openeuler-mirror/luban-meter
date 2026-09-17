@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from luban_meter.core.models import CommandSpec
+from luban_meter.core.run_contracts import CommandSpec
 
 
 @dataclass(frozen=True)
