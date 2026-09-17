@@ -1,7 +1,9 @@
-"""Compare scoring with a separately downloaded official evaluate-v2.0.py.
+"""Compare scoring with a separately downloaded official
+evaluate-v2.0.py.
 
-Usage: PYTHONPATH=src python tests/verify_squad_official.py /path/to/script.py
-The official script imports numpy; install it before running this check.
+Usage: PYTHONPATH=src python tests/verify_squad_official.py
+/path/to/script.py The official script imports numpy; install it
+before running this check.
 """
 
 import hashlib
@@ -10,7 +12,9 @@ import random
 import sys
 from pathlib import Path
 
-from luban_meter.benchmark.inference.squad.scoring import score_answer
+from luban_meter.benchmarking.model_service_quality.squad.scoring import (
+    score_answer,
+)
 
 
 def main():

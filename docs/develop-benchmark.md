@@ -7,16 +7,16 @@
 | 模块 | 用途 |
 |---|---|
 | `generate` | 生成式推理时延、吞吐量、负载和引擎阶段性能 |
-| `inference` | 基于在线推理服务的模型任务效果与质量评测 |
+| `model_service_quality` | 基于在线推理服务的模型任务效果与质量评测 |
 
 当前不开发算子层 Benchmark。
 
 新增脚本必须放在：
 
 ```text
-src/luban_meter/benchmark/<module>/<benchmark>/
-├── benchmark.py
-├── result.py
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/
+├── collect_raw.py
+├── calculate_metrics.py
 └── config.example.yaml
 ```
 
@@ -34,8 +34,8 @@ module + benchmark
 2. **统一脚本复用于不同硬件**：不得按硬件品牌复制同语义实现；
 3. **差异通过配置表达**：服务地址、模型名、并行度和引擎参数写入配置；
 4. **引擎专属能力显式命名**：例如 `vllm-engine-offline`；
-5. **采集与计算分离**：硬件或服务调用位于 `benchmark.py`，纯数据处理位于
-   `result.py`；
+5. **采集与计算分离**：硬件或服务调用位于 `collect_raw.py`，纯数据处理位于
+   `calculate_metrics.py`；
 6. **结果可审计**：保留原始记录、参数、日志、失败原因和统计边界。
 7. **硬件检测前置**：generate 模块的 Benchmark 在执行开头调用
    `print_hardware_info()` 输出设备摘要，便于复现问题。该工具由
@@ -43,11 +43,14 @@ module + benchmark
 
 ## 3. 自动发现
 
+物理目录使用PEP 8命名；现有CLI类别和场景标识由注册表映射到目录。
+字段、目录和Python接口的对应关系见[命名约定](naming.md)。
+
 当以下两个文件同时存在时，`BenchmarkRegistry` 自动发现脚本：
 
 ```text
-benchmark/<module>/<benchmark>/benchmark.py
-benchmark/<module>/<benchmark>/result.py
+benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
 
 验证：
@@ -60,7 +63,7 @@ luban-meter benchmarks list
 
 ```text
 generate    serving-online,vllm-engine-offline  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k,lcsts,wikitext    Online-service model evaluation benchmarks
+model_service_quality   ceval,cmmlu,gsm8k,lcsts,wikitext    Model service quality benchmarks
 ```
 
 ## 4. 配置文件
@@ -83,12 +86,12 @@ Benchmark 必须主动校验：
 
 无效配置应抛出带字段名与原因的异常，禁止静默使用含义不同的默认值。
 
-## 5. benchmark.py 协议
+## 5. collect_raw.py 协议
 
 框架使用以下命令执行脚本：
 
 ```bash
-python benchmark.py --request <request.json> --output <raw_result.json>
+python collect_raw.py --request <request.json> --output <raw_result.json>
 ```
 
 参数入口：
@@ -156,9 +159,9 @@ def parse_args() -> argparse.Namespace:
 即使捕获异常，也应写出失败 JSON，便于框架保留上下文；未捕获异常仍会由 Core
 转换为标准失败结果。
 
-## 6. result.py 协议
+## 6. calculate_metrics.py 协议
 
-`result.py` 必须定义：
+`calculate_metrics.py` 必须定义：
 
 ```python
 def process(raw_result):
@@ -178,7 +181,7 @@ def process(raw_result):
 - 将指标按 Request、Service、Engine 或 Task 视角分组；
 - 输出明确的单位和样本数。
 
-`result.py` 应尽量只依赖 Python 标准库或 Benchmark 公共工具，不重新调用模型、
+`calculate_metrics.py` 应尽量只依赖 Python 标准库或 Benchmark 公共工具，不重新调用模型、
 服务或硬件运行时。
 
 `serving-online` 采集记录包含 `last_output_latency_ms`。结果处理器统一采用
@@ -296,9 +299,9 @@ def process(raw_result):
 没有可用数值时不生成图表。声明格式错误时回退到自动摘要并记录原因，完整结果
 仍保留在 JSON 中。报告不推断不同运行之间的对应关系，也不计算差值或百分比。
 
-### 6.3 效果评测的条件摘要
+### 6.3 模型服务质量评测的条件摘要
 
-`module=inference` 的报告在硬件总览之后、指标表之前展示“评测条件”，控制台
+`module=model_service_quality` 的报告在硬件总览之后、指标表之前展示“评测条件”，控制台
 同步展示。该摘要读取通用字段，不按 Benchmark 名称注册，`metrics` 协议不变。
 
 - `metadata` 优先提供实际模型、数据集、`split`、`sample_count`、`eval_mode`、
@@ -330,12 +333,12 @@ Case，禁止将不同条件的样本混合统计。
 在线服务优先使用标准 HTTP 协议，使同一 Benchmark 可在不同硬件环境的兼容服务上
 直接复用。只有必须访问引擎内部字段的场景才建立引擎专属 Benchmark。
 
-## 8. Inference Benchmark 指南
+## 8. 模型服务质量评测场景 指南
 
-`inference` 通过在线推理服务评测模型任务效果，建议每个 Benchmark 封装一类任务
+`model_service_quality` 通过在线推理服务评测模型任务效果，建议每个 Benchmark 封装一类任务
 协议或数据集族，例如 `ceval`、`gsm8k`、`summarization`。当前已端到端实现
 `ceval`、`cmmlu`、`gsm8k`、`lcsts` 和 `wikitext`，协议细节参见
-[Inference 评测指标说明](inference.md)。
+[模型服务质量评测指标说明](model_service_quality.md)。
 
 一次运行通常包含：
 
@@ -360,9 +363,9 @@ Case，禁止将不同条件的样本混合统计。
 禁止只保存聚合分数而丢失逐样本审计信息。
 
 多个数据集共用的在线服务调用、数据集加载、Prompt 渲染、答案解析和指标计算
-逻辑放在 `benchmark/inference/common/`；数据集官方格式到本地 jsonl 的转换脚本
-放在 `benchmark/inference/scripts/`，Benchmark 运行时只读取本地数据集文件。
-样例数据集随包内置在 `benchmark/inference/data/`；`common/dataset.py` 的
+逻辑放在 `benchmarking/model_service_quality/common/`；数据集官方格式到本地 jsonl 的转换脚本
+放在 `benchmarking/model_service_quality/scripts/`，Benchmark 运行时只读取本地数据集文件。
+样例数据集随包内置在 `benchmarking/model_service_quality/data/`；`common/dataset.py` 的
 `resolve_data_path()` 对相对路径先按 CWD 解析，未命中时回退到包内置目录，使
 默认配置无需额外准备即可从任意工作目录运行。
 
@@ -390,11 +393,11 @@ tasks:
   - name: metrics
     module: generate
     benchmark: vllm_metrics
-    config: configs/vllm-metrics.yaml
+    config: configs/vllm_metrics.yaml
 ```
 
 Suite 不声明硬件环境。所有任务使用启动命令时的当前环境，每个任务仍通过
-`CoreEngine` 独立生成 `result.json`。启用 `--monitor-url` 时，采集结果写入
+`RunCoordinator` 独立生成 `result.json`。启用 `--monitor-url` 时，采集结果写入
 `result.json` 的 `environment.device_monitoring`。
 
 `SuiteRunner` 写入 `luban-meter.suite-result/v2`：`tasks` 按 YAML 中的任务顺序
@@ -402,7 +405,7 @@ Suite 不声明硬件环境。所有任务使用启动命令时的当前环境�
 完整的 `luban-meter.result/v2`。被 fail-fast 跳过的任务 `output` 为 null。
 因此 Suite 报告可只用 `suite_result.json` 生成，指标提取不依赖各任务文件存在。
 
-CLI 的 `run` 和 `suite` 在结果保存后自动生成报告；直接调用 `CoreEngine` 或
+CLI 的 `run` 和 `suite` 在结果保存后自动生成报告；直接调用 `RunCoordinator` 或
 `SuiteRunner` 的 Python 接口只写结果，可再通过 `luban-meter report` 导出。
 多份 Suite 输入各自产生独立报告，任务参数不同也不做匹配或比较。
 
@@ -415,10 +418,10 @@ CLI 的 `run` 和 `suite` 在结果保存后自动生成报告；直接调用 `C
 
 提交 Benchmark 前至少验证：
 
-- [ ] 目录为 `benchmark/<module>/<benchmark>/`；
-- [ ] 模块为 `generate` 或 `inference`；
-- [ ] `benchmark.py` 接收 `--request` 和 `--output`；
-- [ ] `result.py` 定义 `process(raw_result)`；
+- [ ] 目录为 `benchmarking/<category_directory>/<benchmark_directory>/`；
+- [ ] 模块为 `generate` 或 `model_service_quality`；
+- [ ] `collect_raw.py` 接收 `--request` 和 `--output`；
+- [ ] `calculate_metrics.py` 定义 `process(raw_result)`；
 - [ ] 成功和失败均符合 `luban-meter.raw/v1`；
 - [ ] 配置字段有类型、范围和边界校验；
 - [ ] 指标单位、样本数和观察边界明确；

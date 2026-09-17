@@ -18,11 +18,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
-SERVING_REAL_BENCHMARK = (
-    ROOT / "src/luban_meter/benchmark/generate/serving-online/benchmark.py"
+SERVING_REAL_BENCHMARK = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/collect_raw.py"
 )
-SERVING_REAL_RESULT = (
-    ROOT / "src/luban_meter/benchmark/generate/serving-online/result.py"
+SERVING_REAL_RESULT = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/calculate_metrics.py"
 )
 
 
@@ -98,7 +100,7 @@ class ShareGPTLoadingTest(unittest.TestCase):
     """Verify ShareGPT and JSONL dataset loading."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_real_bench_ds", SERVING_REAL_BENCHMARK
         )
 
@@ -120,48 +122,50 @@ class ShareGPTLoadingTest(unittest.TestCase):
         return tmp.name
 
     def test_loads_first_human_message(self) -> None:
-        path = self._make_sharegpt_file([
-            {
-                "id": "1",
-                "conversations": [
-                    {"from": "human", "value": "What is Python?"},
-                    {"from": "gpt", "value": "Python is a language."},
-                ],
-            },
-            {
-                "id": "2",
-                "conversations": [
-                    {"from": "human", "value": "Hello there!"},
-                    {"from": "gpt", "value": "Hi! How can I help?"},
-                ],
-            },
-        ])
-        prompts = self.benchmark.load_prompts(
+        path = self._make_sharegpt_file(
+            [
+                {
+                    "id": "1",
+                    "conversations": [
+                        {"from": "human", "value": "What is Python?"},
+                        {"from": "gpt", "value": "Python is a language."},
+                    ],
+                },
+                {
+                    "id": "2",
+                    "conversations": [
+                        {"from": "human", "value": "Hello there!"},
+                        {"from": "gpt", "value": "Hi! How can I help?"},
+                    ],
+                },
+            ]
+        )
+        prompts = self.collector_module.data_loader.load_prompts(
             path, num_prompts=10, dataset_format="sharegpt"
         )
         self.assertEqual(len(prompts), 2)
-        self.assertIn(
-            prompts[0], ("What is Python?", "Hello there!")
-        )
+        self.assertIn(prompts[0], ("What is Python?", "Hello there!"))
 
     def test_skips_conversations_without_human(self) -> None:
-        path = self._make_sharegpt_file([
-            {
-                "id": "1",
-                "conversations": [
-                    {"from": "system", "value": "You are helpful."},
-                    {"from": "human", "value": "Hi"},
-                    {"from": "gpt", "value": "Hello!"},
-                ],
-            },
-            {
-                "id": "2",
-                "conversations": [
-                    {"from": "gpt", "value": "No human here."},
-                ],
-            },
-        ])
-        prompts = self.benchmark.load_prompts(
+        path = self._make_sharegpt_file(
+            [
+                {
+                    "id": "1",
+                    "conversations": [
+                        {"from": "system", "value": "You are helpful."},
+                        {"from": "human", "value": "Hi"},
+                        {"from": "gpt", "value": "Hello!"},
+                    ],
+                },
+                {
+                    "id": "2",
+                    "conversations": [
+                        {"from": "gpt", "value": "No human here."},
+                    ],
+                },
+            ]
+        )
+        prompts = self.collector_module.data_loader.load_prompts(
             path, num_prompts=10, dataset_format="sharegpt"
         )
         self.assertEqual(len(prompts), 1)
@@ -179,64 +183,75 @@ class ShareGPTLoadingTest(unittest.TestCase):
             for i in range(50)
         ]
         path = self._make_sharegpt_file(conversations)
-        prompts = self.benchmark.load_prompts(
+        prompts = self.collector_module.data_loader.load_prompts(
             path, num_prompts=5, dataset_format="sharegpt"
         )
         self.assertEqual(len(prompts), 5)
 
     def test_raises_on_missing_file(self) -> None:
         with self.assertRaises(FileNotFoundError):
-            self.benchmark.load_prompts(
+            self.collector_module.data_loader.load_prompts(
                 "/nonexistent/path.json", 10, dataset_format="sharegpt"
             )
 
     def test_raises_on_no_valid_prompts(self) -> None:
-        path = self._make_sharegpt_file([
-            {"id": "1", "conversations": [
-                {"from": "gpt", "value": "No human."}
-            ]}
-        ])
+        path = self._make_sharegpt_file(
+            [
+                {
+                    "id": "1",
+                    "conversations": [{"from": "gpt", "value": "No human."}],
+                }
+            ]
+        )
         with self.assertRaisesRegex(ValueError, "no valid prompts"):
-            self.benchmark.load_prompts(
+            self.collector_module.data_loader.load_prompts(
                 path, 10, dataset_format="sharegpt"
             )
 
     def test_loads_jsonl_prompts(self) -> None:
-        path = self._make_jsonl_file([
-            {"prompt": "What is the capital of India?"},
-            {"prompt": "Explain quantum computing."},
-            {"other": "not a prompt"},
-        ])
-        prompts = self.benchmark.load_prompts(
+        path = self._make_jsonl_file(
+            [
+                {"prompt": "What is the capital of India?"},
+                {"prompt": "Explain quantum computing."},
+                {"other": "not a prompt"},
+            ]
+        )
+        prompts = self.collector_module.data_loader.load_prompts(
             path, num_prompts=10, dataset_format="jsonl"
         )
         self.assertEqual(len(prompts), 2)
         self.assertIn("What is the capital of India?", prompts)
 
     def test_jsonl_custom_prompt_field(self) -> None:
-        path = self._make_jsonl_file([
-            {"question": "What is 2+2?"},
-            {"question": "Define AI."},
-        ])
-        prompts = self.benchmark.load_prompts(
-            path, num_prompts=10,
-            dataset_format="jsonl", prompt_field="question",
+        path = self._make_jsonl_file(
+            [
+                {"question": "What is 2+2?"},
+                {"question": "Define AI."},
+            ]
+        )
+        prompts = self.collector_module.data_loader.load_prompts(
+            path,
+            num_prompts=10,
+            dataset_format="jsonl",
+            prompt_field="question",
         )
         self.assertEqual(len(prompts), 2)
         self.assertIn("What is 2+2?", prompts)
 
     def test_jsonl_raises_on_missing_field(self) -> None:
-        path = self._make_jsonl_file([
-            {"other": "no prompt field"},
-        ])
+        path = self._make_jsonl_file(
+            [
+                {"other": "no prompt field"},
+            ]
+        )
         with self.assertRaisesRegex(ValueError, "no valid prompts"):
-            self.benchmark.load_prompts(
+            self.collector_module.data_loader.load_prompts(
                 path, 10, dataset_format="jsonl"
             )
 
     def test_unsupported_format_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported dataset_format"):
-            self.benchmark.load_prompts(
+            self.collector_module.data_loader.load_prompts(
                 "/tmp/x.json", 10, dataset_format="unknown"
             )
 
@@ -245,12 +260,12 @@ class ArrivalSchedulingTest(unittest.TestCase):
     """Verify arrival process scheduling."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_real_bench_arr", SERVING_REAL_BENCHMARK
         )
 
     def test_constant_spacing(self) -> None:
-        offsets = self.benchmark.schedule_arrival_times(
+        offsets = self.collector_module.schedule_arrival_times(
             arrival_process="constant",
             request_rate=10.0,
             num_requests=5,
@@ -263,7 +278,7 @@ class ArrivalSchedulingTest(unittest.TestCase):
             self.assertAlmostEqual(offsets[i] - offsets[i - 1], 0.1, places=6)
 
     def test_poisson_spacing_positive_and_increasing(self) -> None:
-        offsets = self.benchmark.schedule_arrival_times(
+        offsets = self.collector_module.schedule_arrival_times(
             arrival_process="poisson",
             request_rate=5.0,
             num_requests=20,
@@ -276,7 +291,7 @@ class ArrivalSchedulingTest(unittest.TestCase):
             self.assertGreater(offsets[i], offsets[i - 1])
 
     def test_gamma_spacing_positive_and_increasing(self) -> None:
-        offsets = self.benchmark.schedule_arrival_times(
+        offsets = self.collector_module.schedule_arrival_times(
             arrival_process="gamma",
             request_rate=5.0,
             num_requests=20,
@@ -290,7 +305,7 @@ class ArrivalSchedulingTest(unittest.TestCase):
 
     def test_invalid_arrival_process_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "arrival_process"):
-            self.benchmark.schedule_arrival_times(
+            self.collector_module.schedule_arrival_times(
                 arrival_process="invalid",
                 request_rate=1.0,
                 num_requests=5,
@@ -313,16 +328,22 @@ class ResultProcessingTest(unittest.TestCase):
             duration_seconds=10.0,
             requests=[
                 make_request_record(
-                    ttft_ms=50, e2el_ms=300,
-                    input_tokens=100, output_tokens=10,
+                    ttft_ms=50,
+                    e2el_ms=300,
+                    input_tokens=100,
+                    output_tokens=10,
                 ),
                 make_request_record(
-                    ttft_ms=80, e2el_ms=600,
-                    input_tokens=500, output_tokens=50,
+                    ttft_ms=80,
+                    e2el_ms=600,
+                    input_tokens=500,
+                    output_tokens=50,
                 ),
                 make_request_record(
-                    ttft_ms=120, e2el_ms=1200,
-                    input_tokens=2000, output_tokens=200,
+                    ttft_ms=120,
+                    e2el_ms=1200,
+                    input_tokens=2000,
+                    output_tokens=200,
                 ),
             ],
         )
@@ -412,12 +433,16 @@ class ResultProcessingTest(unittest.TestCase):
             duration_seconds=10.0,
             requests=[
                 make_request_record(
-                    ttft_ms=100, e2el_ms=300,
-                    input_tokens=10, output_tokens=3,
+                    ttft_ms=100,
+                    e2el_ms=300,
+                    input_tokens=10,
+                    output_tokens=3,
                 ),
                 make_request_record(
-                    ttft_ms=600, e2el_ms=9000,
-                    input_tokens=500, output_tokens=100,
+                    ttft_ms=600,
+                    e2el_ms=9000,
+                    input_tokens=500,
+                    output_tokens=100,
                 ),
             ],
         )
@@ -465,7 +490,7 @@ class CircuitBreakerTest(unittest.TestCase):
     """Verify circuit breaker in serving-real benchmark."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_real_bench_cb", SERVING_REAL_BENCHMARK
         )
 
@@ -508,17 +533,24 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(
-            self.benchmark, "run_case_dataset",
-            side_effect=fake_run_case,
-        ), patch.object(
-            self.benchmark, "load_prompts",
-            return_value=["p"] * 10,
-        ), patch.object(
-            self.benchmark, "discover_model",
-            return_value="test-model",
+        with (
+            patch.object(
+                self.collector_module,
+                "run_case_dataset",
+                side_effect=fake_run_case,
+            ),
+            patch.object(
+                self.collector_module.data_loader,
+                "load_prompts",
+                return_value=["p"] * 10,
+            ),
+            patch.object(
+                self.collector_module.http_client,
+                "discover_served_model_name",
+                return_value="test-model",
+            ),
         ):
-            raw_result = self.benchmark.run_benchmark(
+            raw_result = self.collector_module.collect_raw_result(
                 request, parameters
             )
 
@@ -560,17 +592,24 @@ class CircuitBreakerTest(unittest.TestCase):
         }
         request = {"model_name": "test-model"}
 
-        with patch.object(
-            self.benchmark, "run_case_dataset",
-            side_effect=fake_run_case,
-        ), patch.object(
-            self.benchmark, "load_prompts",
-            return_value=["p"] * 10,
-        ), patch.object(
-            self.benchmark, "discover_model",
-            return_value="test-model",
+        with (
+            patch.object(
+                self.collector_module,
+                "run_case_dataset",
+                side_effect=fake_run_case,
+            ),
+            patch.object(
+                self.collector_module.data_loader,
+                "load_prompts",
+                return_value=["p"] * 10,
+            ),
+            patch.object(
+                self.collector_module.http_client,
+                "discover_served_model_name",
+                return_value="test-model",
+            ),
         ):
-            raw_result = self.benchmark.run_benchmark(
+            raw_result = self.collector_module.collect_raw_result(
                 request, parameters
             )
 

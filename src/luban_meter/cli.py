@@ -11,26 +11,29 @@ from collections.abc import Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from luban_meter.core.engine import CoreEngine
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.errors import BenchmarkToolkitError
-from luban_meter.core.models import RunRequest
-from luban_meter.core.registry import BenchmarkRegistry
-from luban_meter.reporting.data import from_payload, load_report
+from luban_meter.core.run_contracts import RunRequest
+from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.reporting.render import write_report
+from luban_meter.reporting.result_reader import (
+    build_report_from_result,
+    load_report,
+)
 from luban_meter.suite.loader import SuiteLoader
-from luban_meter.suite.models import SuiteRequest
 from luban_meter.suite.runner import SuiteRunner
+from luban_meter.suite.suite_contracts import SuiteRequest
 from luban_meter.utils.json_io import to_jsonable
 from luban_meter.utils.run_id import create_run_id
 
 
 def _parse_task_config(value: str) -> tuple[str, Path]:
-    task, separator, config = value.partition("=")
-    if not separator or not task or not config:
+    task_name, separator, config_path = value.partition("=")
+    if not separator or not task_name or not config_path:
         raise argparse.ArgumentTypeError(
             "task config must use TASK=PATH with non-empty values"
         )
-    return task, Path(config)
+    return task_name, Path(config_path)
 
 
 def _add_monitor_args(parser: argparse.ArgumentParser) -> None:
@@ -51,7 +54,9 @@ def _add_monitor_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _apply_monitor_env(args) -> None:
-    """Export monitor args as environment variables for ExecutionManager."""
+    """Export monitor args as environment variables for
+    ExecutionManager.
+    """
     if getattr(args, "monitor_url", None):
         os.environ["LUBAN_MONITOR_URL"] = args.monitor_url
     if getattr(args, "monitor_interval", None):
@@ -73,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--benchmark",
         required=True,
-        help="Benchmark directory name under benchmark/<module>",
+        help="Benchmark name shown by 'luban-meter benchmarks list'",
     )
     run.add_argument(
         "--config",
@@ -128,12 +133,14 @@ def _finish(result, path: Path, output_format: str) -> int:
     payload = to_jsonable(result)
     summary = f"{payload.get('status', '')} | {path}"
     try:
-        report = from_payload(payload, path.resolve())
+        report = build_report_from_result(payload, path.resolve())
         if report.kind == "suite":
             for task in report.tasks:
-                if task.data.get("schema_version") and task.source:
+                if task.result_payload.get("schema_version") and task.source:
                     try:
-                        child = from_payload(task.data, task.source)
+                        child = build_report_from_result(
+                            task.result_payload, task.source
+                        )
                         write_report(child, task.source.parent / "report")
                     except Exception as exc:
                         print(
@@ -184,18 +191,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "benchmarks" and args.benchmarks_command == "list":
         registry = BenchmarkRegistry()
-        for module, description in registry.modules():
-            benchmarks = ",".join(registry.list_benchmarks(module)) or "-"
-            print(f"{module}\t{benchmarks}\t{description}")
+        for category_name, description in registry.list_categories():
+            benchmark_names = (
+                ",".join(registry.list_benchmarks(category_name)) or "-"
+            )
+            print(f"{category_name}\t{benchmark_names}\t{description}")
         return 0
 
     if args.command == "run":
         _apply_monitor_env(args)
         request = RunRequest(
             run_id=create_run_id(args.module),
-            module=args.module,
-            benchmark=args.benchmark,
-            config=args.config,
+            category_name=args.module,
+            benchmark_name=args.benchmark,
+            config_path=args.config,
             model_path=args.model_path,
             model_name=args.model_name,
             output_dir=args.output,
@@ -205,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         try:
             with redirect_stdout(sys.stderr):
-                result = CoreEngine(BenchmarkRegistry()).run(request)
+                result = RunCoordinator(BenchmarkRegistry()).run(request)
         except BenchmarkToolkitError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -235,7 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             definition = SuiteLoader().load(args.suite)
             with redirect_stdout(sys.stderr):
-                result = SuiteRunner(CoreEngine(BenchmarkRegistry())).run(
+                result = SuiteRunner(RunCoordinator(BenchmarkRegistry())).run(
                     request,
                     definition,
                 )

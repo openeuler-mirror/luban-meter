@@ -18,11 +18,11 @@ luban-meter benchmarks list
 当前模块：
 
 ```text
-generate    serving-online,vllm-engine-offline,vllm-metrics  Large-model generation benchmarks
-inference   ceval,cmmlu,gsm8k,humaneval,lcsts,wikitext  Online-service model evaluation benchmarks
+generate    serving-online,vllm-engine-offline,vllm_metrics  Large-model generation benchmarks
+model_service_quality   ceval,cmmlu,gsm8k,humaneval,lcsts,wikitext  Model service quality benchmarks
 ```
 
-`generate` 测量生成式推理性能；`inference` 用于基于在线推理服务的模型效果评测。
+`generate` 测量生成式推理性能；`model_service_quality` 用于基于在线推理服务的模型服务质量评测。
 当前不提供算子层模块。
 
 ## 3. 运行单个 Benchmark
@@ -42,8 +42,8 @@ luban-meter run \
 
 | 参数 | 必填 | 说明 |
 |---|---:|---|
-| `--module` | 是 | `generate` 或 `inference` |
-| `--benchmark` | 是 | `benchmark/<module>/` 下的目录名称 |
+| `--module` | 是 | `generate` 或 `model_service_quality` |
+| `--benchmark` | 是 | 场景逻辑名称；由注册表映射到实际目录 |
 | `--config` | 是 | 本次测试参数 YAML |
 | `--model-path` | 否 | 本地模型路径 |
 | `--model-name` | 否 | 逻辑模型名或在线服务模型名 |
@@ -57,9 +57,15 @@ luban-meter run \
 框架按以下路径解析脚本：
 
 ```text
-src/luban_meter/benchmark/<module>/<benchmark>/benchmark.py
-src/luban_meter/benchmark/<module>/<benchmark>/result.py
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
+
+`generate`映射到`generation_performance/`，`model_service_quality`映射到
+`model_service_quality/`；`serving-online`、`vllm-engine-offline`、`vllm_metrics`
+分别映射到`online_serving/`、`offline_vllm_engine/`、`vllm_service_metrics/`。
+CLI、YAML和JSON字段保持兼容，源码路径及Python接口迁移见
+[命名约定](naming.md)。
 
 ### 硬件监控（可选）
 
@@ -99,7 +105,7 @@ luban-meter run \
 luban-meter run \
   --module generate \
   --benchmark serving-online \
-  --config src/luban_meter/benchmark/generate/serving-online/serving_online.yaml \
+  --config src/luban_meter/benchmarking/generation_performance/online_serving/serving_online.yaml \
   --model-name <served-model-name>
 ```
 
@@ -158,7 +164,7 @@ Token 数按分布统计（Mean、P50、P90、P99），不与配置值严格校�
 CUDA_VISIBLE_DEVICES=0 luban-meter run \
   --module generate \
   --benchmark vllm-engine-offline \
-  --config src/luban_meter/benchmark/generate/vllm-engine-offline/vllm_engine_offline.yaml \
+  --config src/luban_meter/benchmarking/generation_performance/offline_vllm_engine/vllm_engine_offline.yaml \
   --model-path /data/models/<model>
 ```
 
@@ -178,8 +184,8 @@ CUDA_VISIBLE_DEVICES=0 luban-meter run \
 ```bash
 luban-meter run \
   --module generate \
-  --benchmark vllm-metrics \
-  --config src/luban_meter/benchmark/generate/vllm_metrics/vllm_metrics.yaml \
+  --benchmark vllm_metrics \
+  --config src/luban_meter/benchmarking/generation_performance/vllm_service_metrics/vllm_metrics.yaml \
   --model-name <served-model-name>
 ```
 
@@ -206,22 +212,22 @@ Suite YAML 位于：
 src/luban_meter/suite/definitions/<suite>.yaml
 ```
 
-当前内置的标准模型效果 Suite：
+当前内置的标准模型服务质量 Suite：
 
 ```yaml
-name: inference-standard
+name: model_service_quality_standard
 tasks:
   - name: ceval
-    module: inference
+    module: model_service_quality
     benchmark: ceval
   - name: cmmlu
-    module: inference
+    module: model_service_quality
     benchmark: cmmlu
   - name: gsm8k
-    module: inference
+    module: model_service_quality
     benchmark: gsm8k
   - name: humaneval
-    module: inference
+    module: model_service_quality
     benchmark: humaneval
 ```
 
@@ -229,7 +235,7 @@ tasks:
 
 ```bash
 luban-meter suite \
-  --suite inference-standard \
+  --suite model_service_quality_standard \
   --model-name <served-model-name> \
   --output runs
 ```
@@ -240,7 +246,7 @@ luban-meter suite \
 
 ```bash
 luban-meter suite \
-  --suite inference-standard \
+  --suite model_service_quality_standard \
   --task-config humaneval=/data/luban-meter-config/humaneval-full.yaml \
   --model-name <served-model-name> \
   --output runs
@@ -249,7 +255,7 @@ luban-meter suite \
 失败后立即停止后续任务：
 
 ```bash
-luban-meter suite --suite inference-standard --fail-fast
+luban-meter suite --suite model_service_quality_standard --fail-fast
 ```
 
 `suite_result.json` 使用 `luban-meter.suite-result/v2`。每个已执行任务的
@@ -319,8 +325,8 @@ Suite 报告按任务顺序拼接摘要，不对不同语义的指标求平均�
 确认目录中同时存在：
 
 ```text
-benchmark/<module>/<benchmark>/benchmark.py
-benchmark/<module>/<benchmark>/result.py
+benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
 
 ### 运行依赖不可用
@@ -341,29 +347,29 @@ pytest -q
 python -m luban_meter benchmarks list
 ```
 
-## 12. inference 模型任务效果测试
+## 12. model_service_quality 模型任务效果测试
 
-`inference` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
+`model_service_quality` Benchmark 基于本地数据集调用在线推理服务。安装包内置了 `ceval`、
 `cmmlu`、`gsm8k`、`humaneval`、`lcsts` 和 `wikitext` 的标准评测数据，位于
-`src/luban_meter/benchmark/inference/data/`，开箱即用。若需替换数据版本，
+`src/luban_meter/benchmarking/model_service_quality/data/`，开箱即用。若需替换数据版本，
 可用离线准备脚本将外部官方格式转换为本地 jsonl（运行时不下载数据）：
 
 ```bash
-python src/luban_meter/benchmark/inference/scripts/prepare_ceval.py \
+python src/luban_meter/benchmarking/model_service_quality/scripts/prepare_ceval.py \
   --source /path/to/ceval --out data/ceval
-python src/luban_meter/benchmark/inference/scripts/prepare_cmmlu.py \
+python src/luban_meter/benchmarking/model_service_quality/scripts/prepare_cmmlu.py \
   --source /path/to/cmmlu --out data/cmmlu
-python src/luban_meter/benchmark/inference/scripts/prepare_gsm8k.py \
+python src/luban_meter/benchmarking/model_service_quality/scripts/prepare_gsm8k.py \
   --source /path/to/gsm8k --out data/gsm8k
-python src/luban_meter/benchmark/inference/scripts/prepare_humaneval.py \
+python src/luban_meter/benchmarking/model_service_quality/scripts/prepare_humaneval.py \
   --source /path/to/HumanEval.jsonl.gz \
   --out data/humaneval/HumanEval.jsonl
-python src/luban_meter/benchmark/inference/scripts/prepare_lcsts.py \
+python src/luban_meter/benchmarking/model_service_quality/scripts/prepare_lcsts.py \
   --source /path/to/lcsts --out data/lcsts
 ```
 
 配置中的 `dataset_path` 为相对路径时按以下顺序解析：先相对当前工作目录
-（CWD），未命中时回退到包内置的 `benchmark/inference/data/` 目录。因此默认
+（CWD），未命中时回退到包内置的 `benchmarking/model_service_quality/data/` 目录。因此默认
 默认相对 `dataset_path` 会回退到包内置数据，从 `/tmp` 等任意目录运行也可
 正常加载。
 
@@ -371,9 +377,9 @@ python src/luban_meter/benchmark/inference/scripts/prepare_lcsts.py \
 
 ```bash
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark ceval \
-  --config src/luban_meter/benchmark/inference/ceval/ceval.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/ceval/ceval.yaml \
   --model-name <name>
 ```
 
@@ -382,13 +388,13 @@ HumanEval 首版固定为 completion-only Pass@1。执行模型生成的代码�
 
 ```bash
 docker build \
-  -f src/luban_meter/benchmark/inference/humaneval/Containerfile \
+  -f src/luban_meter/benchmarking/model_service_quality/humaneval/Containerfile \
   -t luban-meter-humaneval-sandbox:v1 \
-  src/luban_meter/benchmark/inference/humaneval
+  src/luban_meter/benchmarking/model_service_quality/humaneval
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark humaneval \
-  --config src/luban_meter/benchmark/inference/humaneval/humaneval.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/humaneval/humaneval.yaml \
   --model-name <name>
 ```
 
@@ -404,7 +410,7 @@ loss 模式）。其中 ppl / loss 模式依赖
 `/v1/completions` 的 `echo + logprobs` 回显，且仅允许 `prompt_format=base`
 （对话格式层会注入特殊 Token 破坏 ppl 续写打分，组合 ppl + chat 会被配置校验
 拒绝）；gen 模式可使用 chat 或 base 传输。配置字段、评测模式和指标口径参见
-[Inference 评测指标说明](inference.md)。
+[模型服务质量评测指标说明](model_service_quality.md)。
 
 ## 13. v2 结果与报告
 
@@ -457,7 +463,7 @@ loss 模式）。其中 ppl / loss 模式依赖
 单次报告和 Suite 内的各任务均采用“硬件总览 → 评测指标 → 评测曲线”的顺序。
 原始数据和独立监控产物继续保留，报告只引用一张 `hardware-<任务序号>-overview.png`。
 
-效果评测在硬件总览与指标表之间另有精简的“评测条件”：展示模型、数据集与
+模型服务质量评测在硬件总览与指标表之间另有精简的“评测条件”：展示模型、数据集与
 样本范围、评分模式、Prompt 版本、few-shot 和解码参数，控制台同步展示。
 优先使用结果中已记录的实际条件，回退到原配置的值标注“配置”；必要字段缺失时
 显示“未记录”。已记录的 `null`、空列表、零值保持原样，不推测缺项，不展开

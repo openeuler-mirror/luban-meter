@@ -22,9 +22,18 @@ def table(
     }
 
 
-def line(x: str, y: str, group_by: list[str]) -> dict[str, Any]:
-    return {"type": "line", "x": x, "y": y, "group_by": group_by}
+def line(
+    x_metric_path: str, y_metric_path: str, group_by: list[str]
+) -> dict[str, Any]:
+    return {
+        "type": "line",
+        "x": x_metric_path,
+        "y": y_metric_path,
+        "group_by": group_by,
+    }
 
 
-def bar(y: str, x: str | None = None) -> dict[str, Any]:
-    return {"type": "bar", "x": x, "y": y}
+def bar(
+    y_metric_path: str, x_metric_path: str | None = None
+) -> dict[str, Any]:
+    return {"type": "bar", "x": x_metric_path, "y": y_metric_path}

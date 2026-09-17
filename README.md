@@ -8,7 +8,7 @@
 - [使用说明](docs/usage.md)
 - [Benchmark 脚本开发指南](docs/develop-benchmark.md)
 - [生成式推理指标说明](docs/metrics.md)
-- [Inference 评测指标说明](docs/inference.md)
+- [模型服务质量评测指标说明](docs/model_service_quality.md)
 - [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
 
 ## 当前范围
@@ -25,16 +25,19 @@ Python >= 3.12
 
 ## 目录与分类
 
+源码命名与CLI名称的对应关系见[命名约定与迁移说明](docs/naming.md)。
+领域术语见[术语表](CONTEXT.md)。
+
 公共架构不再按硬件厂商复制脚本。Benchmark 直接按评测目标分类：
 
 ```text
 src/luban_meter/
-├── benchmark/
-│   ├── generate/                 # 生成式推理性能评测
+├── benchmarking/
+│   ├── generation_performance/                 # 生成式推理性能评测
 │   │   ├── common/
-│   │   ├── serving-online/
-│   │   └── vllm-engine-offline/
-│   └── inference/                # 基于在线推理服务的模型效果评测
+│   │   ├── online_serving/
+│   │   └── offline_vllm_engine/
+│   └── model_service_quality/                # 基于在线推理服务的模型服务质量评测
 │       ├── common/               # 公共层：client / dataset / prompts / parsers / metrics / choice
 │       ├── scripts/              # 数据集离线准备脚本（官方格式 → 本地 jsonl）
 │       ├── data/                 # 随包内置的标准数据集（含 HumanEval）
@@ -65,24 +68,24 @@ module + benchmark + config
 ```text
 CLI
 → Core Engine
-→ benchmark/<module>/<benchmark>/benchmark.py
+→ benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
 → raw_result.json
-→ result.py
+→ calculate_metrics.py
 → result.json
 ```
 
 每个 Benchmark 目录遵循统一协议：
 
 ```text
-benchmark/<module>/<benchmark>/
-├── benchmark.py
-├── result.py
+benchmarking/<category_directory>/<benchmark_directory>/
+├── collect_raw.py
+├── calculate_metrics.py
 └── config.example.yaml
 ```
 
 ## 已实现 Benchmark
 
-`generate/serving-online` 通过 OpenAI-compatible HTTP 流式接口评测在线服务性能，
+`generation_performance/serving-online` 通过 OpenAI-compatible HTTP 流式接口评测在线服务性能，
 支持两种工作负载模式：
 
 - **random**：通过 `/v1/completions` 发送精确长度 Token ID Prompt，遍历
@@ -97,19 +100,19 @@ benchmark/<module>/<benchmark>/
 具体公式和历史原始文件重算规则见
 [指标说明](docs/metrics.md#4-在线服务指标)。
 
-`generate/vllm-engine-offline` 直接调用 vLLM Engine 进行离线推理，遍历输入长度、输出长度和请求
+`generation_performance/vllm-engine-offline` 直接调用 vLLM Engine 进行离线推理，遍历输入长度、输出长度和请求
 批量矩阵，输出内部 TTFT、Prefill/Decode 时延与吞吐量、Engine Execution Latency，
 并记录 KV Cache 静态容量环境；可选的 `engine_slo` 根据 Engine 内部时间线计算
 与在线服务边界分离的 Engine Goodput。
 
-`inference` 通过在线推理服务评测模型任务效果，已端到端实现 `ceval`、`cmmlu`（选择题
+`model_service_quality` 通过在线推理服务评测模型任务效果，已端到端实现 `ceval`、`cmmlu`（选择题
 Accuracy，支持 ppl / gen 两种评测模式）、`gsm8k`（数学题 Exact Match，gen 模式）、
 `humaneval`（代码补全 Pass@1，强制 Docker 沙箱执行）、`lcsts`（中文摘要
 ROUGE-1/2/L，gen 模式）和 `wikitext`（语言建模
 Perplexity / Bits-per-Byte，loss 模式）。
 其中 ppl / loss 模式走 `/v1/completions` 的 `echo + logprobs` 打分，要求
 `prompt_format=base`；gen 模式可走 chat 或 base 传输。默认数据集随包内置在
-`benchmark/inference/data/`，相对路径优先按 CWD 解析，未命中时回退到包内置数据。
+`benchmarking/model_service_quality/data/`，相对路径优先按 CWD 解析，未命中时回退到包内置数据。
 
 ## CLI 示例
 
@@ -125,7 +128,7 @@ luban-meter benchmarks list
 luban-meter run \
   --module generate \
   --benchmark serving-online \
-  --config src/luban_meter/benchmark/generate/serving-online/serving_online.yaml \
+  --config src/luban_meter/benchmarking/generation_performance/online_serving/serving_online.yaml \
   --model-name <served-model-name>
 ```
 
@@ -135,17 +138,17 @@ luban-meter run \
 CUDA_VISIBLE_DEVICES=0 luban-meter run \
   --module generate \
   --benchmark vllm-engine-offline \
-  --config src/luban_meter/benchmark/generate/vllm-engine-offline/vllm_engine_offline.yaml \
+  --config src/luban_meter/benchmarking/generation_performance/offline_vllm_engine/vllm_engine_offline.yaml \
   --model-path /data/models/<model>
 ```
 
-运行 inference 模型效果评测（C-Eval 选择题 ppl 打分）：
+运行 model_service_quality 模型服务质量评测（C-Eval 选择题 ppl 打分）：
 
 ```bash
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark ceval \
-  --config src/luban_meter/benchmark/inference/ceval/ceval.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/ceval/ceval.yaml \
   --model-name <served-model-name>
 ```
 
@@ -153,13 +156,13 @@ HumanEval 官方 164 题已随包内置；运行 Pass@1 前只需构建专用沙
 
 ```bash
 docker build \
-  -f src/luban_meter/benchmark/inference/humaneval/Containerfile \
+  -f src/luban_meter/benchmarking/model_service_quality/humaneval/Containerfile \
   -t luban-meter-humaneval-sandbox:v1 \
-  src/luban_meter/benchmark/inference/humaneval
+  src/luban_meter/benchmarking/model_service_quality/humaneval
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark humaneval \
-  --config src/luban_meter/benchmark/inference/humaneval/humaneval.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/humaneval/humaneval.yaml \
   --model-name <served-model-name>
 ```
 
@@ -169,9 +172,9 @@ luban-meter run \
 
 ```bash
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark wikitext \
-  --config src/luban_meter/benchmark/inference/wikitext/wikitext.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/wikitext/wikitext.yaml \
   --model-name <served-model-name>
 ```
 
@@ -179,9 +182,9 @@ luban-meter run \
 
 ```bash
 luban-meter run \
-  --module inference \
+  --module model_service_quality \
   --benchmark lcsts \
-  --config src/luban_meter/benchmark/inference/lcsts/lcsts.yaml \
+  --config src/luban_meter/benchmarking/model_service_quality/lcsts/lcsts.yaml \
   --model-name <served-model-name>
 ```
 
@@ -189,7 +192,7 @@ luban-meter run \
 
 ```bash
 luban-meter suite \
-  --suite inference-standard \
+  --suite model_service_quality_standard \
   --model-name <served-model-name>
 ```
 

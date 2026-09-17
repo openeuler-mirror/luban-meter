@@ -6,14 +6,19 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
 
 def to_jsonable(value: Any) -> Any:
     if is_dataclass(value):
-        return to_jsonable(asdict(value))
+        return {
+            item.metadata.get("json_name", item.name): to_jsonable(
+                getattr(value, item.name)
+            )
+            for item in fields(value)
+        }
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, Mapping):

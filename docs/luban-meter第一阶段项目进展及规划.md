@@ -21,14 +21,14 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | 阶段目标 | 当前状态 | 阶段成果 |
 |---|---|---|
 | 建立统一 Benchmark 框架 | 已完成 | 形成 CLI、Core、Execution、Result、Suite 分层架构 |
-| 建立统一 Benchmark 分类 | 已完成 | 使用 `benchmark/<module>/<benchmark>/` 管理评测脚本 |
+| 建立统一 Benchmark 分类 | 已完成 | 使用 `benchmarking/<category_directory>/<benchmark_directory>/` 管理评测脚本 |
 | 支持单任务执行 | 已完成 | 通过 `module + benchmark + config` 定位并执行测试 |
 | 支持多任务编排 | 已完成 | Suite 顺序执行多个任务，每个任务独立输出结果 |
 | 在线服务生成性能测试 | 已完成 | 实现 `serving-online` 开放式固定 Request Rate 负载测试，支持 random 和 dataset 双模式 |
 | vLLM 离线引擎测试 | 已完成 | 实现 `vllm-engine-offline` Prefill、Decode 和内部 TTFT 测试 |
 | 统一统计方法 | 已完成 | 输出 Mean、Median、P50、P90、P99、Min、Max、Stddev 和 Count |
 | 建设多硬件评价体系 | 规划中 | 以在线自回归推理为基础，在不同硬件环境复用同一 Benchmark 和测试语义 |
-| 模型任务精度评测 | 部分实现 | `inference` 已实现 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval（Pass@1）、lcsts（ROUGE-1/2/L）和 wikitext（Perplexity / Bits-per-Byte），并提供四任务标准 Suite；F1、Pass@k 的其他任务待接入 |
+| 模型任务精度评测 | 部分实现 | `model_service_quality` 已实现 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval（Pass@1）、lcsts（ROUGE-1/2/L）和 wikitext（Perplexity / Bits-per-Byte），并提供四任务标准 Suite；F1、Pass@k 的其他任务待接入 |
 | 设备和服务内部监控 | 待建设 | GPU 利用率、显存、功耗、服务端队列和 KV Cache 实际使用率尚未采集 |
 
 ## 三、总体架构方案
@@ -39,9 +39,9 @@ LuBan-Meter 采用“统一框架、场景组织、跨硬件复用、结果标�
 CLI
   → Core Engine
   → 按 module/benchmark 发现统一脚本
-  → 当前宿主机 Python 环境执行 benchmark.py
+  → 当前宿主机 Python 环境执行 collect_raw.py
   → raw_result.json
-  → result.py 计算和整理指标
+  → calculate_metrics.py 计算和整理指标
   → result.json
 ```
 
@@ -53,16 +53,16 @@ src/luban_meter/
 ├── execution/                    # 宿主机执行、日志和会话管理
 ├── result/                       # 原始结果处理与标准结果输出
 ├── suite/                        # 多个 Benchmark 顺序编排
-└── benchmark/
-    ├── generate/                 # 自回归生成引擎与在线服务性能
-    └── inference/                # 基于在线服务的模型任务效果评测（已部分落地）
+└── benchmarking/
+    ├── generation_performance/                 # 自回归生成引擎与在线服务性能
+    └── model_service_quality/                # 基于在线服务的模型服务质量评测（已部分落地）
 ```
 
 架构方案具有以下特点：
 
 1. **跨硬件复用**：同一 Benchmark 在不同硬件环境运行，公共 Core 不包含硬件品牌路由。
 2. **场景驱动**：Benchmark 按测试场景组织，而不是为每个指标单独建立脚本。
-3. **采集与计算分离**：`benchmark.py` 采集原始事实，`result.py` 校验并计算指标。
+3. **采集与计算分离**：`collect_raw.py` 采集原始事实，`calculate_metrics.py` 校验并计算指标。
 4. **环境边界明确**：框架复用用户准备好的 Python、驱动和硬件运行时，不承担适配。
 5. **结果可追溯**：每次运行保存请求、原始结果、标准结果、标准输出和错误日志。
 6. **可组合扩展**：新增场景或 Suite 不需要修改核心执行流程。
@@ -140,13 +140,13 @@ input_lengths × output_lengths × request_batch_sizes
 在线 TTFT 与 Engine Internal TTFT 的时间边界不同，只能在相同条件下做趋势对照或
 辅助定位额外开销，不能当作同一个指标直接比较。
 
-### 4.4 模型任务效果评测：`inference` 模块（已部分落地）
+### 4.4 模型服务质量评测：`model_service_quality` 模块（已部分落地）
 
-`inference` 与 `generate` 的分工是：`generate` 测量“生成得快不快、稳不稳”，
-`inference` 测量“模型答得好不好”——用标准数据集样本调用在线推理服务，将输出
+`model_service_quality` 与 `generate` 的分工是：`generate` 测量“生成得快不快、稳不稳”，
+`model_service_quality` 测量“模型答得好不好”——用标准数据集样本调用在线推理服务，将输出
 与参考答案对比计算正确性指标。当前已实现的内容包括：
 
-1. **公共层 `inference/common/`**：
+1. **公共层 `model_service_quality/common/`**：
 
    - `client.py`：OpenAI-compatible 在线服务调用，支持 `/v1/chat/completions`
      和带 `echo + logprobs` 的 `/v1/completions`；
@@ -174,28 +174,28 @@ input_lengths × output_lengths × request_batch_sizes
      `echo + logprobs` 滚动窗口计分。
 
 3. **数据与配置约束**：数据集只读取本地文件，运行时不下载；各 Benchmark 的
-   样例数据集随包内置在 `inference/data/`，相对 `dataset_path` 未命中时回退
+   样例数据集随包内置在 `model_service_quality/data/`，相对 `dataset_path` 未命中时回退
    到该内置目录，使默认配置可从任意工作目录开箱即用；离线准备脚本位于
-   `inference/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k、
+   `model_service_quality/scripts/`（prepare_ceval、prepare_cmmlu、prepare_gsm8k、
    prepare_humaneval、prepare_lcsts、prepare_wikitext），将官方
    数据转换为统一 jsonl 格式。ppl / loss 模式仅允许 `prompt_format=base`，
    组合 ppl + chat 会被 `validate_choice_parameters` 校验拒绝。逐样本记录 Prompt、
    原始输出、解析结果、判定、耗时与 Token 数，元数据记录评测模式、Prompt 版本、
    解码参数和评分器版本，保证分数可复现、可审计。
 
-`inference` 与 `generate` 共用同一条 `benchmark.py → raw_result.json →
-result.py → result.json` 执行链路和结果协议，指标按
-`metrics.task_view.<benchmark>` 组织，详细协议参见
-[Inference 评测指标说明](inference.md)。
+`model_service_quality` 与 `generate` 共用同一条 `collect_raw.py → raw_result.json →
+calculate_metrics.py → result.json` 执行链路和结果协议，指标按
+`metrics.task_view.<benchmark_name>` 组织，详细协议参见
+[模型服务质量评测指标说明](model_service_quality.md)。
 
 ## 五、对照 LLM 评价指标体系的覆盖情况
 
-参考 LLM 评价指标概览，完整评测可分为模型效果、语言模型自身指标、生成质量、
+参考 LLM 评价指标概览，完整评测可分为模型服务质量、语言模型自身指标、生成质量、
 推理性能、系统资源与可靠性、安全可信六类。当前覆盖情况如下：
 
 | 指标类别 | 代表指标 | 当前覆盖 | 说明 |
 |---|---|---|---|
-| 模型效果 | Accuracy、Precision、Recall、F1、EM、Pass@k | 部分实现 | `inference` 已实现 ceval、cmmlu、gsm8k 的 Accuracy/EM、humaneval 的 Pass@1；Token F1、Pass@k 等计算能力已具备，数据集评测待接入 |
+| 模型服务质量 | Accuracy、Precision、Recall、F1、EM、Pass@k | 部分实现 | `model_service_quality` 已实现 ceval、cmmlu、gsm8k 的 Accuracy/EM、humaneval 的 Pass@1；Token F1、Pass@k 等计算能力已具备，数据集评测待接入 |
 | 语言模型自身 | Cross-Entropy Loss、Perplexity | 已实现 | `wikitext` 通过 loss 模式计算 Perplexity 和 Bits-per-Byte |
 | 生成质量 | BLEU、ROUGE、BERTScore、Judge Score | 部分实现 | `lcsts` 已实现中文摘要 ROUGE-1/2/L F-measure |
 | 生成推理性能 | TTFT、ITL、TPOT、E2EL、Prefill/Decode | 已实现 | 覆盖在线客户端和 vLLM推理引擎两个观察边界 |
@@ -208,7 +208,7 @@ result.py → result.json` 执行链路和结果协议，指标按
 | 安全可信 | 幻觉率、安全拒答、鲁棒性 | 未实现 | 属于后续模型质量和安全评测范围 |
 
 阶段结论是：当前已经形成较完整的**生成式推理性能与服务能力评测基线**，但尚不能
-宣称具备完整的“LLM全链路综合评价”能力。模型效果、生成质量、资源效率和安全可信仍需
+宣称具备完整的“LLM全链路综合评价”能力。模型服务质量、生成质量、资源效率和安全可信仍需
 按独立数据来源与测试场景逐步建设。
 
 ## 六、指标与脚本组织原则
@@ -234,11 +234,11 @@ result.py → result.json` 执行链路和结果协议，指标按
 本阶段已经形成以下可复用资产：
 
 - 一套支持跨硬件复用的 Benchmark 框架与统一 CLI；
-- 单任务与 Suite 共用 CoreEngine 的执行机制；
+- 单任务与 Suite 共用 RunCoordinator 的执行机制；
 - Benchmark 自动发现和标准目录协议；
 - `raw_result.json` 与 `result.json` 两阶段结果协议；
 - 通用在线服务测试和 vLLM 离线引擎测试；
-- `inference` 模块模型任务效果评测（ceval、cmmlu、gsm8k、humaneval、lcsts、wikitext）
+- `model_service_quality` 模块模型服务质量评测（ceval、cmmlu、gsm8k、humaneval、lcsts、wikitext）
   与公共评测层、数据集离线准备脚本；
 - 精确输入/输出 Token 长度与开放式固定 Request Rate 负载矩阵；
 - Request View、Service View、Engine Request/Batch Metrics 指标分层；
@@ -257,17 +257,17 @@ result.py → result.json` 执行链路和结果协议，指标按
   标记为不支持，不使用客户端估算值替代；
 - 建设独立汇总报告层，按统一 Case 生成多硬件覆盖度和指标对比矩阵。
 
-### 第二优先级：建设 `inference` 模块
+### 第二优先级：建设 `model_service_quality` 模块
 
 已完成部分：
 
-- 建成 `inference/common/` 公共层（在线服务调用、数据集加载、Prompt 渲染、
+- 建成 `model_service_quality/common/` 公共层（在线服务调用、数据集加载、Prompt 渲染、
   答案解析、指标计算），统一采集逐样本任务结果、端到端延迟和 Token 数；
 - 基于现有框架对接脚本执行接口，形成模型生成结果评测的目录与结果协议；
 - 首批落地 ceval、cmmlu（Accuracy）、gsm8k（Exact Match）、HumanEval
   （Pass@1）、lcsts（ROUGE-1/2/L）和 wikitext（Perplexity / Bits-per-Byte），
   ppl/gen/loss 三种评测模式打通在线 logprobs 与代码补全链路；
-- 建成 `inference-standard` Suite，一次顺序执行四个数据集并在统一结果中内嵌
+- 建成 `model_service_quality_standard` Suite，一次顺序执行四个数据集并在统一结果中内嵌
   各任务指标；
 - 指标计算层已具备 Token F1、ROUGE、Pass@k、Perplexity 能力。
 
@@ -276,12 +276,12 @@ result.py → result.json` 执行链路和结果协议，指标按
 - 补齐 HumanEval 多样本 Pass@k、SQuAD（EM、Token F1）任务；
 - 建设跨运行对比报告。
 
-`inference` 统一通过在线推理服务调用模型，优先复用 OpenAI-compatible HTTP 接口；
+`model_service_quality` 统一通过在线推理服务调用模型，优先复用 OpenAI-compatible HTTP 接口；
 数据集、Prompt、答案解析和评分逻辑不按硬件环境复制。
 
 ### 暂不规划：算子层 Benchmark
 
-当前阶段不创建算子模块或算子脚本，优先完成生成性能和在线服务模型效果两条主线。
+当前阶段不创建算子模块或算子脚本，优先完成生成性能和在线服务模型服务质量两条主线。
 
 ### 后续扩展：模型安全与可信评测
 

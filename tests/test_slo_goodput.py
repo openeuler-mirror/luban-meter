@@ -1,9 +1,9 @@
 """Tests for SLO config, circuit breaker, and Goodput computation.
 
 Covers the M1 milestone:
-- slo config validation in benchmark.py
+- slo config validation in collect_raw.py
 - circuit breaker triggering based on Case P99 E2EL
-- Goodput computation in result.py
+- Goodput computation in calculate_metrics.py
 - backward compatibility when slo config is absent
 """
 
@@ -15,11 +15,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
-SERVING_RESULT_HANDLER = (
-    ROOT / "src/luban_meter/benchmark/generate/serving-online/result.py"
+SERVING_RESULT_HANDLER = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/calculate_metrics.py"
 )
-SERVING_BENCHMARK_ENTRY = (
-    ROOT / "src/luban_meter/benchmark/generate/serving-online/benchmark.py"
+SERVING_BENCHMARK_ENTRY = ROOT / (
+    "src/luban_meter/benchmarking/generation_performance"
+    "/online_serving/collect_raw.py"
 )
 
 
@@ -86,33 +88,39 @@ def make_raw_case(
 
 
 class SloConfigTest(unittest.TestCase):
-    """Verify slo config validation in benchmark.py."""
+    """Verify slo config validation in collect_raw.py."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_benchmark_slo", SERVING_BENCHMARK_ENTRY
         )
 
     def test_absent_slo_returns_none(self) -> None:
-        self.assertIsNone(self.benchmark.slo_config({}))
+        self.assertIsNone(self.collector_module.stop_conditions.slo_config({}))
 
     def test_none_slo_returns_none(self) -> None:
-        self.assertIsNone(self.benchmark.slo_config({"slo": None}))
+        self.assertIsNone(
+            self.collector_module.stop_conditions.slo_config({("slo"): None})
+        )
 
     def test_invalid_slo_type_raises(self) -> None:
         with self.assertRaisesRegex(TypeError, "slo must be an object"):
-            self.benchmark.slo_config({"slo": "invalid"})
+            self.collector_module.stop_conditions.slo_config(
+                {("slo"): ("invalid")}
+            )
 
     def test_empty_slo_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least one threshold"):
-            self.benchmark.slo_config({"slo": {}})
+            self.collector_module.stop_conditions.slo_config({"slo": {}})
 
     def test_invalid_threshold_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be a positive number"):
-            self.benchmark.slo_config({"slo": {"ttft_ms": -1}})
+            self.collector_module.stop_conditions.slo_config(
+                {("slo"): {("ttft_ms"): -1}}
+            )
 
     def test_valid_slo_returns_config(self) -> None:
-        slo = self.benchmark.slo_config(
+        slo = self.collector_module.stop_conditions.slo_config(
             {"slo": {"ttft_ms": 500, "tpot_ms": 50, "e2el_ms": 8000}}
         )
         self.assertEqual(
@@ -121,7 +129,9 @@ class SloConfigTest(unittest.TestCase):
         )
 
     def test_partial_slo_returns_config(self) -> None:
-        slo = self.benchmark.slo_config({"slo": {"ttft_ms": 500}})
+        slo = self.collector_module.stop_conditions.slo_config(
+            {("slo"): {("ttft_ms"): 500}}
+        )
         self.assertEqual(slo, {"ttft_ms": 500.0})
 
 
@@ -129,7 +139,7 @@ class CaseP99E2elTest(unittest.TestCase):
     """Verify P99 E2EL computation from a Case."""
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_benchmark_p99", SERVING_BENCHMARK_ENTRY
         )
 
@@ -137,13 +147,17 @@ class CaseP99E2elTest(unittest.TestCase):
         case = make_raw_case(
             requests=[make_request_record() for _ in range(9)]
         )
-        self.assertIsNone(self.benchmark.case_p99_e2el_ms(case))
+        self.assertIsNone(
+            self.collector_module.stop_conditions.case_p99_e2el_ms(case)
+        )
 
     def test_returns_none_for_no_successful_requests(self) -> None:
         case = make_raw_case(
             requests=[make_request_record(status="failed") for _ in range(10)]
         )
-        self.assertIsNone(self.benchmark.case_p99_e2el_ms(case))
+        self.assertIsNone(
+            self.collector_module.stop_conditions.case_p99_e2el_ms(case)
+        )
 
     def test_computes_p99_from_successful_e2el(self) -> None:
         case = make_raw_case(
@@ -152,24 +166,28 @@ class CaseP99E2elTest(unittest.TestCase):
                 for i in range(1, 11)
             ]
         )
-        p99 = self.benchmark.case_p99_e2el_ms(case)
+        p99 = self.collector_module.stop_conditions.case_p99_e2el_ms(case)
         self.assertIsNotNone(p99)
         self.assertGreater(p99, 0)
 
 
 class CircuitBreakerTest(unittest.TestCase):
-    """Verify circuit breaker triggering in run_benchmark (random mode)."""
+    """Verify circuit breaker triggering in collect_raw_result (random
+    mode).
+    """
 
     def setUp(self) -> None:
-        self.benchmark = load_module(
+        self.collector_module = load_module(
             "serving_benchmark_cb", SERVING_BENCHMARK_ENTRY
         )
 
     def _patch_run_case(self, p99_values: list[float]):
-        """Patch run_case_random to return cases with controlled P99 values.
+        """Patch run_case_random to return cases with controlled P99
+        values.
 
-        Each entry in p99_values produces a Case whose successful requests
-        have E2EL samples such that percentile(e2el, 0.99) == p99_values[i].
+        Each entry in p99_values produces a Case whose successful
+        requests have E2EL samples such that percentile(e2el, 0.99)
+        == p99_values[i].
         """
         call_index = [0]
 
@@ -208,18 +226,21 @@ class CircuitBreakerTest(unittest.TestCase):
         request = {"model_name": "test-model"}
 
         with patch.object(
-            self.benchmark, "run_case_random",
+            self.collector_module,
+            "run_case_random",
             side_effect=self._patch_run_case([100, 200]),
         ):
             with patch.object(
-                self.benchmark, "tokenize_seed_prompt",
+                self.collector_module.data_loader,
+                "tokenize_seed_prompt",
                 return_value=([1, 2], 32),
             ):
                 with patch.object(
-                    self.benchmark, "discover_model",
+                    self.collector_module.http_client,
+                    "discover_served_model_name",
                     return_value="test-model",
                 ):
-                    raw_result = self.benchmark.run_benchmark(
+                    raw_result = self.collector_module.collect_raw_result(
                         request, parameters
                     )
 
@@ -243,18 +264,21 @@ class CircuitBreakerTest(unittest.TestCase):
         request = {"model_name": "test-model"}
 
         with patch.object(
-            self.benchmark, "run_case_random",
+            self.collector_module,
+            "run_case_random",
             side_effect=self._patch_run_case([100, 200, 300]),
         ):
             with patch.object(
-                self.benchmark, "tokenize_seed_prompt",
+                self.collector_module.data_loader,
+                "tokenize_seed_prompt",
                 return_value=([1, 2], 32),
             ):
                 with patch.object(
-                    self.benchmark, "discover_model",
+                    self.collector_module.http_client,
+                    "discover_served_model_name",
                     return_value="test-model",
                 ):
-                    raw_result = self.benchmark.run_benchmark(
+                    raw_result = self.collector_module.collect_raw_result(
                         request, parameters
                     )
 
@@ -283,18 +307,21 @@ class CircuitBreakerTest(unittest.TestCase):
         request = {"model_name": "test-model"}
 
         with patch.object(
-            self.benchmark, "run_case_random",
+            self.collector_module,
+            "run_case_random",
             side_effect=self._patch_run_case([100, 200]),
         ):
             with patch.object(
-                self.benchmark, "tokenize_seed_prompt",
+                self.collector_module.data_loader,
+                "tokenize_seed_prompt",
                 return_value=([1, 2], 32),
             ):
                 with patch.object(
-                    self.benchmark, "discover_model",
+                    self.collector_module.http_client,
+                    "discover_served_model_name",
                     return_value="test-model",
                 ):
-                    raw_result = self.benchmark.run_benchmark(
+                    raw_result = self.collector_module.collect_raw_result(
                         request, parameters
                     )
 
@@ -302,7 +329,10 @@ class CircuitBreakerTest(unittest.TestCase):
         self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
 
     def test_circuit_breaker_not_triggered_for_few_samples(self) -> None:
-        """When successful samples < 10, P99 is not computed, breaker skips."""
+        """When successful samples < 10, P99 is not computed, breaker
+        skips.
+        """
+
         def fake_run_case(**kwargs):
             return {
                 "input_length": kwargs["input_length"],
@@ -312,8 +342,7 @@ class CircuitBreakerTest(unittest.TestCase):
                 "maximum_request_concurrency": kwargs["max_concurrency"],
                 "peak_concurrent_requests": 1,
                 "requests": [
-                    make_request_record(e2el_ms=10000)
-                    for _ in range(5)
+                    make_request_record(e2el_ms=10000) for _ in range(5)
                 ],
             }
 
@@ -332,18 +361,21 @@ class CircuitBreakerTest(unittest.TestCase):
         request = {"model_name": "test-model"}
 
         with patch.object(
-            self.benchmark, "run_case_random",
+            self.collector_module,
+            "run_case_random",
             side_effect=fake_run_case,
         ):
             with patch.object(
-                self.benchmark, "tokenize_seed_prompt",
+                self.collector_module.data_loader,
+                "tokenize_seed_prompt",
                 return_value=([1, 2], 32),
             ):
                 with patch.object(
-                    self.benchmark, "discover_model",
+                    self.collector_module.http_client,
+                    "discover_served_model_name",
                     return_value="test-model",
                 ):
-                    raw_result = self.benchmark.run_benchmark(
+                    raw_result = self.collector_module.collect_raw_result(
                         request, parameters
                     )
 
@@ -352,9 +384,11 @@ class CircuitBreakerTest(unittest.TestCase):
 
     def test_circuit_breaker_skipped_cases_recorded(self) -> None:
         """Verify skipped_cases lists remaining cases after trigger."""
+
         def fake_run_case(**kwargs):
             p99_map = {
-                (4, 2, 1.0): 100, (4, 2, 2.0): 200,
+                (4, 2, 1.0): 100,
+                (4, 2, 2.0): 200,
                 (4, 2, 4.0): 300,
             }
             key = (
@@ -392,18 +426,21 @@ class CircuitBreakerTest(unittest.TestCase):
         request = {"model_name": "test-model"}
 
         with patch.object(
-            self.benchmark, "run_case_random",
+            self.collector_module,
+            "run_case_random",
             side_effect=fake_run_case,
         ):
             with patch.object(
-                self.benchmark, "tokenize_seed_prompt",
+                self.collector_module.data_loader,
+                "tokenize_seed_prompt",
                 return_value=([1, 2], 32),
             ):
                 with patch.object(
-                    self.benchmark, "discover_model",
+                    self.collector_module.http_client,
+                    "discover_served_model_name",
                     return_value="test-model",
                 ):
-                    raw_result = self.benchmark.run_benchmark(
+                    raw_result = self.collector_module.collect_raw_result(
                         request, parameters
                     )
 
@@ -424,7 +461,7 @@ class CircuitBreakerTest(unittest.TestCase):
 
 
 class GoodputComputationTest(unittest.TestCase):
-    """Verify Goodput computation in result.py."""
+    """Verify Goodput computation in calculate_metrics.py."""
 
     def setUp(self) -> None:
         self.result_module = load_module(
@@ -466,7 +503,9 @@ class GoodputComputationTest(unittest.TestCase):
         self.assertNotIn("goodput", service_view)
 
     def test_tpot_only_single_token_not_applicable(self) -> None:
-        """Only tpot_ms configured, all output_tokens==1: not_applicable."""
+        """Only tpot_ms configured, all output_tokens==1:
+        not_applicable.
+        """
         raw_case = make_raw_case(
             input_length=10,
             output_length=1,
@@ -503,7 +542,9 @@ class GoodputComputationTest(unittest.TestCase):
             "metrics": {"cases": [raw_case]},
             "metadata": {
                 "slo_config": {
-                    "ttft_ms": 200, "tpot_ms": 100, "e2el_ms": 1000,
+                    "ttft_ms": 200,
+                    "tpot_ms": 100,
+                    "e2el_ms": 1000,
                 },
             },
         }
@@ -673,7 +714,9 @@ class GoodputComputationTest(unittest.TestCase):
         self.assertEqual(goodput_2["slo_violated_count"]["value"], 10)
 
     def test_backward_compatible_with_old_raw_result(self) -> None:
-        """Old raw_result.json without slo_config metadata works normally."""
+        """Old raw_result.json without slo_config metadata works
+        normally.
+        """
         raw_case = make_raw_case(
             requests=[
                 make_request_record(
@@ -722,7 +765,9 @@ class GoodputThroughputValueTest(unittest.TestCase):
         )
 
     def test_goodput_output_token_throughput(self) -> None:
-        """Verify goodput_output_token_throughput uses SLO-satisfied tokens."""
+        """Verify goodput_output_token_throughput uses SLO-satisfied
+        tokens.
+        """
         raw_case = make_raw_case(
             input_length=10,
             output_length=3,
@@ -752,13 +797,15 @@ class GoodputThroughputValueTest(unittest.TestCase):
         service_view = result["metrics"]["cases"][0]["service_view"]
         goodput = service_view["goodput"]
 
-        # Only 1 satisfied request with 3 output tokens over 10s = 0.3 token/s
+        # Only 1 satisfied request with 3 output tokens over 10s = 0.3
+        # token/s
         self.assertEqual(goodput["goodput_request_throughput"]["value"], 0.1)
         self.assertEqual(
             goodput["goodput_output_token_throughput"]["value"], 0.3
         )
 
-        # service_view output_token_throughput uses ALL successful tokens
+        # service_view output_token_throughput uses ALL successful
+        # tokens
         # 2 successful × 3 tokens / 10s = 0.6 token/s
         self.assertEqual(service_view["output_token_throughput"]["value"], 0.6)
 

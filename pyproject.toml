@@ -27,15 +27,15 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 luban_meter = [
-  "benchmark/**/benchmark.py",
-  "benchmark/**/result.py",
-  "benchmark/**/executor.py",
-  "benchmark/**/sandbox_runner.py",
-  "benchmark/**/Containerfile",
-  "benchmark/**/*.yaml",
-  "benchmark/inference/data/**/*.jsonl",
-  "benchmark/inference/data/**/*.json",
-  "benchmark/inference/data/**/LICENSE*",
+  "benchmarking/**/collect_raw.py",
+  "benchmarking/**/calculate_metrics.py",
+  "benchmarking/**/executor.py",
+  "benchmarking/**/sandbox_runner.py",
+  "benchmarking/**/Containerfile",
+  "benchmarking/**/*.yaml",
+  "benchmarking/model_service_quality/data/**/*.jsonl",
+  "benchmarking/model_service_quality/data/**/*.json",
+  "benchmarking/model_service_quality/data/**/LICENSE*",
   "suite/definitions/*.yaml",
 ]
 
@@ -44,7 +44,7 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 99
+line-length = 79
 target-version = "py312"
 src = ["src", "tests"]
 
@@ -53,10 +53,8 @@ src = ["src", "tests"]
 # F = pyflakes (unused imports, undefined names, etc.)
 # W = pycodestyle warnings
 # I = isort (import ordering)
-select = ["E", "F", "W", "I"]
-ignore = [
-  "E501",  # line length handled by formatter
-]
+# N = PEP 8 naming conventions
+select = ["E", "F", "W", "I", "N"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["luban_meter"]

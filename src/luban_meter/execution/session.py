@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from luban_meter.core.models import (
+from luban_meter.core.run_contracts import (
     RawRunArtifacts,
     ResolvedRun,
 )
@@ -41,7 +41,9 @@ def write_command_logs(raw_dir: Path, stdout: str, stderr: str) -> None:
     (raw_dir / "stderr.log").write_text(stderr, encoding="utf-8")
 
 
-def collected_artifacts(raw_dir: Path, artifact_dir: Path) -> RawRunArtifacts:
+def build_run_artifact_paths(
+    raw_dir: Path, artifact_dir: Path
+) -> RawRunArtifacts:
     return RawRunArtifacts(
         raw_result=raw_dir / "raw_result.json",
         stdout_log=raw_dir / "stdout.log",

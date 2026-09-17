@@ -10,10 +10,14 @@ from urllib.parse import unquote
 import pytest
 
 from luban_meter.cli import main
-from luban_meter.core.models import BenchmarkResult
-from luban_meter.core.registry import BenchmarkRegistry
-from luban_meter.reporting.data import from_payload, load_report, lookup
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
+from luban_meter.core.run_contracts import RunResult
 from luban_meter.reporting.render import write_report
+from luban_meter.reporting.result_reader import (
+    build_report_from_result,
+    load_report,
+    resolve_metric_pointer,
+)
 from luban_meter.result.report_spec import bar, line, table
 from luban_meter.result.schema import RESULT_SCHEMA, SUITE_SCHEMA
 from luban_meter.suite.loader import SuiteLoader
@@ -23,13 +27,13 @@ from tests.test_suite import BENCHMARK_SOURCE, RESULT_SOURCE
 
 def result(metrics=None, *, run_id="demo", report=None):
     return to_jsonable(
-        BenchmarkResult(
+        RunResult(
             schema_version=RESULT_SCHEMA,
             run_id=run_id,
             status="success",
-            module="custom",
-            benchmark="never-registered",
-            config="test.yaml",
+            category_name="custom",
+            benchmark_name="never-registered",
+            config_path="test.yaml",
             metrics=metrics or {},
             metadata={"report": report} if report else {},
         )
@@ -93,11 +97,11 @@ def test_unknown_benchmark_auto_extracts_without_registration(tmp_path):
     assert rows["/a~1b~0c/count"]["unit"] == "count"
     assert rows["/cases/0/speed/value"]["value"] == "5"
     assert source.read_bytes() == original
-    assert lookup(metrics, "/a~1b~0c/p99") == (2, "s")
+    assert resolve_metric_pointer(metrics, "/a~1b~0c/p99") == (2, "s")
     reordered = json.loads(original)
     reordered["metrics"] = dict(reversed(reordered["metrics"].items()))
     csv_before = (path.parent / "results.csv").read_bytes()
-    write_report(from_payload(reordered, source), path.parent)
+    write_report(build_report_from_result(reordered, source), path.parent)
     assert path.read_text() == content
     assert (path.parent / "results.csv").read_bytes() == csv_before
 
@@ -193,7 +197,7 @@ def test_suite_is_self_contained_and_keeps_failures(tmp_path):
     assert len(csv_rows(path.parent / "results.csv")) == 3
     payload["tasks"][0]["output"]["benchmark"] = "wrong"
     with pytest.raises(ValueError, match="身份不一致"):
-        from_payload(payload, source)
+        build_report_from_result(payload, source)
 
 
 def test_multiple_suites_generate_independent_reports(tmp_path, capsys):
@@ -256,7 +260,7 @@ def test_v1_rejected_and_bad_input_does_not_hide_valid_report(tmp_path):
     invalid = result()
     invalid["metrics"] = []
     with pytest.raises(ValueError, match="metrics"):
-        from_payload(invalid, second)
+        build_report_from_result(invalid, second)
 
 
 def test_multiple_inputs_in_same_directory_do_not_overwrite(tmp_path):
@@ -288,9 +292,15 @@ def test_json_console_and_report_failure_preserve_result(
         print("hardware monitor stdout")
         data = result({"speed": 4}, run_id=request.run_id)
         save(request.output_dir / request.run_id / "result.json", data)
-        return BenchmarkResult(**data)
+        return RunResult(
+            category_name=data.pop("module"),
+            benchmark_name=data.pop("benchmark"),
+            config_path=data.pop("config"),
+            model_info=data.pop("model"),
+            **data,
+        )
 
-    monkeypatch.setattr("luban_meter.cli.CoreEngine.run", run)
+    monkeypatch.setattr("luban_meter.cli.RunCoordinator.run", run)
     args = [
         "run",
         "--module",
@@ -347,22 +357,24 @@ def test_saved_monitoring_charts_are_combined_using_artifact_directory(
 def test_cli_automatically_reports_real_runs_and_suite(
     tmp_path, monkeypatch, capsys
 ):
-    benchmark_root = tmp_path / "benchmark"
-    custom = benchmark_root / "inference/custom"
+    benchmark_root = tmp_path / "benchmarking"
+    custom = benchmark_root / "model_service_quality/custom"
     custom.mkdir(parents=True)
-    (custom / "benchmark.py").write_text(BENCHMARK_SOURCE, encoding="utf-8")
-    (custom / "result.py").write_text(RESULT_SOURCE, encoding="utf-8")
+    (custom / "collect_raw.py").write_text(BENCHMARK_SOURCE, encoding="utf-8")
+    (custom / "calculate_metrics.py").write_text(
+        RESULT_SOURCE, encoding="utf-8"
+    )
     config = tmp_path / "test.yaml"
     config.write_text("value: 123\n", encoding="utf-8")
     suites = tmp_path / "definitions"
     suites.mkdir()
     (suites / "demo.yaml").write_text(
         "name: demo\ntasks:\n"
-        "  - name: custom\n    module: inference\n"
+        "  - name: custom\n    module: model_service_quality\n"
         "    benchmark: custom\n    config: ../test.yaml\n"
-        "  - name: broken\n    module: inference\n"
+        "  - name: broken\n    module: model_service_quality\n"
         "    benchmark: missing\n    config: ../test.yaml\n"
-        "  - name: later\n    module: inference\n"
+        "  - name: later\n    module: model_service_quality\n"
         "    benchmark: custom\n    config: ../test.yaml\n",
         encoding="utf-8",
     )
@@ -378,7 +390,7 @@ def test_cli_automatically_reports_real_runs_and_suite(
             [
                 "run",
                 "--module",
-                "inference",
+                "model_service_quality",
                 "--benchmark",
                 "custom",
                 "--config",

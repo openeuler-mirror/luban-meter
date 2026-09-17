@@ -10,11 +10,11 @@ from types import ModuleType
 from typing import Any
 
 from luban_meter.core.errors import ResultProcessingError
-from luban_meter.core.models import (
-    BenchmarkResult,
+from luban_meter.core.run_contracts import (
     RawRunArtifacts,
     ResolvedRun,
     RunRequest,
+    RunResult,
 )
 from luban_meter.result.schema import RESULT_SCHEMA, validate_result
 from luban_meter.result.writer import ResultWriter
@@ -29,7 +29,7 @@ class ResultManager:
         self,
         run: ResolvedRun,
         artifacts: RawRunArtifacts,
-    ) -> BenchmarkResult:
+    ) -> RunResult:
         raw = self._read_raw_result(artifacts.raw_result)
         status = str(raw.get("status") or "")
         if status != "success":
@@ -46,12 +46,14 @@ class ResultManager:
                 },
             )
 
-        processor = self._load_processor(run.benchmark.result_handler)
+        processor = self._load_processor(
+            run.benchmark_definition.processor_path
+        )
         processed = processor(raw)
         if not isinstance(processed, Mapping):
             raise ResultProcessingError(
                 f"result processor must return a mapping: "
-                f"{run.benchmark.result_handler}"
+                f"{run.benchmark_definition.processor_path}"
             )
 
         metrics = processed.get("metrics", processed)
@@ -63,7 +65,9 @@ class ResultManager:
         if not isinstance(metrics, Mapping):
             raise ResultProcessingError("processed metrics must be a mapping")
         if not isinstance(environment, Mapping):
-            raise ResultProcessingError("processed environment must be a mapping")
+            raise ResultProcessingError(
+                "processed environment must be a mapping"
+            )
 
         result_status = processed.get("status", "success")
         if not isinstance(result_status, str) or result_status not in {
@@ -96,7 +100,7 @@ class ResultManager:
         error: Exception,
         parameters: Mapping[str, Any],
         artifacts: RawRunArtifacts | None = None,
-    ) -> BenchmarkResult:
+    ) -> RunResult:
         return self._result(
             request,
             status="failed",
@@ -109,7 +113,7 @@ class ResultManager:
             },
         )
 
-    def write(self, request: RunRequest, result: BenchmarkResult) -> None:
+    def write(self, request: RunRequest, result: RunResult) -> None:
         validate_result(to_jsonable(result))
         self._writer.write(
             request.output_dir / request.run_id / "result.json",
@@ -124,12 +128,17 @@ class ResultManager:
             with path.open("r", encoding="utf-8") as stream:
                 value = json.load(stream)
         except (OSError, json.JSONDecodeError) as exc:
-            raise ResultProcessingError(f"invalid raw result {path}: {exc}") from exc
+            raise ResultProcessingError(
+                f"invalid raw result {path}: {exc}"
+            ) from exc
         if not isinstance(value, Mapping):
-            raise ResultProcessingError("raw result must contain a JSON object")
+            raise ResultProcessingError(
+                "raw result must contain a JSON object"
+            )
         if value.get("schema_version") != "luban-meter.raw/v1":
             raise ResultProcessingError(
-                f"unsupported raw result schema: {value.get('schema_version')!r}"
+                "unsupported raw result schema: "
+                f"{value.get('schema_version')!r}"
             )
         return value
 
@@ -138,16 +147,22 @@ class ResultManager:
         path: Path,
     ) -> Callable[[Mapping[str, Any]], Mapping[str, Any]]:
         if not path.is_file():
-            raise ResultProcessingError(f"result processor does not exist: {path}")
+            raise ResultProcessingError(
+                f"result processor does not exist: {path}"
+            )
 
         module_name = f"_luban_meter_result_{abs(hash(path.resolve()))}"
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if spec is None or spec.loader is None:
-            raise ResultProcessingError(f"could not load result processor: {path}")
-        module = importlib.util.module_from_spec(spec)
-        ResultManager._execute_module(spec.loader, module, path)
+        module_spec = importlib.util.spec_from_file_location(module_name, path)
+        if module_spec is None or module_spec.loader is None:
+            raise ResultProcessingError(
+                f"could not load result processor: {path}"
+            )
+        processor_module = importlib.util.module_from_spec(module_spec)
+        ResultManager._execute_module(
+            module_spec.loader, processor_module, path
+        )
 
-        processor = getattr(module, "process", None)
+        processor = getattr(processor_module, "process", None)
         if not callable(processor):
             raise ResultProcessingError(
                 f"result processor must define process(raw_result): {path}"
@@ -155,9 +170,11 @@ class ResultManager:
         return processor
 
     @staticmethod
-    def _execute_module(loader: Any, module: ModuleType, path: Path) -> None:
+    def _execute_module(
+        loader: Any, processor_module: ModuleType, path: Path
+    ) -> None:
         try:
-            loader.exec_module(module)
+            loader.exec_module(processor_module)
         except Exception as exc:
             raise ResultProcessingError(
                 f"could not import result processor {path}: {exc}"
@@ -173,7 +190,7 @@ class ResultManager:
         artifacts: RawRunArtifacts | None = None,
         metadata: Mapping[str, Any] | None = None,
         error: Mapping[str, Any] | None = None,
-    ) -> BenchmarkResult:
+    ) -> RunResult:
         artifact_data: Mapping[str, str] = {}
         if artifacts is not None:
             artifact_data = {
@@ -183,14 +200,14 @@ class ResultManager:
                 "directory": str(artifacts.artifact_dir),
             }
 
-        return BenchmarkResult(
+        return RunResult(
             schema_version=RESULT_SCHEMA,
             run_id=request.run_id,
             status=status,
-            module=request.module,
-            benchmark=request.benchmark,
-            config=str(request.config),
-            model={
+            category_name=request.category_name,
+            benchmark_name=request.benchmark_name,
+            config_path=str(request.config_path),
+            model_info={
                 "name": request.model_name,
                 "path": str(request.model_path)
                 if request.model_path is not None

@@ -6,9 +6,9 @@ import pytest
 from matplotlib.figure import Figure
 
 from luban_meter.cli import main
-from luban_meter.core.registry import BenchmarkRegistry
-from luban_meter.reporting.data import load_report
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.reporting.render import write_report
+from luban_meter.reporting.result_reader import load_report
 from luban_meter.result.report_spec import bar, line, table
 from luban_meter.result.schema import validate_result
 from luban_meter.suite.loader import SuiteLoader
@@ -18,9 +18,9 @@ from tests.test_suite import BENCHMARK_SOURCE, RESULT_SOURCE
 
 @pytest.fixture
 def malformed_run(tmp_path, monkeypatch):
-    directory = tmp_path / "benchmark/generate/custom"
+    directory = tmp_path / "benchmarking/generation_performance/custom"
     directory.mkdir(parents=True)
-    (directory / "benchmark.py").write_text(
+    (directory / "collect_raw.py").write_text(
         BENCHMARK_SOURCE.replace(
             '"status": "success",',
             '"status": payload["parameters"]["status"],\n'
@@ -30,7 +30,9 @@ def malformed_run(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    (directory / "result.py").write_text(RESULT_SOURCE, encoding="utf-8")
+    (directory / "calculate_metrics.py").write_text(
+        RESULT_SOURCE, encoding="utf-8"
+    )
     bad = tmp_path / "bad.yaml"
     bad.write_text("status: failed\nerror: boom\nvalue: 1\n")
     good = tmp_path / "good.yaml"
@@ -47,7 +49,7 @@ def malformed_run(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         "luban_meter.cli.BenchmarkRegistry",
-        lambda: BenchmarkRegistry(tmp_path / "benchmark"),
+        lambda: BenchmarkRegistry(tmp_path / "benchmarking"),
     )
     monkeypatch.setattr(
         "luban_meter.cli.SuiteLoader", lambda: SuiteLoader(definitions)
@@ -58,13 +60,24 @@ def malformed_run(tmp_path, monkeypatch):
 
 def test_invalid_result_is_saved_as_a_diagnostic(malformed_run, capsys):
     config, output = malformed_run
-    assert main(
-        [
-            "run", "--module", "generate", "--benchmark", "custom",
-            "--config", str(config), "--output", str(output),
-            "--format", "json",
-        ]
-    ) == 1
+    assert (
+        main(
+            [
+                "run",
+                "--module",
+                "generate",
+                "--benchmark",
+                "custom",
+                "--config",
+                str(config),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            ]
+        )
+        == 1
+    )
     payload = json.loads(capsys.readouterr().out)
     validate_result(payload)
     directory = output / payload["run_id"]
@@ -86,18 +99,34 @@ def test_unreadable_raw_result_keeps_the_original_failure(
     malformed_run, capsys
 ):
     config, output = malformed_run
-    entry = config.parent / "benchmark/generate/custom/benchmark.py"
+    entry = (
+        config.parent
+        / "benchmarking/generation_performance/custom/collect_raw.py"
+    )
     entry.write_text(
         BENCHMARK_SOURCE.split("with open(args.request")[0]
         + "with open(args.output, 'wb') as stream:\n"
         + "    stream.write(bytes([255]))\n",
         encoding="utf-8",
     )
-    assert main([
-        "run", "--module", "generate", "--benchmark", "custom",
-        "--config", str(config), "--output", str(output),
-        "--format", "json",
-    ]) == 1
+    assert (
+        main(
+            [
+                "run",
+                "--module",
+                "generate",
+                "--benchmark",
+                "custom",
+                "--config",
+                str(config),
+                "--output",
+                str(output),
+                "--format",
+                "json",
+            ]
+        )
+        == 1
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["metadata"]["failure_stage"] == "process_result"
     assert payload["error"]["type"] == "UnicodeDecodeError"
@@ -114,15 +143,21 @@ def test_invalid_child_result_respects_suite_fail_fast(
 ):
     _, output = malformed_run
     args = [
-        "suite", "--suite", "regression", "--output", str(output),
-        "--format", "json",
+        "suite",
+        "--suite",
+        "regression",
+        "--output",
+        str(output),
+        "--format",
+        "json",
     ]
     if fail_fast:
         args.append("--fail-fast")
     assert main(args) == 1
     payload = json.loads(capsys.readouterr().out)
     assert [entry["status"] for entry in payload["tasks"]] == [
-        "failed", "skipped" if fail_fast else "success",
+        "failed",
+        "skipped" if fail_fast else "success",
     ]
     directory = output / payload["suite_id"]
     assert json.loads((directory / "suite_result.json").read_text()) == payload
@@ -133,40 +168,35 @@ def test_invalid_child_result_respects_suite_fail_fast(
 
 
 @pytest.mark.parametrize("bad_type", [[], ["line"], {}, None, 7, True])
-def test_invalid_optional_chart_does_not_block_suite(
-    tmp_path, bad_type
-):
-    declaration = {
-        "tables": [table("Latency", "", {"/latency": "Latency"})]
-    }
-    declaration["tables"][0]["charts"] = [
-        {"type": bad_type, "y": "/latency"}
-    ]
+def test_invalid_optional_chart_does_not_block_suite(tmp_path, bad_type):
+    declaration = {"tables": [table("Latency", "", {"/latency": "Latency"})]}
+    declaration["tables"][0]["charts"] = [{"type": bad_type, "y": "/latency"}]
     source = save(
         tmp_path / "suite_result.json",
-        suite([
-            result({"throughput": 42}, run_id="good"),
-            result({"latency": 3}, run_id="bad", report=declaration),
-        ]),
+        suite(
+            [
+                result({"throughput": 42}, run_id="good"),
+                result({"latency": 3}, run_id="bad", report=declaration),
+            ]
+        ),
     )
     before = source.read_bytes()
     output = tmp_path / "report"
-    assert main([
-        "report", "--input", str(source), "--output", str(output)
-    ]) == 0
+    assert (
+        main(["report", "--input", str(source), "--output", str(output)]) == 0
+    )
     content = (output / "report.md").read_text()
     assert "报告声明无效" in content
     assert "/latency" in content and "/throughput" in content
     assert {row["value"] for row in csv_rows(output / "results.csv")} == {
-        "3", "42",
+        "3",
+        "42",
     }
     assert source.read_bytes() == before
 
 
 @pytest.mark.parametrize("shape", ["dict", "list", "mapping"])
-def test_inherited_units_reach_tables_and_charts(
-    tmp_path, monkeypatch, shape
-):
+def test_inherited_units_reach_tables_and_charts(tmp_path, monkeypatch, shape):
     record = {
         "p50": 2,
         "p99": {"value": 8, "unit": "us"},
@@ -181,10 +211,15 @@ def test_inherited_units_reach_tables_and_charts(
     if shape == "mapping":
         columns["/key"] = "Group"
     declaration = {
-        "tables": [table(
-            "Latency", "/latency/summary", columns,
-            mapping=shape == "mapping", charts=[bar(f"{prefix}/p50")],
-        )]
+        "tables": [
+            table(
+                "Latency",
+                "/latency/summary",
+                columns,
+                mapping=shape == "mapping",
+                charts=[bar(f"{prefix}/p50")],
+            )
+        ]
     }
     source = save(
         tmp_path / "result.json",
@@ -215,24 +250,39 @@ def test_inherited_units_reach_tables_and_charts(
     assert source.read_bytes() == before
 
 
-def test_inference_context_preserves_recorded_values_and_layout(tmp_path):
+def test_model_service_quality_context_preserves_recorded_values_and_layout(
+    tmp_path,
+):
     data = result(
         {"score": 0.8},
         report={"tables": [table("Score", "", {"/score": "Score"})]},
     )
-    data["module"] = "inference"
+    data["module"] = "model_service_quality"
     data["model"] = {"name": "request-model"}
-    data["metadata"].update({
-        "model": "actual-model", "dataset": "recorded-dataset",
-        "split": "test", "sample_count": 0, "few_shot": 0,
-        "eval_mode": "ppl", "prompt_format": "base",
-        "prompt_version": "prompt-v2", "temperature": 0.0,
-        "max_tokens": None, "stop": [], "scorer_version": "scorer-v3",
-    })
+    data["metadata"].update(
+        {
+            "model": "actual-model",
+            "dataset": "recorded-dataset",
+            "split": "test",
+            "sample_count": 0,
+            "few_shot": 0,
+            "eval_mode": "ppl",
+            "prompt_format": "base",
+            "prompt_version": "prompt-v2",
+            "temperature": 0.0,
+            "max_tokens": None,
+            "stop": [],
+            "scorer_version": "scorer-v3",
+        }
+    )
     data["parameters"] = {
-        "temperature": 0.8, "max_tokens": 999,
-        "stop": ["configured-stop"], "few_shot": 7,
-        "shuffle": False, "seed": 0, "max_samples": 12,
+        "temperature": 0.8,
+        "max_tokens": 999,
+        "stop": ["configured-stop"],
+        "few_shot": 7,
+        "shuffle": False,
+        "seed": 0,
+        "max_samples": 12,
         "prompt_template": "full-prompt-must-not-appear",
     }
     data["environment"]["hardware_environment"] = {
@@ -249,13 +299,24 @@ def test_inference_context_preserves_recorded_values_and_layout(tmp_path):
     )
     for text in (content, console):
         for term in (
-            "actual-model", "recorded-dataset", "ppl", "base",
-            "prompt-v2", "scorer-v3", "未记录", "max_tokens=null",
-            "stop=[]", "temperature=0.0", "shuffle=false", "seed=0",
+            "actual-model",
+            "recorded-dataset",
+            "ppl",
+            "base",
+            "prompt-v2",
+            "scorer-v3",
+            "未记录",
+            "max_tokens=null",
+            "stop=[]",
+            "temperature=0.0",
+            "shuffle=false",
+            "seed=0",
         ):
             assert term in text
         for term in (
-            "request-model", "configured-stop", "999",
+            "request-model",
+            "configured-stop",
+            "999",
             "full-prompt-must-not-appear",
         ):
             assert term not in text
@@ -270,11 +331,16 @@ def test_mapping_table_does_not_turn_unit_metadata_into_a_metric(tmp_path):
         tmp_path / "result.json",
         result(
             {"latencies": {"unit": "ms", "A": 0, "B": 4}},
-            report={"tables": [table(
-                "Latency", "/latencies",
-                {"/key": "Name", "/value": "Latency"},
-                mapping=True,
-            )]},
+            report={
+                "tables": [
+                    table(
+                        "Latency",
+                        "/latencies",
+                        {"/key": "Name", "/value": "Latency"},
+                        mapping=True,
+                    )
+                ]
+            },
         ),
     )
     path, _ = write_report(load_report(source), tmp_path / "report")
@@ -287,14 +353,25 @@ def test_line_chart_preserves_units_on_both_axes(tmp_path, monkeypatch):
     source = save(
         tmp_path / "result.json",
         result(
-            {"latency": {"unit": "ms", "rows": [
-                {"time": 1, "delay": 2}, {"time": 2, "delay": 3},
-            ]}},
-            report={"tables": [table(
-                "Latency", "/latency/rows",
-                {"/time": "Time", "/delay": "Delay"},
-                charts=[line("/time", "/delay", [])],
-            )]},
+            {
+                "latency": {
+                    "unit": "ms",
+                    "rows": [
+                        {"time": 1, "delay": 2},
+                        {"time": 2, "delay": 3},
+                    ],
+                }
+            },
+            report={
+                "tables": [
+                    table(
+                        "Latency",
+                        "/latency/rows",
+                        {"/time": "Time", "/delay": "Delay"},
+                        charts=[line("/time", "/delay", [])],
+                    )
+                ]
+            },
         ),
     )
     labels = []
@@ -316,7 +393,7 @@ def test_suite_context_uses_each_tasks_own_metadata(tmp_path):
     outputs = []
     for index in (0, 1):
         data = result({"score": index}, run_id=f"run-{index}")
-        data["module"] = "inference"
+        data["module"] = "model_service_quality"
         data["metadata"] = {"model": f"model-{index}"}
         outputs.append(data)
     source = save(tmp_path / "suite_result.json", suite(outputs))
