@@ -1,0 +1,18 @@
+# Local official dev-v2.0.json is also accepted. No runtime downloads.
+service_url: http://127.0.0.1:8000
+api_key: ""
+request_timeout: 60
+dataset_path: data/squad/dev-v2.0.json
+split: validation
+# null selects the entire file; set 20 for an initial smoke test.
+max_samples: null
+shuffle: false
+seed: 42
+few_shot: 0
+eval_mode: gen
+prompt_format: chat  # chat | base
+prompt_version: squad2-gen-v1
+max_tokens: 64
+stop: ["\n"]
+max_concurrency: 8
+temperature: 0.0

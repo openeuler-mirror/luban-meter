@@ -12,6 +12,7 @@ from typing import Any
 CHOICE_LETTERS = ("A", "B", "C", "D")
 
 SUPPORTED_PROMPT_VERSIONS = {
+    "squad": ("squad2-gen-v1",),
     "ceval": ("ceval-v1",),
     "cmmlu": ("cmmlu-v1",),
     "gsm8k": ("gsm8k-v1",),
@@ -111,3 +112,14 @@ def render_lcsts_prompt(
         )
     blocks.append(template.format(content=content.strip()))
     return "\n\n".join(blocks)
+def render_squad_prompt(sample: Mapping[str, Any]) -> str:
+    """Render zero-shot SQuAD 2.0 without truncating the source context."""
+    return (
+        "Answer the question using only the passage below. "
+        "Return only the shortest answer span copied from the passage. "
+        "If the passage does not support an answer, return exactly "
+        "unanswerable. Do not explain your answer.\n\n"
+        f"Title: {sample.get('title', '')}\n\n"
+        f"Passage: {sample['context']}\n\n"
+        f"Question: {sample['question']}\nAnswer:"
+    )
