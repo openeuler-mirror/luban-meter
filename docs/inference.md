@@ -95,7 +95,7 @@ src/luban_meter/benchmark/inference/
 ├── cmmlu/            benchmark.py + result.py + cmmlu.yaml      （已实现）
 ├── gsm8k/            benchmark.py + result.py + gsm8k.yaml      （已实现）
 ├── humaneval/        benchmark.py + result.py + executor.py + Containerfile（已实现 Pass@1）
-├── squad/            benchmark.py + result.py + squad.yaml      （规划）
+├── squad/            benchmark.py + result.py + squad.yaml      （已实现 SQuAD 2.0）
 ├── summarization/    benchmark.py + result.py + summarization.yaml（规划）
 ├── lcsts/            benchmark.py + result.py + lcsts.yaml      （已实现）
 └── wikitext/         benchmark.py + result.py + wikitext.yaml   （已实现）
@@ -290,23 +290,30 @@ pass@k = 1 - C(n - c, k) / C(n, k)    # C 为组合数
   顶层 `status` 和错误计数中；
 - 沙箱逻辑只服务本 Benchmark，不下沉到 `common/`。
 
-### 6.5 SQuAD（开放问答，P1）
+### 6.5 SQuAD 2.0（阅读理解，Generation）
 
-样本字段：`{id, context, question, answers[]}`。
+已实现 `inference/squad`，协议 `squad2-gen-v1`，固定 zero-shot。
+读取官方 v2.0 JSON 或准备后的 JSONL；运行时不下载数据。完整操作见
+[SQuAD 2.0 使用说明](squad.md)。
 
-1. 渲染：指令 + 背景（超长截断）+ 问题 + “答案：”；
-2. gen 模式短生成；
-3. 归一化：小写、去标点、去冠词 a/an/the、压缩空白；
-4. 指标：
+- 字段：`id, title, context, question, answers[], is_impossible`。
+- 保留全部 gold answers；无答案题的 answers 为空，plausible_answers 不参与评分。
+- chat/base 共用英文任务 Prompt，不截断 context；默认生成上限 64 tokens、
+  temperature=0、换行停止、并发 8。超长请求的服务错误作为失败记录。
+- 输出去除首尾空白后，仅精确匹配 `unanswerable` 才转换为空答案。
+  空输出记 parse_failed；不自动抽取解释、不在小数点或逗号处截断。
+- 标准化严格按官方顺序：小写、去 ASCII 标点、去 a/an/the、压缩空白。
+- EM 与词级 F1 分别在所有参考答案上取最大值，再对选中样本取均值。
+- 输出 `metrics.task_view.squad.exact_match` 和 `token_f1`，单位 ratio，
+  范围 0–1；`has_answer` / `no_answer` 提供同样的分组指标。
+- 服务失败和解析失败均以 0 分保留在分母；单独报告计数。部分服务失败为
+  partial_failed，全部服务失败为 failed。无样本分组的 value=null、count=0。
+- 保存逐题 prompt、raw_output、prediction、reference、状态与请求统计，评分阶段
+  重新计算指标。`scored_samples` 包含按失败策略记零的样本。
 
-```text
-EM = 1（norm(pred) 等于任一 norm(ref)），否则 0
-F1 = max over refs  2PR / (P + R)
-     # P、R 为归一化后按空白分词的 Token 重叠精度与召回
-```
-
-输出名：`metrics.task_view.squad.exact_match`、`metrics.task_view.squad.token_f1`，
-单位 `ratio`，全样本取均值。
+此协议参考 OpenCompass 的生成式结构，评分对齐 SQuAD 2.0 官方文本规则。
+不复现 OpenCompass 的 plausible_answers 匹配，也不复现 Harness 的额外
+loglikelihood 请求及 best_exact/best_f1 阈值搜索。不同协议分数不直接等同。
 
 ### 6.6 LCSTS（中文摘要，P1）
 
