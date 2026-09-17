@@ -46,7 +46,7 @@ PROTOCOL = "openai_compatible_chat_and_completions"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="SQuAD 2.0 model service quality scenario"
+        description="SQuAD 2.0 model service quality benchmark"
     )
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

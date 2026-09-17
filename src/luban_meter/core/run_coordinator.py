@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import (
     RawRunArtifacts,
     ResolvedRun,
     RunRequest,
     RunResult,
 )
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.execution.manager import ExecutionManager
 from luban_meter.execution.session import ExecutionSession
 from luban_meter.result.manager import ResultManager
@@ -22,7 +22,7 @@ from luban_meter.utils.json_io import to_jsonable
 class RunCoordinator:
     def __init__(
         self,
-        registry: ScenarioRegistry,
+        registry: BenchmarkRegistry,
         execution_manager: ExecutionManager | None = None,
         result_manager: ResultManager | None = None,
     ) -> None:

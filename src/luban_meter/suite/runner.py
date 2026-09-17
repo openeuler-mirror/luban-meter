@@ -48,7 +48,7 @@ class SuiteRunner:
                     SuiteTaskResult(
                         name=task.name,
                         category_name=task.category_name,
-                        scenario_name=task.scenario_name,
+                        benchmark_name=task.benchmark_name,
                         status="skipped",
                     )
                 )
@@ -58,7 +58,7 @@ class SuiteRunner:
             run_request = RunRequest(
                 run_id=run_id,
                 category_name=task.category_name,
-                scenario_name=task.scenario_name,
+                benchmark_name=task.benchmark_name,
                 config_path=request.task_configs.get(
                     task.name, task.config_path
                 ),
@@ -74,7 +74,7 @@ class SuiteRunner:
                 SuiteTaskResult(
                     name=task.name,
                     category_name=task.category_name,
-                    scenario_name=task.scenario_name,
+                    benchmark_name=task.benchmark_name,
                     status=result.status,
                     run_id=run_id,
                     result=str(result_path),

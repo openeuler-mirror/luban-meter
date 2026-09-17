@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
 from luban_meter.core.run_coordinator import RunCoordinator
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.suite.suite_contracts import SuiteTask, SuiteTaskResult
 from luban_meter.utils.json_io import to_jsonable
 
@@ -22,10 +22,10 @@ from luban_meter.utils.json_io import to_jsonable
 def test_collector_protocol_survives_internal_renames(
     tmp_path, category_directory, collector_name, processor_name
 ):
-    scenario_root = tmp_path / "benchmarking"
-    scenario_directory = scenario_root / category_directory / "smoke"
-    scenario_directory.mkdir(parents=True)
-    (scenario_directory / collector_name).write_text(
+    benchmark_root = tmp_path / "benchmarking"
+    benchmark_directory = benchmark_root / category_directory / "smoke"
+    benchmark_directory.mkdir(parents=True)
+    (benchmark_directory / collector_name).write_text(
         "import argparse, json\n"
         "from pathlib import Path\n"
         "parser = argparse.ArgumentParser()\n"
@@ -36,13 +36,13 @@ def test_collector_protocol_survives_internal_renames(
         "assert request['module'] == 'generate'\n"
         "assert request['benchmark'] == 'smoke'\n"
         "assert request['model_name'] == 'served-model'\n"
-        "assert 'scenario_name' not in request\n"
+        "assert 'benchmark_name' not in request\n"
         "raw = {'schema_version': 'luban-meter.raw/v1', "
         "'status': 'success', 'metrics': {'count': 3}}\n"
         "Path(args.output).write_text(json.dumps(raw))\n",
         encoding="utf-8",
     )
-    (scenario_directory / processor_name).write_text(
+    (benchmark_directory / processor_name).write_text(
         "def process(raw_result):\n"
         "    return {'metrics': raw_result['metrics']}\n",
         encoding="utf-8",
@@ -52,14 +52,14 @@ def test_collector_protocol_survives_internal_renames(
     request = RunRequest(
         run_id="naming-smoke",
         category_name="generate",
-        scenario_name="smoke",
+        benchmark_name="smoke",
         config_path=config_path,
         model_path=None,
         model_name="served-model",
         output_dir=tmp_path / "runs",
     )
-    registry = ScenarioRegistry(scenario_root)
-    assert registry.list_scenarios("generate") == ("smoke",)
+    registry = BenchmarkRegistry(benchmark_root)
+    assert registry.list_benchmarks("generate") == ("smoke",)
     result = RunCoordinator(registry).run(request)
     assert result.status == "success"
     saved = json.loads(
@@ -69,7 +69,7 @@ def test_collector_protocol_survives_internal_renames(
     assert saved["module"] == "generate"
     assert saved["benchmark"] == "smoke"
     assert saved["model"] == {"name": "served-model", "path": None}
-    assert not {"category_name", "scenario_name", "model_info"} & saved.keys()
+    assert not {"category_name", "benchmark_name", "model_info"} & saved.keys()
 
 
 def test_nested_suite_contracts_keep_serialized_field_names():
@@ -93,30 +93,30 @@ def test_nested_suite_contracts_keep_serialized_field_names():
 
 
 @pytest.mark.parametrize(
-    "scenario_name,directory_name",
+    "benchmark_name,directory_name",
     [
         ("serving-online", "online_serving"),
         ("vllm-engine-offline", "offline_vllm_engine"),
         ("vllm_metrics", "vllm_service_metrics"),
     ],
 )
-def test_public_scenario_names_resolve_to_python_directories(
-    tmp_path, scenario_name, directory_name
+def test_public_benchmark_names_resolve_to_python_directories(
+    tmp_path, benchmark_name, directory_name
 ):
     config_path = tmp_path / "parameters.yaml"
     config_path.write_text("{}", encoding="utf-8")
     request = RunRequest(
         "resolution",
         "generate",
-        scenario_name,
+        benchmark_name,
         config_path,
         None,
         None,
         tmp_path,
     )
-    resolved = ScenarioRegistry().resolve(request)
-    definition = resolved.scenario_definition
-    assert definition.scenario_name == scenario_name
+    resolved = BenchmarkRegistry().resolve(request)
+    definition = resolved.benchmark_definition
+    assert definition.benchmark_name == benchmark_name
     assert definition.collector_path.parent.name == directory_name
     assert definition.collector_path.name == "collect_raw.py"
     assert definition.processor_path.name == "calculate_metrics.py"

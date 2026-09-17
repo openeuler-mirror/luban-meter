@@ -11,7 +11,7 @@ import yaml
 from luban_meter.core.errors import ConfigurationError
 
 
-def load_scenario_parameters(path: Path) -> Mapping[str, Any]:
+def load_benchmark_parameters(path: Path) -> Mapping[str, Any]:
     if not path.is_file():
         raise ConfigurationError(f"benchmark config does not exist: {path}")
     try:

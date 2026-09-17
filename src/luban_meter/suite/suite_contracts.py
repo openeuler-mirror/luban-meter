@@ -12,7 +12,7 @@ from typing import Any
 class SuiteTask:
     name: str
     category_name: str = field(metadata={"json_name": "module"})
-    scenario_name: str = field(metadata={"json_name": "benchmark"})
+    benchmark_name: str = field(metadata={"json_name": "benchmark"})
     config_path: Path = field(metadata={"json_name": "config"})
     timeout: int | None = None
 
@@ -41,7 +41,7 @@ class SuiteRequest:
 class SuiteTaskResult:
     name: str
     category_name: str = field(metadata={"json_name": "module"})
-    scenario_name: str = field(metadata={"json_name": "benchmark"})
+    benchmark_name: str = field(metadata={"json_name": "benchmark"})
     status: str
     run_id: str | None = None
     result: str | None = None

@@ -11,10 +11,10 @@ from collections.abc import Sequence
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.errors import BenchmarkToolkitError
 from luban_meter.core.run_contracts import RunRequest
 from luban_meter.core.run_coordinator import RunCoordinator
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.reporting.render import write_report
 from luban_meter.reporting.result_reader import (
     build_report_from_result,
@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--benchmark",
         required=True,
-        help="Scenario name shown by 'luban-meter benchmarks list'",
+        help="Benchmark name shown by 'luban-meter benchmarks list'",
     )
     run.add_argument(
         "--config",
@@ -190,12 +190,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _report_command(args)
 
     if args.command == "benchmarks" and args.benchmarks_command == "list":
-        registry = ScenarioRegistry()
+        registry = BenchmarkRegistry()
         for category_name, description in registry.list_categories():
-            scenario_names = (
-                ",".join(registry.list_scenarios(category_name)) or "-"
+            benchmark_names = (
+                ",".join(registry.list_benchmarks(category_name)) or "-"
             )
-            print(f"{category_name}\t{scenario_names}\t{description}")
+            print(f"{category_name}\t{benchmark_names}\t{description}")
         return 0
 
     if args.command == "run":
@@ -203,7 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         request = RunRequest(
             run_id=create_run_id(args.module),
             category_name=args.module,
-            scenario_name=args.benchmark,
+            benchmark_name=args.benchmark,
             config_path=args.config,
             model_path=args.model_path,
             model_name=args.model_name,
@@ -214,7 +214,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         try:
             with redirect_stdout(sys.stderr):
-                result = RunCoordinator(ScenarioRegistry()).run(request)
+                result = RunCoordinator(BenchmarkRegistry()).run(request)
         except BenchmarkToolkitError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
@@ -244,7 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             definition = SuiteLoader().load(args.suite)
             with redirect_stdout(sys.stderr):
-                result = SuiteRunner(RunCoordinator(ScenarioRegistry())).run(
+                result = SuiteRunner(RunCoordinator(BenchmarkRegistry())).run(
                     request,
                     definition,
                 )

@@ -22,12 +22,12 @@ SUPPORTED_PROMPT_VERSIONS = {
 }
 
 
-def validate_prompt_version(scenario_name: str, prompt_version: str) -> None:
-    allowed = SUPPORTED_PROMPT_VERSIONS.get(scenario_name, ())
+def validate_prompt_version(benchmark_name: str, prompt_version: str) -> None:
+    allowed = SUPPORTED_PROMPT_VERSIONS.get(benchmark_name, ())
     if prompt_version not in allowed:
         raise ValueError(
             f"prompt_version must be one of {list(allowed)} "
-            f"for {scenario_name}"
+            f"for {benchmark_name}"
         )
 
 

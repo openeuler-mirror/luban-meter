@@ -32,7 +32,7 @@
 
 ```text
 CLI
-→ ScenarioRegistry
+→ BenchmarkRegistry
 → RunCoordinator
 → ExecutionSession
 → collect_raw.py
@@ -101,13 +101,13 @@ src/luban_meter/
 新增 Benchmark 使用以下结构：
 
 ```text
-src/luban_meter/benchmarking/<category_directory>/<scenario_directory>/
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/
 ├── collect_raw.py
 ├── calculate_metrics.py
 └── config.example.yaml
 ```
 
-`collect_raw.py` 和 `calculate_metrics.py` 同时存在后，`ScenarioRegistry` 才会发现该 Benchmark。
+`collect_raw.py` 和 `calculate_metrics.py` 同时存在后，`BenchmarkRegistry` 才会发现该 Benchmark。
 Benchmark 名称使用小写字母、数字、连字符或下划线，并以字母或数字开头。
 
 Python目录使用下划线。CLI和结果协议保留现有类别及场景名称，由注册表映射到

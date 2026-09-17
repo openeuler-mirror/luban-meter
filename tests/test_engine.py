@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
 from luban_meter.core.run_coordinator import RunCoordinator
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 
 class CoreEngineTest(unittest.TestCase):
@@ -15,14 +15,14 @@ class CoreEngineTest(unittest.TestCase):
             request = RunRequest(
                 run_id="generate-test-run",
                 category_name="generate",
-                scenario_name="missing-benchmark",
+                benchmark_name="missing-benchmark",
                 config_path=Path("missing-config.yaml"),
                 model_path=None,
                 model_name=None,
                 output_dir=output_dir,
             )
 
-            result = RunCoordinator(ScenarioRegistry()).run(request)
+            result = RunCoordinator(BenchmarkRegistry()).run(request)
 
             self.assertEqual(result.status, "failed")
             self.assertEqual(result.metadata["failure_stage"], "resolve")

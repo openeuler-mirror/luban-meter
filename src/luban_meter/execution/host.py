@@ -55,8 +55,8 @@ class HostSession:
 
         scope = None
         if (
-            run.scenario_definition.category_name == "model_service_quality"
-            and run.scenario_definition.scenario_name == "humaneval"
+            run.benchmark_definition.category_name == "model_service_quality"
+            and run.benchmark_definition.benchmark_name == "humaneval"
         ):
             scope = DockerSandboxScope(
                 artifact_dir / "sandbox-registry",
@@ -83,7 +83,7 @@ class HostSession:
                 CommandSpec(
                     argv=(
                         sys.executable,
-                        str(run.scenario_definition.collector_path),
+                        str(run.benchmark_definition.collector_path),
                         "--request",
                         str(run_dir / "request.json"),
                         "--output",

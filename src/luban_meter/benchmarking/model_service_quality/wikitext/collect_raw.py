@@ -46,7 +46,7 @@ SCORER_VERSION = "metrics-v1"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="WikiText loss model service quality scenario"
+        description="WikiText loss model service quality benchmark"
     )
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 
 class BenchmarkRegistryTest(unittest.TestCase):
@@ -24,11 +24,11 @@ class BenchmarkRegistryTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = ScenarioRegistry(root / "benchmarking")
+            registry = BenchmarkRegistry(root / "benchmarking")
             request = RunRequest(
                 run_id="generate-test",
                 category_name="generate",
-                scenario_name="ttft",
+                benchmark_name="ttft",
                 config_path=config,
                 model_path=None,
                 model_name=None,
@@ -41,9 +41,9 @@ class BenchmarkRegistryTest(unittest.TestCase):
                 tuple(name for name, _ in registry.list_categories()),
                 ("generate", "model_service_quality"),
             )
-            self.assertEqual(registry.list_scenarios("generate"), ("ttft",))
+            self.assertEqual(registry.list_benchmarks("generate"), ("ttft",))
             self.assertEqual(
-                resolved.scenario_definition.scenario_name, "ttft"
+                resolved.benchmark_definition.benchmark_name, "ttft"
             )
             self.assertEqual(resolved.parameters["rounds"], 100)
             self.assertEqual(resolved.parameters["warmup"], 10)

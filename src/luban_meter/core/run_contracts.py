@@ -28,7 +28,7 @@ class CommandResult:
 class RunRequest:
     run_id: str
     category_name: str = field(metadata={"json_name": "module"})
-    scenario_name: str = field(metadata={"json_name": "benchmark"})
+    benchmark_name: str = field(metadata={"json_name": "benchmark"})
     config_path: Path = field(metadata={"json_name": "config"})
     model_path: Path | None
     model_name: str | None
@@ -38,11 +38,11 @@ class RunRequest:
 
 
 @dataclass(frozen=True)
-class ScenarioDefinition:
+class BenchmarkDefinition:
     """Convention-resolved Benchmark implementation."""
 
     category_name: str
-    scenario_name: str
+    benchmark_name: str
     collector_path: Path
     processor_path: Path
 
@@ -50,7 +50,7 @@ class ScenarioDefinition:
 @dataclass(frozen=True)
 class ResolvedRun:
     request: RunRequest
-    scenario_definition: ScenarioDefinition
+    benchmark_definition: BenchmarkDefinition
     parameters: Mapping[str, Any]
 
 
@@ -68,7 +68,7 @@ class RunResult:
     run_id: str
     status: str
     category_name: str = field(metadata={"json_name": "module"})
-    scenario_name: str = field(metadata={"json_name": "benchmark"})
+    benchmark_name: str = field(metadata={"json_name": "benchmark"})
     config_path: str = field(metadata={"json_name": "config"})
     model_info: Mapping[str, Any] = field(
         default_factory=dict, metadata={"json_name": "model"}

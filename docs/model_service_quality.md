@@ -59,7 +59,7 @@ LuBan-Meter 按“数据集族和任务协议”组织 model_service_quality Ben
 luban-meter run --module model_service_quality --benchmark ceval \
     --config src/luban_meter/benchmarking/model_service_quality/ceval/ceval.yaml
   → CLI 构造 RunRequest
-  → ScenarioRegistry 发现 model_service_quality/ceval/collect_raw.py 和 calculate_metrics.py
+  → BenchmarkRegistry 发现 model_service_quality/ceval/collect_raw.py 和 calculate_metrics.py
   → RunCoordinator 创建 ExecutionSession
   → 宿主机 Python 执行 collect_raw.py --request request.json --output raw_result.json
       1. 校验配置参数；
@@ -386,7 +386,7 @@ few-shot 数、评测模式、`prompt_format`、解码参数和评分器版本�
 ### 7.2 最终结果（result.json）
 
 `calculate_metrics.py` 校验原始结果后按第 6 节公式聚合，输出组织在
-`metrics.task_view.<scenario_name>` 下，每个指标带 `value`、`unit`、`count`；
+`metrics.task_view.<benchmark_name>` 下，每个指标带 `value`、`unit`、`count`；
 `metadata` 继承原始元数据并补充聚合计数。全部服务失败时结果状态为 `failed`，
 部分失败为 `partial_failed`，并携带 `error` 信息。
 

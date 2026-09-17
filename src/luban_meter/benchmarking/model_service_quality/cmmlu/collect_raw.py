@@ -7,7 +7,7 @@ from typing import Any
 
 from luban_meter.benchmarking.model_service_quality.common import choice
 from luban_meter.benchmarking.model_service_quality.common.choice import (  # noqa: F401
-    ChoiceScenarioDefinition,
+    ChoiceBenchmarkDefinition,
     collect_sample,
     generate_answer,
     load_request,
@@ -18,8 +18,8 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (  # n
     CHOICE_LETTERS,
 )
 
-SPEC = ChoiceScenarioDefinition(
-    scenario_name="cmmlu",
+SPEC = ChoiceBenchmarkDefinition(
+    benchmark_name="cmmlu",
     measurement="cmmlu_choice_accuracy_online_service",
     dataset_label="CMMLU",
 )
@@ -29,7 +29,7 @@ SCORER_VERSION = choice.SCORER_VERSION
 
 
 def parse_args():
-    return choice.parse_args("CMMLU model service quality scenario")
+    return choice.parse_args("CMMLU model service quality benchmark")
 
 
 def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
@@ -47,7 +47,7 @@ def collect_raw_result(
 
 
 def main() -> None:
-    choice.run_choice_cli(SPEC, "CMMLU model service quality scenario")
+    choice.run_choice_cli(SPEC, "CMMLU model service quality benchmark")
 
 
 if __name__ == "__main__":

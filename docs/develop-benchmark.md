@@ -14,7 +14,7 @@
 新增脚本必须放在：
 
 ```text
-src/luban_meter/benchmarking/<category_directory>/<scenario_directory>/
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/
 ├── collect_raw.py
 ├── calculate_metrics.py
 └── config.example.yaml
@@ -46,11 +46,11 @@ module + benchmark
 物理目录使用PEP 8命名；现有CLI类别和场景标识由注册表映射到目录。
 字段、目录和Python接口的对应关系见[命名约定](naming.md)。
 
-当以下两个文件同时存在时，`ScenarioRegistry` 自动发现脚本：
+当以下两个文件同时存在时，`BenchmarkRegistry` 自动发现脚本：
 
 ```text
-benchmarking/<category_directory>/<scenario_directory>/collect_raw.py
-benchmarking/<category_directory>/<scenario_directory>/calculate_metrics.py
+benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
 
 验证：
@@ -418,7 +418,7 @@ CLI 的 `run` 和 `suite` 在结果保存后自动生成报告；直接调用 `R
 
 提交 Benchmark 前至少验证：
 
-- [ ] 目录为 `benchmarking/<category_directory>/<scenario_directory>/`；
+- [ ] 目录为 `benchmarking/<category_directory>/<benchmark_directory>/`；
 - [ ] 模块为 `generate` 或 `model_service_quality`；
 - [ ] `collect_raw.py` 接收 `--request` 和 `--output`；
 - [ ] `calculate_metrics.py` 定义 `process(raw_result)`；

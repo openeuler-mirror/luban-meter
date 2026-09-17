@@ -19,8 +19,8 @@ from luban_meter.benchmarking.model_service_quality.humaneval import (
 from luban_meter.benchmarking.model_service_quality.humaneval.executor import (
     ExecutionResult,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -232,8 +232,8 @@ def test_result_counts_infrastructure_failure_in_denominator() -> None:
 
 
 def test_registry_discovers_humaneval() -> None:
-    registry = ScenarioRegistry()
-    assert "humaneval" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "humaneval" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -246,7 +246,7 @@ def test_registry_discovers_humaneval() -> None:
     request = RunRequest(
         run_id="model_service_quality-humaneval-test",
         category_name="model_service_quality",
-        scenario_name="humaneval",
+        benchmark_name="humaneval",
         config_path=config,
         model_path=None,
         model_name=None,

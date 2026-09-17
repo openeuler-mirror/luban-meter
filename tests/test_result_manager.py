@@ -10,10 +10,10 @@ from luban_meter.benchmarking.generation_performance.common.streaming import (
     collect_completion_stream,
 )
 from luban_meter.core.run_contracts import (
+    BenchmarkDefinition,
     RawRunArtifacts,
     ResolvedRun,
     RunRequest,
-    ScenarioDefinition,
 )
 from luban_meter.result.manager import ResultManager
 
@@ -75,7 +75,7 @@ class ResultManagerTest(unittest.TestCase):
             request = RunRequest(
                 run_id="generate-result-test",
                 category_name="generate",
-                scenario_name="ttft",
+                benchmark_name="ttft",
                 config_path=root / "ttft.yaml",
                 model_path=None,
                 model_name=None,
@@ -83,9 +83,9 @@ class ResultManagerTest(unittest.TestCase):
             )
             run = ResolvedRun(
                 request=request,
-                scenario_definition=ScenarioDefinition(
+                benchmark_definition=BenchmarkDefinition(
                     category_name="generate",
-                    scenario_name="ttft",
+                    benchmark_name="ttft",
                     collector_path=benchmark,
                     processor_path=processor,
                 ),
@@ -102,7 +102,7 @@ class ResultManagerTest(unittest.TestCase):
 
             self.assertEqual(result.status, "success")
             self.assertFalse(hasattr(result, "vendor"))
-            self.assertEqual(result.scenario_name, "ttft")
+            self.assertEqual(result.benchmark_name, "ttft")
             self.assertEqual(result.metrics["mean_ms"], 12.0)
             self.assertEqual(result.environment["runtime"]["name"], "test")
             self.assertTrue(result.metadata["processed"])
@@ -253,7 +253,7 @@ class FakeJsonResponse(io.BytesIO):
 
 
 class ServingCollectionTest(unittest.TestCase):
-    def test_collects_complete_serving_scenario(self) -> None:
+    def test_collects_complete_serving_benchmark(self) -> None:
         benchmark = load_module("serving_benchmark", SERVING_BENCHMARK_ENTRY)
         parameters = {
             "service_url": "http://127.0.0.1:8000",

@@ -10,7 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from luban_meter.core.scenario_registry import ScenarioRegistry
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 
 ROOT = Path(__file__).parents[1]
 ENGINE_RESULT_HANDLER = ROOT / (
@@ -148,7 +148,7 @@ class EngineSloConfigTest(unittest.TestCase):
         )
 
     def test_registry_exposes_offline_benchmark_name(self) -> None:
-        benchmarks = ScenarioRegistry().list_scenarios("generate")
+        benchmarks = BenchmarkRegistry().list_benchmarks("generate")
         self.assertIn("vllm-engine-offline", benchmarks)
         self.assertNotIn("vllm-engine-stage", benchmarks)
 

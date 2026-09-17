@@ -47,7 +47,7 @@ LCSTS_DEFAULT_PROMPT = "阅读以下文章，并给出简短的摘要：{content
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="LCSTS model service quality scenario",
+        description="LCSTS model service quality benchmark",
     )
     parser.add_argument(
         "--request",

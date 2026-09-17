@@ -1,4 +1,4 @@
-"""Tests for the gsm8k model service quality scenario: parameters, prompts,
+"""Tests for the gsm8k model service quality benchmark: parameters, prompts,
 results.
 """
 
@@ -19,8 +19,8 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (
 from luban_meter.benchmarking.model_service_quality.gsm8k import (
     collect_raw as gsm8k,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -247,8 +247,8 @@ def test_process_partial_and_failed() -> None:
 
 
 def test_registry_discovers_gsm8k() -> None:
-    registry = ScenarioRegistry()
-    assert "gsm8k" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "gsm8k" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -261,7 +261,7 @@ def test_registry_discovers_gsm8k() -> None:
     request = RunRequest(
         run_id="model_service_quality-gsm8k-test",
         category_name="model_service_quality",
-        scenario_name="gsm8k",
+        benchmark_name="gsm8k",
         config_path=config,
         model_path=None,
         model_name=None,
@@ -269,7 +269,7 @@ def test_registry_discovers_gsm8k() -> None:
     )
     run = registry.resolve(request)
     assert (
-        run.scenario_definition.processor_path.name == "calculate_metrics.py"
+        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
     )
     assert run.parameters["eval_mode"] == "gen"
     assert run.parameters["max_tokens"] == 512

@@ -1,4 +1,4 @@
-"""Tests for the cmmlu model service quality scenario: parameters, scoring,
+"""Tests for the cmmlu model service quality benchmark: parameters, scoring,
 results.
 """
 
@@ -16,8 +16,8 @@ import pytest
 from luban_meter.benchmarking.model_service_quality.cmmlu import (
     collect_raw as cmmlu,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -237,8 +237,8 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
 
 
 def test_registry_discovers_cmmlu() -> None:
-    registry = ScenarioRegistry()
-    assert "cmmlu" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "cmmlu" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -251,7 +251,7 @@ def test_registry_discovers_cmmlu() -> None:
     request = RunRequest(
         run_id="model_service_quality-cmmlu-test",
         category_name="model_service_quality",
-        scenario_name="cmmlu",
+        benchmark_name="cmmlu",
         config_path=config,
         model_path=None,
         model_name=None,
@@ -259,7 +259,7 @@ def test_registry_discovers_cmmlu() -> None:
     )
     run = registry.resolve(request)
     assert (
-        run.scenario_definition.processor_path.name == "calculate_metrics.py"
+        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
     )
     assert run.parameters["prompt_version"] == "cmmlu-v1"
     assert run.parameters["dataset_path"] == "data/cmmlu/val.jsonl"

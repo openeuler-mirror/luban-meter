@@ -29,7 +29,7 @@ from luban_meter.benchmarking.model_service_quality.squad.scoring import (
     parse_answer,
     score_answer,
 )
-from luban_meter.core.scenario_registry import ScenarioRegistry
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 
 
 def row(sample_id="q1", impossible=False):
@@ -149,7 +149,8 @@ class ScoringTests(unittest.TestCase):
             ):
                 benchmark.validate_parameters(params | {key: value})
         self.assertIn(
-            "squad", ScenarioRegistry().list_scenarios("model_service_quality")
+            "squad",
+            BenchmarkRegistry().list_benchmarks("model_service_quality"),
         )
         prompt = render_squad_prompt(row())
         self.assertIn(row()["context"], prompt)

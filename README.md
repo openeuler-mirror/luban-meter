@@ -68,7 +68,7 @@ module + benchmark + config
 ```text
 CLI
 → Core Engine
-→ benchmarking/<category_directory>/<scenario_directory>/collect_raw.py
+→ benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
 → raw_result.json
 → calculate_metrics.py
 → result.json
@@ -77,7 +77,7 @@ CLI
 每个 Benchmark 目录遵循统一协议：
 
 ```text
-benchmarking/<category_directory>/<scenario_directory>/
+benchmarking/<category_directory>/<benchmark_directory>/
 ├── collect_raw.py
 ├── calculate_metrics.py
 └── config.example.yaml

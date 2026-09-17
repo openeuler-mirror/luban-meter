@@ -1,4 +1,4 @@
-"""Tests for the lcsts model service quality scenario."""
+"""Tests for the lcsts model service quality benchmark."""
 
 from __future__ import annotations
 
@@ -19,8 +19,8 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (
 from luban_meter.benchmarking.model_service_quality.lcsts import (
     collect_raw as lcsts,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -343,8 +343,8 @@ def test_process_raw_failed() -> None:
 
 
 def test_registry_discovers_lcsts() -> None:
-    registry = ScenarioRegistry()
-    assert "lcsts" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "lcsts" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -357,7 +357,7 @@ def test_registry_discovers_lcsts() -> None:
     request = RunRequest(
         run_id="model_service_quality-lcsts-test",
         category_name="model_service_quality",
-        scenario_name="lcsts",
+        benchmark_name="lcsts",
         config_path=config,
         model_path=None,
         model_name=None,
@@ -365,7 +365,7 @@ def test_registry_discovers_lcsts() -> None:
     )
     run = registry.resolve(request)
     assert (
-        run.scenario_definition.processor_path.name == "calculate_metrics.py"
+        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
     )
     assert run.parameters["eval_mode"] == "gen"
     assert run.parameters["max_tokens"] == 512

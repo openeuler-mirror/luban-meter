@@ -21,7 +21,7 @@ LuBan-Meter 面向异构 AI 硬件环境提供统一、模块化、可扩展的 
 | 阶段目标 | 当前状态 | 阶段成果 |
 |---|---|---|
 | 建立统一 Benchmark 框架 | 已完成 | 形成 CLI、Core、Execution、Result、Suite 分层架构 |
-| 建立统一 Benchmark 分类 | 已完成 | 使用 `benchmarking/<category_directory>/<scenario_directory>/` 管理评测脚本 |
+| 建立统一 Benchmark 分类 | 已完成 | 使用 `benchmarking/<category_directory>/<benchmark_directory>/` 管理评测脚本 |
 | 支持单任务执行 | 已完成 | 通过 `module + benchmark + config` 定位并执行测试 |
 | 支持多任务编排 | 已完成 | Suite 顺序执行多个任务，每个任务独立输出结果 |
 | 在线服务生成性能测试 | 已完成 | 实现 `serving-online` 开放式固定 Request Rate 负载测试，支持 random 和 dataset 双模式 |
@@ -185,7 +185,7 @@ input_lengths × output_lengths × request_batch_sizes
 
 `model_service_quality` 与 `generate` 共用同一条 `collect_raw.py → raw_result.json →
 calculate_metrics.py → result.json` 执行链路和结果协议，指标按
-`metrics.task_view.<scenario_name>` 组织，详细协议参见
+`metrics.task_view.<benchmark_name>` 组织，详细协议参见
 [模型服务质量评测指标说明](model_service_quality.md)。
 
 ## 五、对照 LLM 评价指标体系的覆盖情况

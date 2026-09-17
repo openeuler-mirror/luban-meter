@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.errors import ConfigurationError
 from luban_meter.core.run_coordinator import RunCoordinator
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.suite.loader import SuiteLoader
 from luban_meter.suite.runner import SuiteRunner
 from luban_meter.suite.suite_contracts import SuiteRequest
@@ -78,7 +78,7 @@ class SuiteTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = ScenarioRegistry(benchmark_dir)
+            registry = BenchmarkRegistry(benchmark_dir)
             definition = SuiteLoader(suites_dir).load("basic")
             override_config = root / "accuracy-override.yaml"
             override_config.write_text("value: 99\n", encoding="utf-8")
@@ -158,7 +158,7 @@ class SuiteTest(unittest.TestCase):
             with self.assertRaisesRegex(
                 ConfigurationError, "unknown tasks: missing"
             ):
-                SuiteRunner(RunCoordinator(ScenarioRegistry())).run(
+                SuiteRunner(RunCoordinator(BenchmarkRegistry())).run(
                     request, definition
                 )
 
@@ -220,7 +220,7 @@ class SuiteTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            registry = ScenarioRegistry(benchmark_dir)
+            registry = BenchmarkRegistry(benchmark_dir)
             definition = SuiteLoader(suites_dir).load("fail-fast")
             request = SuiteRequest(
                 suite_id="fail-fast-test",

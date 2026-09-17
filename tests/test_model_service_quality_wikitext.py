@@ -1,4 +1,4 @@
-"""Tests for the wikitext model service quality scenario."""
+"""Tests for the wikitext model service quality benchmark."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from luban_meter.benchmarking.model_service_quality.common import metrics
 from luban_meter.benchmarking.model_service_quality.wikitext import (
     collect_raw as wikitext,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -332,8 +332,8 @@ def test_process_raw_failed() -> None:
 
 
 def test_registry_discovers_wikitext() -> None:
-    registry = ScenarioRegistry()
-    assert "wikitext" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "wikitext" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -346,7 +346,7 @@ def test_registry_discovers_wikitext() -> None:
     request = RunRequest(
         run_id="model_service_quality-wikitext-test",
         category_name="model_service_quality",
-        scenario_name="wikitext",
+        benchmark_name="wikitext",
         config_path=config,
         model_path=None,
         model_name=None,
@@ -354,7 +354,7 @@ def test_registry_discovers_wikitext() -> None:
     )
     run = registry.resolve(request)
     assert (
-        run.scenario_definition.processor_path.name == "calculate_metrics.py"
+        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
     )
     assert run.parameters["eval_mode"] == "loss"
     assert run.parameters["max_context_length"] == 2048

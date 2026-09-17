@@ -57,8 +57,8 @@ luban-meter run \
 框架按以下路径解析脚本：
 
 ```text
-src/luban_meter/benchmarking/<category_directory>/<scenario_directory>/collect_raw.py
-src/luban_meter/benchmarking/<category_directory>/<scenario_directory>/calculate_metrics.py
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
 
 `generate`映射到`generation_performance/`，`model_service_quality`映射到
@@ -325,8 +325,8 @@ Suite 报告按任务顺序拼接摘要，不对不同语义的指标求平均�
 确认目录中同时存在：
 
 ```text
-benchmarking/<category_directory>/<scenario_directory>/collect_raw.py
-benchmarking/<category_directory>/<scenario_directory>/calculate_metrics.py
+benchmarking/<category_directory>/<benchmark_directory>/collect_raw.py
+benchmarking/<category_directory>/<benchmark_directory>/calculate_metrics.py
 ```
 
 ### 运行依赖不可用

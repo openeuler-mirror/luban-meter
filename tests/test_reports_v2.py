@@ -10,8 +10,8 @@ from urllib.parse import unquote
 import pytest
 
 from luban_meter.cli import main
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunResult
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.reporting.render import write_report
 from luban_meter.reporting.result_reader import (
     build_report_from_result,
@@ -32,7 +32,7 @@ def result(metrics=None, *, run_id="demo", report=None):
             run_id=run_id,
             status="success",
             category_name="custom",
-            scenario_name="never-registered",
+            benchmark_name="never-registered",
             config_path="test.yaml",
             metrics=metrics or {},
             metadata={"report": report} if report else {},
@@ -294,7 +294,7 @@ def test_json_console_and_report_failure_preserve_result(
         save(request.output_dir / request.run_id / "result.json", data)
         return RunResult(
             category_name=data.pop("module"),
-            scenario_name=data.pop("benchmark"),
+            benchmark_name=data.pop("benchmark"),
             config_path=data.pop("config"),
             model_info=data.pop("model"),
             **data,
@@ -378,9 +378,9 @@ def test_cli_automatically_reports_real_runs_and_suite(
         "    benchmark: custom\n    config: ../test.yaml\n",
         encoding="utf-8",
     )
-    registry = ScenarioRegistry(benchmark_root)
+    registry = BenchmarkRegistry(benchmark_root)
     loader = SuiteLoader(suites)
-    monkeypatch.setattr("luban_meter.cli.ScenarioRegistry", lambda: registry)
+    monkeypatch.setattr("luban_meter.cli.BenchmarkRegistry", lambda: registry)
     monkeypatch.setattr("luban_meter.cli.SuiteLoader", lambda: loader)
     monkeypatch.delenv("LUBAN_MONITOR_URL", raising=False)
     output = tmp_path / "runs"

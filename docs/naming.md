@@ -19,12 +19,12 @@
 | `core/models.py` | `core/run_contracts.py` | 运行请求、定义、产物和结果结构 |
 | `suite/models.py` | `suite/suite_contracts.py` | 套件请求与结果结构 |
 | `core/engine.py`、`CoreEngine` | `core/run_coordinator.py`、`RunCoordinator` | 单次运行编排，区别于模型推理引擎 |
-| `core/registry.py`、`BenchmarkRegistry` | `core/scenario_registry.py`、`ScenarioRegistry` | 场景发现与解析 |
-| `BenchmarkSpec` | `ScenarioDefinition` | 场景定义对象 |
+| `core/registry.py`、`BenchmarkRegistry` | `core/benchmark_registry.py`、`BenchmarkRegistry` | 场景发现与解析 |
+| `BenchmarkSpec` | `BenchmarkDefinition` | 场景定义对象 |
 | `BenchmarkResult` | `RunResult` | 单次运行结果 |
-| `ResolvedRun.benchmark` | `ResolvedRun.scenario_definition` | 已解析的场景定义 |
+| `ResolvedRun.benchmark` | `ResolvedRun.benchmark_definition` | 已解析的场景定义 |
 | 数据结构中的`module` | `category_name` | 评测类别名称 |
-| 数据结构中的`benchmark` | `scenario_name` | 场景名称字符串 |
+| 数据结构中的`benchmark` | `benchmark_name` | 场景名称字符串 |
 | 数据结构中的`config` | `config_path` | 参数文件路径 |
 | `RunResult.model` | `RunResult.model_info` | 模型信息字典 |
 | 在线调用中的`model` | `served_model_name` | 服务模型名称字符串 |
@@ -51,7 +51,7 @@
 | 对外名称 | Python内部名称或目录 |
 |---|---|
 | `--module`、JSON/YAML的`module` | `category_name` |
-| `--benchmark`、JSON/YAML的`benchmark` | `scenario_name` |
+| `--benchmark`、JSON/YAML的`benchmark` | `benchmark_name` |
 | `--config`、JSON/YAML的`config` | `config_path` |
 | 最终结果的`model`对象 | `model_info` |
 | `--module generate` | `benchmarking/generation_performance/` |

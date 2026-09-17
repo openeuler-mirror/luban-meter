@@ -1,4 +1,4 @@
-"""Metric math for model service quality scenarios (standard library only)."""
+"""Metric math for model service quality benchmarks (standard library only)."""
 
 from __future__ import annotations
 

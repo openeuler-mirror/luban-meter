@@ -12,10 +12,10 @@ import pytest
 
 from luban_meter.core.errors import ExecutionError
 from luban_meter.core.run_contracts import (
+    BenchmarkDefinition,
     CommandSpec,
     ResolvedRun,
     RunRequest,
-    ScenarioDefinition,
 )
 from luban_meter.execution.command import LocalCommandRunner
 from luban_meter.execution.host import HostSession
@@ -146,7 +146,7 @@ def test_host_always_cleans_scope_and_stops_monitor(
         None,
         tmp_path,
     )
-    scenario_definition = ScenarioDefinition(
+    benchmark_definition = BenchmarkDefinition(
         "model_service_quality",
         "humaneval",
         tmp_path / "b.py",
@@ -154,7 +154,7 @@ def test_host_always_cleans_scope_and_stops_monitor(
     )
     with pytest.raises(type(error)):
         HostSession(Runner(), monitor_url="http://127.0.0.1:9400").execute(
-            ResolvedRun(request, scenario_definition, {})
+            ResolvedRun(request, benchmark_definition, {})
         )
     assert events == ["start", "run", "cleanup", "stop"]
 

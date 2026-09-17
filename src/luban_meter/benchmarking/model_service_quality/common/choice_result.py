@@ -70,7 +70,7 @@ def accuracy_metric(correct: int, total: int) -> dict[str, Any]:
 
 
 def process_choice_result(
-    raw_result: Mapping[str, Any], scenario_name: str
+    raw_result: Mapping[str, Any], benchmark_name: str
 ) -> dict[str, Any]:
     raw_status = raw_result.get("status")
     metadata = raw_result.get("metadata")
@@ -133,7 +133,7 @@ def process_choice_result(
                 "tables": [
                     table(
                         "总体得分",
-                        f"/task_view/{scenario_name}",
+                        f"/task_view/{benchmark_name}",
                         {
                             "/accuracy": "准确率",
                             "/total_samples": "总样本",
@@ -145,7 +145,7 @@ def process_choice_result(
                     ),
                     table(
                         "分学科得分",
-                        f"/task_view/{scenario_name}/accuracy_by_subject",
+                        f"/task_view/{benchmark_name}/accuracy_by_subject",
                         {
                             "/key": "学科",
                             "/value": "准确率",
@@ -162,7 +162,7 @@ def process_choice_result(
         "status": result_status,
         "metrics": {
             "task_view": {
-                scenario_name: {
+                benchmark_name: {
                     "accuracy": accuracy_metric(correct, len(scored)),
                     "accuracy_by_subject": {
                         subject: accuracy_metric(

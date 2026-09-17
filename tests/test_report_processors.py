@@ -11,8 +11,8 @@ import pytest
 from luban_meter.benchmarking.generation_performance.common.prometheus import (
     parse_prometheus_text,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RawRunArtifacts, RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 from luban_meter.reporting.render import write_report
 from luban_meter.reporting.result_reader import (
     load_report,
@@ -192,7 +192,7 @@ def processed_fixture(root, module, benchmark):
     request = RunRequest(
         run_id=run_id,
         category_name=module,
-        scenario_name=benchmark,
+        benchmark_name=benchmark,
         config_path=config,
         model_name="synthetic-model",
         model_path=None,
@@ -201,7 +201,7 @@ def processed_fixture(root, module, benchmark):
     )
     manager = ResultManager()
     result = manager.process(
-        ScenarioRegistry().resolve(request),
+        BenchmarkRegistry().resolve(request),
         RawRunArtifacts(
             raw_result=raw_path,
             stdout_log=raw_dir / "stdout.log",

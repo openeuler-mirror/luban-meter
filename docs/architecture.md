@@ -24,7 +24,7 @@ CLI
      │
      ▼
 Core / Suite
-├── ScenarioRegistry
+├── BenchmarkRegistry
 ├── RunCoordinator
 ├── SuiteLoader
 └── SuiteRunner
@@ -45,8 +45,8 @@ Result
 ### 单任务链路
 
 ```text
-RunRequest(category_name, scenario_name, config_path)
-→ benchmarking/<category_directory>/<scenario_directory>/
+RunRequest(category_name, benchmark_name, config_path)
+→ benchmarking/<category_directory>/<benchmark_directory>/
 → collect_raw.py
 → raw_result.json
 → calculate_metrics.py
@@ -99,7 +99,7 @@ src/luban_meter/
 │       └── wikitext/             # Perplexity / Bits-per-Byte (loss 模式)
 ├── core/
 │   ├── run_coordinator.py
-│   ├── scenario_registry.py
+│   ├── benchmark_registry.py
 │   ├── run_contracts.py
 │   └── config.py
 ├── execution/
@@ -124,13 +124,13 @@ src/luban_meter/
 Benchmark 固定使用以下结构：
 
 ```text
-benchmarking/<category_directory>/<scenario_directory>/
+benchmarking/<category_directory>/<benchmark_directory>/
 ├── collect_raw.py
 ├── calculate_metrics.py
 └── *.yaml
 ```
 
-`ScenarioRegistry`只接受`generate`、`model_service_quality`两个类别标识，分别映射到
+`BenchmarkRegistry`只接受`generate`、`model_service_quality`两个类别标识，分别映射到
 `generation_performance/`、`model_service_quality/`目录。新场景要求`collect_raw.py`
 与`calculate_metrics.py`同时存在；自定义场景仍兼容旧文件对。
 列表命令返回对外的场景逻辑名称，目录及字段对应关系见[命名约定](naming.md)：
@@ -331,8 +331,8 @@ Python 接口时只输出 JSON，可随后调用报告命令。
 
 ## 8. 扩展边界
 
-- 新增生成性能场景：增加 `benchmarking/generation_performance/<scenario_directory>/`；
-- 新增模型服务质量任务：增加 `benchmarking/model_service_quality/<scenario_directory>/`；
+- 新增生成性能场景：增加 `benchmarking/generation_performance/<benchmark_directory>/`；
+- 新增模型服务质量任务：增加 `benchmarking/model_service_quality/<benchmark_directory>/`；
 - 新增任务组合：增加 `suite/definitions/<suite>.yaml`；
 - 新增硬件支持：验证现有 Benchmark 能在目标环境运行，必要差异通过配置表达；
 - 新增引擎内部测试：仅在确有稳定内部接口时增加带引擎名称的 Benchmark；

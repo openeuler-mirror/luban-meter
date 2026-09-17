@@ -1,4 +1,4 @@
-"""Tests for the ceval model service quality scenario: parameters, scoring,
+"""Tests for the ceval model service quality benchmark: parameters, scoring,
 results.
 """
 
@@ -16,8 +16,8 @@ import pytest
 from luban_meter.benchmarking.model_service_quality.ceval import (
     collect_raw as ceval,
 )
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.core.run_contracts import RunRequest
-from luban_meter.core.scenario_registry import ScenarioRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -296,8 +296,8 @@ def test_process_partial_and_failed() -> None:
 
 
 def test_registry_discovers_ceval() -> None:
-    registry = ScenarioRegistry()
-    assert "ceval" in registry.list_scenarios("model_service_quality")
+    registry = BenchmarkRegistry()
+    assert "ceval" in registry.list_benchmarks("model_service_quality")
     config = (
         ROOT
         / "src"
@@ -310,16 +310,16 @@ def test_registry_discovers_ceval() -> None:
     request = RunRequest(
         run_id="model_service_quality-ceval-test",
         category_name="model_service_quality",
-        scenario_name="ceval",
+        benchmark_name="ceval",
         config_path=config,
         model_path=None,
         model_name=None,
         output_dir=ROOT / "runs",
     )
     run = registry.resolve(request)
-    assert run.scenario_definition.collector_path.name == "collect_raw.py"
+    assert run.benchmark_definition.collector_path.name == "collect_raw.py"
     assert (
-        run.scenario_definition.processor_path.name == "calculate_metrics.py"
+        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
     )
     assert run.parameters["eval_mode"] == "ppl"
     assert run.parameters["stop"] == ["\n"]

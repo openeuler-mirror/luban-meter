@@ -47,13 +47,13 @@ class ResultManager:
             )
 
         processor = self._load_processor(
-            run.scenario_definition.processor_path
+            run.benchmark_definition.processor_path
         )
         processed = processor(raw)
         if not isinstance(processed, Mapping):
             raise ResultProcessingError(
                 f"result processor must return a mapping: "
-                f"{run.scenario_definition.processor_path}"
+                f"{run.benchmark_definition.processor_path}"
             )
 
         metrics = processed.get("metrics", processed)
@@ -205,7 +205,7 @@ class ResultManager:
             run_id=request.run_id,
             status=status,
             category_name=request.category_name,
-            scenario_name=request.scenario_name,
+            benchmark_name=request.benchmark_name,
             config_path=str(request.config_path),
             model_info={
                 "name": request.model_name,

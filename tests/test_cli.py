@@ -23,7 +23,7 @@ class CliTest(unittest.TestCase):
             run_id="test-run",
             status="success",
             category_name="generate",
-            scenario_name="ttft",
+            benchmark_name="ttft",
             config_path="configs/benchmarks/ttft.yaml",
         )
         with patch("luban_meter.cli.RunCoordinator") as engine_type:
@@ -51,7 +51,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(request.model_path.as_posix(), "/models/Qwen3-8B")
         self.assertEqual(request.model_name, "Qwen3-8B")
-        self.assertEqual(request.scenario_name, "ttft")
+        self.assertEqual(request.benchmark_name, "ttft")
         self.assertEqual(
             request.config_path.as_posix(),
             "configs/benchmarks/ttft.yaml",

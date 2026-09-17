@@ -7,10 +7,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from luban_meter.core.run_contracts import (
+    BenchmarkDefinition,
     CommandSpec,
     ResolvedRun,
     RunRequest,
-    ScenarioDefinition,
 )
 from luban_meter.execution.command import LocalCommandRunner
 from luban_meter.execution.host import HostSession
@@ -50,7 +50,7 @@ class HostExecutorTest(unittest.TestCase):
             request = RunRequest(
                 run_id="environment-inheritance-test",
                 category_name="generate",
-                scenario_name="ttft",
+                benchmark_name="ttft",
                 config_path=root / "config.yaml",
                 model_path=None,
                 model_name=None,
@@ -58,9 +58,9 @@ class HostExecutorTest(unittest.TestCase):
             )
             run = ResolvedRun(
                 request=request,
-                scenario_definition=ScenarioDefinition(
+                benchmark_definition=BenchmarkDefinition(
                     category_name="generate",
-                    scenario_name="ttft",
+                    benchmark_name="ttft",
                     collector_path=benchmark,
                     processor_path=root / "calculate_metrics.py",
                 ),

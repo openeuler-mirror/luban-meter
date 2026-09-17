@@ -6,7 +6,7 @@ import pytest
 from matplotlib.figure import Figure
 
 from luban_meter.cli import main
-from luban_meter.core.scenario_registry import ScenarioRegistry
+from luban_meter.core.benchmark_registry import BenchmarkRegistry
 from luban_meter.reporting.render import write_report
 from luban_meter.reporting.result_reader import load_report
 from luban_meter.result.report_spec import bar, line, table
@@ -48,8 +48,8 @@ def malformed_run(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "luban_meter.cli.ScenarioRegistry",
-        lambda: ScenarioRegistry(tmp_path / "benchmarking"),
+        "luban_meter.cli.BenchmarkRegistry",
+        lambda: BenchmarkRegistry(tmp_path / "benchmarking"),
     )
     monkeypatch.setattr(
         "luban_meter.cli.SuiteLoader", lambda: SuiteLoader(definitions)

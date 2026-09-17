@@ -104,7 +104,7 @@ class SuiteLoader:
         return SuiteTask(
             name=fields["name"],
             category_name=fields["module"],
-            scenario_name=fields["benchmark"],
+            benchmark_name=fields["benchmark"],
             config_path=config,
             timeout=timeout,
         )

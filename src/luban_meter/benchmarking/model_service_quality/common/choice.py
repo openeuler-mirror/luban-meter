@@ -45,10 +45,10 @@ SCORER_VERSION = "metrics-v1"
 
 
 @dataclass(frozen=True)
-class ChoiceScenarioDefinition:
+class ChoiceBenchmarkDefinition:
     """Dataset-family constants for a four-choice benchmark."""
 
-    scenario_name: str
+    benchmark_name: str
     measurement: str
     dataset_label: str
 
@@ -73,7 +73,7 @@ def load_request(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def validate_choice_parameters(
     parameters: Mapping[str, Any],
-    scenario_definition: ChoiceScenarioDefinition,
+    benchmark_definition: ChoiceBenchmarkDefinition,
 ) -> dict[str, Any]:
     config = {
         "service_url": string_value(
@@ -97,7 +97,7 @@ def validate_choice_parameters(
         "prompt_version": string_value(
             parameters,
             "prompt_version",
-            f"{scenario_definition.scenario_name}-v1",
+            f"{benchmark_definition.benchmark_name}-v1",
         ),
         "max_tokens": positive_integer(parameters, "max_tokens", 8),
         "stop": string_list(parameters, "stop", ["\n"]),
@@ -114,7 +114,7 @@ def validate_choice_parameters(
     if config["few_shot"] > 0 and not config["few_shot_path"]:
         raise ValueError("few_shot_path is required when few_shot > 0")
     validate_prompt_version(
-        scenario_definition.scenario_name, config["prompt_version"]
+        benchmark_definition.benchmark_name, config["prompt_version"]
     )
     return config
 
@@ -247,9 +247,9 @@ def probe_logprobs_support(client: OpenAIClient) -> None:
 def collect_choice_raw_result(
     request: dict[str, Any],
     parameters: dict[str, Any],
-    scenario_definition: ChoiceScenarioDefinition,
+    benchmark_definition: ChoiceBenchmarkDefinition,
 ) -> dict[str, Any]:
-    config = validate_choice_parameters(parameters, scenario_definition)
+    config = validate_choice_parameters(parameters, benchmark_definition)
     served_model_name = request.get("model_name")
     if not isinstance(served_model_name, str) or not served_model_name:
         served_model_name = OpenAIClient(
@@ -323,11 +323,11 @@ def collect_choice_raw_result(
         "status": "success",
         "metrics": {"samples": sample_records, "counts": counts},
         "metadata": {
-            "measurement": scenario_definition.measurement,
+            "measurement": benchmark_definition.measurement,
             "protocol": PROTOCOL,
             "service_url": config["service_url"],
             "model": served_model_name,
-            "dataset": scenario_definition.dataset_label,
+            "dataset": benchmark_definition.dataset_label,
             "dataset_path": config["dataset_path"],
             "split": config["split"],
             "sample_count": counts["total"],
@@ -348,14 +348,14 @@ def collect_choice_raw_result(
 
 
 def build_choice_failure_result(
-    error: Exception, scenario_definition: ChoiceScenarioDefinition
+    error: Exception, benchmark_definition: ChoiceBenchmarkDefinition
 ) -> dict[str, Any]:
     return {
         "schema_version": "luban-meter.raw/v1",
         "status": "failed",
         "metrics": {},
         "metadata": {
-            "measurement": scenario_definition.measurement,
+            "measurement": benchmark_definition.measurement,
             "protocol": PROTOCOL,
         },
         "artifacts": {},
@@ -364,16 +364,16 @@ def build_choice_failure_result(
 
 
 def run_choice_cli(
-    scenario_definition: ChoiceScenarioDefinition, description: str
+    benchmark_definition: ChoiceBenchmarkDefinition, description: str
 ) -> None:
     args = parse_args(description)
     try:
         request, parameters = load_request(args.request)
         result = collect_choice_raw_result(
-            request, parameters, scenario_definition
+            request, parameters, benchmark_definition
         )
     except Exception as exc:  # noqa: BLE001
-        result = build_choice_failure_result(exc, scenario_definition)
+        result = build_choice_failure_result(exc, benchmark_definition)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
