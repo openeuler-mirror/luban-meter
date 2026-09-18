@@ -5,7 +5,6 @@ results.
 from __future__ import annotations
 
 import http.server
-import importlib.util
 import json
 import threading
 from pathlib import Path
@@ -13,36 +12,23 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmarking.model_service_quality.cmmlu import (
-    collect_raw as cmmlu,
+from luban_meter.benchmarking.model_service_quality.common import (
+    choice as cmmlu,
 )
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from luban_meter.benchmarking.model_service_quality.common import choice_result
+from tests.domain_runtime import collect_domain
 
-ROOT = Path(__file__).resolve().parents[1]
-RESULT_PATH = (
-    ROOT
-    / "src"
-    / "luban_meter"
-    / "benchmarking"
-    / "model_service_quality"
-    / "cmmlu"
-    / "calculate_metrics.py"
+SPEC = cmmlu.ChoiceBenchmarkDefinition(
+    "cmmlu", "cmmlu_choice_accuracy_online_service", "cmmlu"
 )
 
-MODULE_COUNT = 0
+
+def validate_parameters(parameters):
+    return cmmlu.validate_choice_parameters(parameters, SPEC)
 
 
-def load_result_module():
-    global MODULE_COUNT
-    MODULE_COUNT += 1
-    spec = importlib.util.spec_from_file_location(
-        f"cmmlu_result_test_{MODULE_COUNT}", RESULT_PATH
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    return module
+def process_result(raw):
+    return choice_result.process_choice_result(raw, "cmmlu")
 
 
 def base_parameters(tmp_path: Path) -> dict[str, Any]:
@@ -83,19 +69,17 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
 
 
 def test_validate_parameters(tmp_path: Path) -> None:
-    config = cmmlu.validate_parameters(base_parameters(tmp_path))
+    config = validate_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "ppl"
     assert config["prompt_version"] == "cmmlu-v1"
     with pytest.raises(ValueError):
-        cmmlu.validate_parameters(
+        validate_parameters(
             {**base_parameters(tmp_path), "prompt_version": "ceval-v1"}
         )
     with pytest.raises(ValueError):
-        cmmlu.validate_parameters(
-            {**base_parameters(tmp_path), "temperature": 1.0}
-        )
+        validate_parameters({**base_parameters(tmp_path), "temperature": 1.0})
     with pytest.raises(ValueError):
-        cmmlu.validate_parameters(
+        validate_parameters(
             {**base_parameters(tmp_path), "prompt_format": "chat"}
         )
 
@@ -200,17 +184,12 @@ def fake_service():
 def test_end_to_end_ppl_mode(fake_service: str, tmp_path: Path) -> None:
     parameters = base_parameters(tmp_path)
     parameters["service_url"] = fake_service
-    raw = cmmlu.collect_raw_result({"model_name": "test-model"}, parameters)
+    raw = collect_domain("cmmlu", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
-    assert (
-        raw["metadata"]["measurement"]
-        == "cmmlu_choice_accuracy_online_service"
-    )
-    assert raw["metadata"]["dataset"] == "CMMLU"
+    assert raw["metadata"]["template"] == "cmmlu"
     assert raw["metrics"]["counts"]["correct"] == 1
 
-    result_module = load_result_module()
-    final = result_module.process(raw)
+    final = process_result(raw)
     assert final["status"] == "success"
     cmmlu_metrics = final["metrics"]["task_view"]["cmmlu"]
     assert cmmlu_metrics["accuracy"]["value"] == pytest.approx(0.5)
@@ -226,7 +205,7 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
             "prompt_format": "chat",
         }
     )
-    raw = cmmlu.collect_raw_result({"model_name": "test-model"}, parameters)
+    raw = collect_domain("cmmlu", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
     assert raw["metrics"]["counts"] == {
         "total": 2,
@@ -234,32 +213,3 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
         "parse_failed": 0,
         "service_failed": 0,
     }
-
-
-def test_registry_discovers_cmmlu() -> None:
-    registry = BenchmarkRegistry()
-    assert "cmmlu" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "cmmlu"
-        / "cmmlu.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-cmmlu-test",
-        category_name="model_service_quality",
-        benchmark_name="cmmlu",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert (
-        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
-    )
-    assert run.parameters["prompt_version"] == "cmmlu-v1"
-    assert run.parameters["dataset_path"] == "data/cmmlu/val.jsonl"

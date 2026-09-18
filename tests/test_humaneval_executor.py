@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmarking.model_service_quality.humaneval import (
+from luban_meter.benchmarking.model_service_quality.common import (
     sandbox_runner,
 )
-from luban_meter.benchmarking.model_service_quality.humaneval.executor import (
+from luban_meter.benchmarking.model_service_quality.common.sandbox import (
     DockerSandboxExecutor,
     SandboxConfig,
     SandboxUnavailable,

@@ -10,7 +10,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 CHOICE_LETTERS = ("A", "B", "C", "D")
-
 SUPPORTED_PROMPT_VERSIONS = {
     "squad": ("squad2-gen-v1",),
     "ceval": ("ceval-v1",),

@@ -4,7 +4,7 @@ Usage:
     python -m \
 luban_meter.benchmarking.model_service_quality.scripts.prepare_humaneval \
         --source /path/to/HumanEval.jsonl.gz \
-        --out data/humaneval/HumanEval.jsonl
+        --out dataset/humaneval/HumanEval.jsonl
 
 This is an offline preparation tool. The benchmark never downloads datasets.
 """
@@ -89,7 +89,7 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/humaneval/HumanEval.jsonl"),
+        default=Path("dataset/humaneval/HumanEval.jsonl"),
     )
     args = parser.parse_args()
     records = load_humaneval(args.source)

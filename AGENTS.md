@@ -3,16 +3,8 @@
 本文档面向参与 LuBan-Meter 开发的团队成员和 Agent，用于快速建立项目认知、定位
 代码入口，并按照一致的方式完成开发与验证。
 
-本文档只保留开始开发时需要掌握的内容。详细架构、接口、指标公式和使用方式以对应
-专题文档为准：
-
-- [架构说明](docs/architecture.md)
-- [Benchmark 脚本开发指南](docs/develop-benchmark.md)
-- [生成式推理指标说明](docs/metrics.md)
-- [模型服务质量评测指标说明](docs/model_service_quality.md)
-- [使用说明](docs/usage.md)
-- [命名约定与迁移说明](docs/naming.md)
-- [第一阶段项目进展及规划](docs/luban-meter第一阶段项目进展及规划.md)
+接口、执行链路与扩展开发查阅[架构与扩展指南](ARCHITECTURE.md)。
+命令、配置与结果使用查阅[README](README.md)，术语查阅[CONTEXT](CONTEXT.md)。
 
 ## 1. 开发入口与适用范围
 
@@ -26,125 +18,30 @@
   相同的技能或工具。文件不存在时直接按本指南执行。
 - 已明确的用户要求优先；本地补充约定用于个人工作方式，不替代团队共同规范。
 
-## 2. 架构与目录
+## 2. 当前架构
 
-### 2.1 单任务执行链路
+CLI与统一任务JSON → 显式注册的场景/参数 → Case计划 → RunCoordinator
+→ 任务子进程 → Benchmark采集 → Metric计算 → 新结果JSON与离线HTML。
 
-```text
-CLI
-→ BenchmarkRegistry
-→ RunCoordinator
-→ ExecutionSession
-→ collect_raw.py
-→ raw_result.json
-→ calculate_metrics.py
-→ result.json
-```
+- `Benchmark`下有生成性能、模型服务质量两个子基类。
+- 新增场景继承类别子基类，声明参数并使用装饰器注册，由`benchmarking/__init__.py`显式导入。
+- 新增指标继承独立`Metric`；新增负载策略继承`Profile`，请求参数组合仍属于Case。
+- 仓库根目录`dataset/`保存公共数据集及许可证，`src/luban_meter/data/`共用本地数据读取，`runtime/`共用实际模型请求调度、停止与资源清理。
+- 核心配置与运行器不得按场景名追加条件分支。注册期间仅声明类，不初始化运行依赖。
+- 新配置每个任务独立覆盖CLI基础参数。旧配置和文件对执行入口已移除。
+- JSON/JSONL保存事实与结果，不标记协议版本；HTML只读取新结果。
 
-`RunCoordinator` 是一次运行的统一边界。它负责解析 Benchmark、创建执行会话、运行采集
-脚本、处理结果，并将各阶段异常转换为标准失败结果。
+## 3. 扩展原则
 
-### 2.2 Suite 执行链路
+开发前确定输入、观察边界、Case变量、原始事实和指标分母。
+同一场景的事实尽量一次采集，指标作为独立计算器组合。
+输入模板、答案解析与特殊领域逻辑保留在评测实现；通用引擎负责文件读取与调度。
+评测代码按能力使用扁平模块，不为每个数据集新增目录或复制采集/评分文件。
+同一能力的采集与评分集中维护，类别内复用逻辑放入该类别的`common/`；
+跨类别复用逻辑放入顶层`data/`、`runtime/`等对应职责模块。
+具体接口与完整扩展示例见[架构与扩展指南](ARCHITECTURE.md)。
 
-```text
-Suite YAML
-→ SuiteLoader
-→ SuiteRunner
-→ 多个 RunRequest
-→ RunCoordinator
-→ 每个任务独立输出结果
-→ suite_result.json
-```
-
-### 2.3 核心目录
-
-```text
-src/luban_meter/
-├── benchmarking/
-│   ├── generation_performance/     # 生成式性能场景及 common 公共能力
-│   └── model_service_quality/    # 模型服务质量评测场景、common 能力及 scripts 数据准备
-├── core/
-├── execution/
-├── result/
-├── reporting/
-├── suite/
-│   └── definitions/
-└── utils/
-```
-
-各目录的主要职责如下：
-
-- `benchmarking/`：具体评测场景、配置和指标处理实现；
-- `core/`：请求模型、配置解析、Benchmark 发现和运行编排；
-- `execution/`：执行命令、会话和运行过程管理；
-- `result/`：原始结果处理、标准结果构造和写入；
-- `reporting/`：读取 v2 结果，导出单次运行的 Markdown、CSV 和静态图；
-- `suite/`：Suite 定义加载、校验和任务编排；
-- `utils/`：JSON 和运行标识等通用工具。
-
-## 3. Benchmark 开发原则
-
-### 3.1 按测试场景组织
-
-一个 Benchmark 对应一个边界清晰的测试场景。开发前应先确定：
-
-- 被测对象和调用方式；
-- 测试 Case 的变量和固定条件；
-- 需要采集的原始事实；
-- 可以从原始数据派生的指标；
-- 指标的观察边界和统计窗口。
-
-同一场景需要的原始数据应尽量一次完整采集，再由结果处理阶段计算多个指标。
-
-### 3.2 标准目录
-
-新增 Benchmark 使用以下结构：
-
-```text
-src/luban_meter/benchmarking/<category_directory>/<benchmark_directory>/
-├── collect_raw.py
-├── calculate_metrics.py
-└── config.example.yaml
-```
-
-`collect_raw.py` 和 `calculate_metrics.py` 同时存在后，`BenchmarkRegistry` 才会发现该 Benchmark。
-Benchmark 名称使用小写字母、数字、连字符或下划线，并以字母或数字开头。
-
-Python目录使用下划线。CLI和结果协议保留现有类别及场景名称，由注册表映射到
-实际目录；新增或调整名称时查阅[命名约定](docs/naming.md)。
-
-### 3.3 采集与计算
-
-`collect_raw.py` 负责：
-
-- 读取并校验运行请求和配置；
-- 调用在线服务、Engine 或数据集任务；
-- 记录逐请求、逐 Case 或逐样本原始数据；
-- 记录环境、日志、产物和错误信息；
-- 写出符合 `luban-meter.raw/v1` 的结果。
-
-`calculate_metrics.py` 负责：
-
-- 校验原始结果结构和数据范围；
-- 从原始数据计算派生指标；
-- 按 Request、Service、Engine、Batch 或 Task 视角组织指标；
-- 计算 Mean、P50、P90、P99 等统计值；
-- 输出指标单位、样本数量和统计条件。
-
-### 3.4 配置和公共能力
-
-配置应明确字段名称、类型、范围以及字段之间的组合关系。服务地址、模型、请求速率、
-并发度、Batch Size、输入输出长度和超时等测试条件均通过配置或运行请求表达。
-
-多个生成式 Benchmark 需要复用的流式解析、Token 计数和统计逻辑放在
-`benchmarking/generation_performance/common/`。只服务于单个场景的逻辑保留在对应 Benchmark 目录。
-
-多个 `model_service_quality` Benchmark 需要复用的在线服务调用、数据集加载、Prompt 渲染、
-答案解析和指标计算逻辑放在 `benchmarking/model_service_quality/common/`；数据集离线准备脚本
-放在 `benchmarking/model_service_quality/scripts/`，Benchmark 运行时只读取本地数据集文件。
-
-完整请求、原始结果和最终结果协议参见
-[Benchmark 脚本开发指南](docs/develop-benchmark.md)。
+本阶段支持仓库内新增类、注册和显式导入。独立分发插件不属于当前接口承诺。
 
 ## 4. 必要开发流程
 
@@ -159,11 +56,10 @@ Python目录使用下划线。CLI和结果协议保留现有类别及场景名�
 
 ### 4.2 根据任务执行
 
-- 新增 Benchmark 时，创建标准目录、示例配置和对应测试；
-- 编排多个 Benchmark 时，增加或修改 Suite 定义；
-- 多个生成式场景出现相同逻辑时，将稳定能力提取到 `generation_performance/common/`；
-- 修改公开接口、配置或指标语义时，更新对应专题文档；
-- 功能依赖真实服务、模型或 Engine 时，在目标环境完成冒烟测试；
+- 新增场景、指标或Profile时，验证CLI与任务子进程均可发现，并覆盖公开接口。
+- 配置示例使用统一任务JSON，多任务同样走RunCoordinator。
+- 修改参数、指标语义或报告字段时同步README和架构指南。
+- 依赖真实服务、模型、Engine或Docker时，区分模拟测试与真实环境证据。
 - 任务包含代码交付时，再执行提交、推送和交付检查。
 
 ### 4.3 新功能开发前的需求追问
@@ -248,7 +144,7 @@ Python目录使用下划线。CLI和结果协议保留现有类别及场景名�
 会影响结果的条件。聚合指标应同时给出单位、样本数、测试窗口和失败样本处理方式。
 
 在线服务指标按照客户端时间线计算；Engine 指标按照 Engine 提供的内部时间戳计算。
-指标的定义、公式和两类观察边界参见[生成式推理指标说明](docs/metrics.md)。
+指标公式以各评测能力模块、common公共函数及其回归测试为准。
 
 ## 6. 验证要求
 

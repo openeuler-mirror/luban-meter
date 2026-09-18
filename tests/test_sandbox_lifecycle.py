@@ -12,13 +12,9 @@ import pytest
 
 from luban_meter.core.errors import ExecutionError
 from luban_meter.core.run_contracts import (
-    BenchmarkDefinition,
     CommandSpec,
-    ResolvedRun,
-    RunRequest,
 )
-from luban_meter.execution.command import LocalCommandRunner
-from luban_meter.execution.host import HostSession
+from luban_meter.runtime.local_command import LocalCommandRunner
 from luban_meter.utils.docker_sandbox import (
     SCOPE_LABEL,
     DockerSandbox,
@@ -107,58 +103,6 @@ def test_remove_failure_is_not_silenced(monkeypatch):
         sandbox.remove_container("candidate")
 
 
-@pytest.mark.parametrize(
-    "error", [ExecutionError("timeout"), KeyboardInterrupt()]
-)
-def test_host_always_cleans_scope_and_stops_monitor(
-    tmp_path, monkeypatch, error
-):
-    events = []
-
-    class Monitor:
-        def __init__(self, **kwargs):
-            pass
-
-        def start(self):
-            events.append("start")
-
-        def stop(self):
-            events.append("stop")
-
-    class Runner:
-        def run(self, command):
-            assert command.env["LUBAN_METER_SANDBOX_SCOPE"]
-            events.append("run")
-            raise error
-
-    monkeypatch.setattr(
-        "luban_meter.execution.host.DeviceMonitorDaemon", Monitor
-    )
-    monkeypatch.setattr(
-        DockerSandboxScope, "cleanup", lambda self: events.append("cleanup")
-    )
-    request = RunRequest(
-        "test",
-        "model_service_quality",
-        "humaneval",
-        tmp_path / "c.yaml",
-        None,
-        None,
-        tmp_path,
-    )
-    benchmark_definition = BenchmarkDefinition(
-        "model_service_quality",
-        "humaneval",
-        tmp_path / "b.py",
-        tmp_path / "r.py",
-    )
-    with pytest.raises(type(error)):
-        HostSession(Runner(), monitor_url="http://127.0.0.1:9400").execute(
-            ResolvedRun(request, benchmark_definition, {})
-        )
-    assert events == ["start", "run", "cleanup", "stop"]
-
-
 @pytest.mark.skipif(
     os.name != "posix", reason="POSIX process-group termination"
 )
@@ -194,8 +138,8 @@ def test_sigterm_unwinds_runner_and_restores_handler(tmp_path):
 
 
 def test_create_failure_never_starts_candidate(tmp_path, monkeypatch):
-    from luban_meter.benchmarking.model_service_quality.humaneval import (
-        executor as humaneval_executor,
+    from luban_meter.benchmarking.model_service_quality.common import (
+        sandbox as humaneval_executor,
     )
     from luban_meter.utils.docker_sandbox import REGISTRY_ENV
 

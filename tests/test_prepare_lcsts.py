@@ -284,14 +284,10 @@ def test_write_jsonl(tmp_path: Path, mod) -> None:
 
 
 def test_real_data_integrity(mod) -> None:
-    """Verify the bundled test.jsonl has correct count."""
+    """Verify the shared test.jsonl has correct count."""
     data_path = (
         ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "data"
+        / "dataset"
         / "lcsts"
         / "test.jsonl"
     )
@@ -310,11 +306,7 @@ def test_real_data_fields(mod) -> None:
     """Verify all records have required fields."""
     data_path = (
         ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "data"
+        / "dataset"
         / "lcsts"
         / "test.jsonl"
     )
@@ -338,11 +330,7 @@ def test_real_data_no_prefix(mod) -> None:
     """Verify prefix was stripped from content."""
     data_path = (
         ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "data"
+        / "dataset"
         / "lcsts"
         / "test.jsonl"
     )
@@ -364,11 +352,7 @@ def test_real_data_unique_ids(mod) -> None:
     """Verify all IDs are unique."""
     data_path = (
         ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "data"
+        / "dataset"
         / "lcsts"
         / "test.jsonl"
     )

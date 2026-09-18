@@ -9,6 +9,9 @@ from typing import Any
 
 import pytest
 
+from luban_meter.benchmarking.model_service_quality import (
+    text_summarization as lcsts,
+)
 from luban_meter.benchmarking.model_service_quality.common.parsers import (
     general_postprocess,
     lcsts_postprocess,
@@ -16,11 +19,7 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_lcsts_prompt,
 )
-from luban_meter.benchmarking.model_service_quality.lcsts import (
-    collect_raw as lcsts,
-)
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from tests.domain_runtime import collect_domain
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -29,8 +28,7 @@ RESULT_PATH = (
     / "luban_meter"
     / "benchmarking"
     / "model_service_quality"
-    / "lcsts"
-    / "calculate_metrics.py"
+    / "text_summarization.py"
 )
 
 MODULE_COUNT = 0
@@ -206,13 +204,13 @@ def test_run_benchmark_end_to_end(tmp_path: Path) -> None:
 
     params = base_parameters(tmp_path)
     with patch(
-        "luban_meter.benchmarking.model_service_quality.lcsts.collect_raw.OpenAIClient",
+        "luban_meter.benchmarking.model_service_quality.quality_benchmarks.OpenAIClient",
         return_value=mock_client,
     ):
-        raw = lcsts.collect_raw_result({"model_name": "test-model"}, params)
+        raw = collect_domain("lcsts", {"model_name": "test-model"}, params)
 
     assert raw["status"] == "success"
-    assert raw["schema_version"] == "luban-meter.raw/v1"
+    assert "schema_version" not in raw
     samples = raw["metrics"]["samples"]
     assert len(samples) == 2
     for s in samples:
@@ -221,7 +219,7 @@ def test_run_benchmark_end_to_end(tmp_path: Path) -> None:
         assert s["input_tokens"] == 10
         assert s["output_tokens"] == 5
     assert raw["metrics"]["counts"]["total"] == 2
-    assert raw["metadata"]["dataset"] == "LCSTS"
+    assert raw["metadata"]["template"] == "lcsts"
 
 
 # ---- Result processing ----
@@ -340,33 +338,3 @@ def test_process_raw_failed() -> None:
 
 
 # ---- Registry discovery ----
-
-
-def test_registry_discovers_lcsts() -> None:
-    registry = BenchmarkRegistry()
-    assert "lcsts" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "lcsts"
-        / "lcsts.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-lcsts-test",
-        category_name="model_service_quality",
-        benchmark_name="lcsts",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert (
-        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
-    )
-    assert run.parameters["eval_mode"] == "gen"
-    assert run.parameters["max_tokens"] == 512
-    assert run.parameters["dataset_path"] == "data/lcsts/test.jsonl"

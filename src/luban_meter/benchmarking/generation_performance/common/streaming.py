@@ -17,8 +17,8 @@ from .token_counting import (
 class StreamObservation:
     generated_text: str
     event_times: tuple[float, ...]
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int | None
+    output_tokens: int | None
 
 
 def collect_completion_stream(
@@ -65,13 +65,8 @@ def collect_completion_stream(
         raise RuntimeError(
             "stream ended before the first non-empty generated output"
         )
-    if usage is None:
-        raise RuntimeError(
-            "stream did not report token usage; the endpoint must support "
-            "stream_options.include_usage"
-        )
-    input_tokens, output_tokens = usage
-    if output_tokens <= 0:
+    input_tokens, output_tokens = usage if usage is not None else (None, None)
+    if output_tokens is not None and output_tokens <= 0:
         raise RuntimeError("stream reported no output tokens")
     return StreamObservation(
         generated_text="".join(generated_parts),
@@ -132,13 +127,8 @@ def collect_chat_stream(
         raise RuntimeError(
             "stream ended before the first non-empty generated output"
         )
-    if usage is None:
-        raise RuntimeError(
-            "stream did not report token usage; the endpoint must support "
-            "stream_options.include_usage"
-        )
-    input_tokens, output_tokens = usage
-    if output_tokens <= 0:
+    input_tokens, output_tokens = usage if usage is not None else (None, None)
+    if output_tokens is not None and output_tokens <= 0:
         raise RuntimeError("stream reported no output tokens")
     return StreamObservation(
         generated_text="".join(generated_parts),

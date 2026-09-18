@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
-import types
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
-
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
 
 ROOT = Path(__file__).parents[1]
 ENGINE_RESULT_HANDLER = ROOT / (
     "src/luban_meter/benchmarking/generation_performance"
-    "/offline_vllm_engine/calculate_metrics.py"
+    "/vllm_engine.py"
 )
 ENGINE_BENCHMARK_ENTRY = ROOT / (
     "src/luban_meter/benchmarking/generation_performance"
-    "/offline_vllm_engine/collect_raw.py"
+    "/vllm_engine.py"
 )
 
 
@@ -147,13 +141,6 @@ class EngineSloConfigTest(unittest.TestCase):
             self.collector_module.engine_slo_config({"engine_slo": None})
         )
 
-    def test_registry_exposes_offline_benchmark_name(self) -> None:
-        benchmarks = BenchmarkRegistry().list_benchmarks(
-            "generation_performance"
-        )
-        self.assertIn("offline_vllm_engine", benchmarks)
-        self.assertNotIn("vllm-engine-stage", benchmarks)
-
     def test_valid_partial_config_is_normalized(self) -> None:
         config = self.collector_module.engine_slo_config(
             {
@@ -186,66 +173,6 @@ class EngineSloConfigTest(unittest.TestCase):
                 self.assertRaises((TypeError, ValueError)),
             ):
                 self.collector_module.engine_slo_config(parameters)
-
-    def test_run_benchmark_preserves_config_in_raw_metadata(self) -> None:
-        fake_engine = SimpleNamespace(
-            model_config=SimpleNamespace(max_model_len=32),
-            get_tokenizer=lambda: SimpleNamespace(
-                encode=lambda text, add_special_tokens=False: [1, 2]
-            ),
-        )
-        fake_vllm = types.ModuleType("vllm")
-        fake_vllm.SamplingParams = lambda **kwargs: kwargs
-        parameters = {
-            "warmup_rounds": 0,
-            "rounds": 1,
-            "input_lengths": [4],
-            "output_lengths": [1],
-            "request_batch_sizes": [1],
-            "seed_prompt": "test",
-            "engine_slo": {"internal_ttft_ms": 200},
-        }
-        record = make_record(
-            request_index=0,
-            scheduled_ts=10.0,
-            first_token_ts=10.1,
-            last_token_ts=10.1,
-            internal_ttft_seconds=0.1,
-            output_tokens=1,
-            request_batch_size=1,
-        )
-
-        with (
-            patch.dict(sys.modules, {"vllm": fake_vllm}),
-            patch.object(
-                self.collector_module, "build_engine", return_value=fake_engine
-            ),
-            patch.object(
-                self.collector_module, "generate_batch", return_value=[record]
-            ),
-            patch.object(
-                self.collector_module,
-                "kv_cache_environment",
-                return_value={"num_gpu_blocks": 1},
-            ),
-        ):
-            raw_result = self.collector_module.collect_raw_result(
-                {"model_name": "test-model"}, parameters
-            )
-
-        self.assertEqual(
-            raw_result["metadata"]["engine_slo_config"],
-            {"internal_ttft_ms": 200.0},
-        )
-        self.assertEqual(
-            raw_result["metadata"]["measurement"], "vllm_engine_offline"
-        )
-
-    def test_failure_result_uses_offline_measurement_name(self) -> None:
-        failure = self.collector_module.failure_result(RuntimeError("failed"))
-        self.assertEqual(
-            failure["metadata"]["measurement"], "vllm_engine_offline"
-        )
 
 
 class EngineGoodputTest(unittest.TestCase):

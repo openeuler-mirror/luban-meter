@@ -13,14 +13,13 @@ from typing import Any
 
 import pytest
 
+from luban_meter.benchmarking.model_service_quality import (
+    arithmetic_qa as gsm8k,
+)
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_math_prompt,
 )
-from luban_meter.benchmarking.model_service_quality.gsm8k import (
-    collect_raw as gsm8k,
-)
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from tests.domain_runtime import collect_domain
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -29,8 +28,7 @@ RESULT_PATH = (
     / "luban_meter"
     / "benchmarking"
     / "model_service_quality"
-    / "gsm8k"
-    / "calculate_metrics.py"
+    / "arithmetic_qa.py"
 )
 
 MODULE_COUNT = 0
@@ -171,7 +169,7 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
             "few_shot_path": str(few_shot),
         }
     )
-    raw = gsm8k.collect_raw_result({"model_name": "test-model"}, parameters)
+    raw = collect_domain("gsm8k", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
     assert raw["metadata"]["measurement"] == "gsm8k_exact_match_online_service"
     assert raw["metrics"]["counts"] == {
@@ -246,43 +244,13 @@ def test_process_partial_and_failed() -> None:
         )
 
 
-def test_registry_discovers_gsm8k() -> None:
-    registry = BenchmarkRegistry()
-    assert "gsm8k" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "gsm8k"
-        / "gsm8k.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-gsm8k-test",
-        category_name="model_service_quality",
-        benchmark_name="gsm8k",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert (
-        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
-    )
-    assert run.parameters["eval_mode"] == "gen"
-    assert run.parameters["max_tokens"] == 512
-    assert run.parameters["dataset_path"] == "data/gsm8k/test.jsonl"
-
-
 def test_dataset_loader_survives_unicode_line_separators(
     tmp_path: Path,
 ) -> None:
     """Official GSM8K text contains U+2028/U+2029; loaders must not
     split on them.
     """
-    from luban_meter.benchmarking.model_service_quality.common.dataset import (
+    from luban_meter.data.engine import (
         load_records,
     )
 

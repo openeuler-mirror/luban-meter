@@ -3,7 +3,7 @@
 Usage:
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_gsm8k \
-        --source /path/to/gsm8k [--out data/gsm8k]
+        --source /path/to/gsm8k [--out dataset/gsm8k]
         [--few-shot 8] [--few-shot-file /path/to/curated.jsonl]
 
 Expected layout of the official GSM8K release:
@@ -61,7 +61,7 @@ def main() -> None:
         required=True,
         help="directory containing official test.jsonl and train.jsonl",
     )
-    parser.add_argument("--out", type=Path, default=Path("data/gsm8k"))
+    parser.add_argument("--out", type=Path, default=Path("dataset/gsm8k"))
     parser.add_argument("--few-shot", type=int, default=8)
     parser.add_argument("--few-shot-file", type=Path, default=None)
     args = parser.parse_args()

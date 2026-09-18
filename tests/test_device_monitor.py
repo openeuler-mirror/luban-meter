@@ -5,10 +5,6 @@ import pytest
 from luban_meter.benchmarking.generation_performance.common import (
     device_monitor,
 )
-from luban_meter.reporting.hardware import build_hardware_figure
-from luban_meter.reporting.result_reader import build_report_from_result
-from tests.test_hardware_overview import table_text
-from tests.test_reports_v2 import result
 
 DCGM_METRICS = "\n".join(
     [
@@ -75,21 +71,3 @@ def test_model_names_reach_environment_and_samples(monkeypatch):
     assert snapshot.devices[0].memory_used_mb == 0
     # FREE + USED must not be treated as total memory without FB_TOTAL.
     assert snapshot.devices[0].memory_total_mb is None
-
-
-def test_exported_model_names_appear_in_hardware_report(tmp_path):
-    payload = result()
-    payload["environment"]["hardware_environment"] = (
-        device_monitor.collect_hardware_environment(DCGM_METRICS)
-    )
-    task = build_report_from_result(payload, tmp_path / "result.json").tasks[0]
-    figure = build_hardware_figure(task)
-
-    try:
-        text = table_text(figure)
-        assert "NVIDIA H20" in text
-        assert "NVIDIA A100" in text
-        assert "GPU-0" not in text
-        assert "GPU-3" not in text
-    finally:
-        figure.clear()

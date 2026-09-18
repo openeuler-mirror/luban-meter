@@ -10,17 +10,17 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmarking.model_service_quality.humaneval import (
-    calculate_metrics as humaneval_result,
+from luban_meter.benchmarking.model_service_quality import (
+    code_generation as humaneval,
 )
-from luban_meter.benchmarking.model_service_quality.humaneval import (
-    collect_raw as humaneval,
+from luban_meter.benchmarking.model_service_quality import (
+    code_generation as humaneval_result,
 )
-from luban_meter.benchmarking.model_service_quality.humaneval.executor import (
+from luban_meter.benchmarking.model_service_quality.common.sandbox import (
     ExecutionResult,
 )
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from luban_meter.data.engine import load_records, resolve_data_path
+from tests.domain_runtime import collect_domain
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -86,12 +86,12 @@ def test_validate_parameters(tmp_path: Path) -> None:
         )
 
 
-def test_bundled_official_dataset(
+def test_shared_official_dataset(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    dataset = humaneval.resolve_data_path("data/humaneval/HumanEval.jsonl")
-    records = humaneval.prepare_samples(humaneval.load_records(dataset))
+    dataset = resolve_data_path("dataset/humaneval/HumanEval.jsonl")
+    records = humaneval.prepare_samples(load_records(dataset))
     assert len(records) == 164
     assert records[0]["task_id"] == "HumanEval/0"
     assert records[-1]["task_id"] == "HumanEval/163"
@@ -177,9 +177,7 @@ def test_end_to_end_pass_at_1(
     parameters = base_parameters(tmp_path)
     parameters["service_url"] = fake_service
     monkeypatch.setattr(humaneval, "DockerSandboxExecutor", _FakeSandbox)
-    raw = humaneval.collect_raw_result(
-        {"model_name": "test-model"}, parameters
-    )
+    raw = collect_domain("humaneval", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
     assert raw["metrics"]["counts"] == {
         "total": 2,
@@ -229,29 +227,3 @@ def test_result_counts_infrastructure_failure_in_denominator() -> None:
     assert final["metrics"]["task_view"]["humaneval"]["pass_at_1"][
         "value"
     ] == pytest.approx(0.5)
-
-
-def test_registry_discovers_humaneval() -> None:
-    registry = BenchmarkRegistry()
-    assert "humaneval" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "humaneval"
-        / "humaneval.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-humaneval-test",
-        category_name="model_service_quality",
-        benchmark_name="humaneval",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert run.parameters["samples_per_task"] == 1
-    assert run.parameters["pass_k"] == [1]

@@ -12,10 +12,8 @@ _CHOICE_PATTERNS = (
     re.compile(r"^([A-D])(?![a-zA-Z])"),
     re.compile(r"(?<![A-Za-z])([A-D])(?![a-z])"),
 )
-
 _GSM8K_DELIMITED = re.compile(r"####\s*([-+]?[0-9][0-9,]*(?:\.[0-9]+)?)")
 _NUMBER = re.compile(r"[-+]?[0-9][0-9,]*(?:\.[0-9]+)?")
-
 _ARTICLES = re.compile(r"\b(a|an|the)\b")
 _PUNCTUATION = set(string.punctuation + "。，、；：？！“”‘’（）《》【】…—·")
 _CODE_FENCE = re.compile(

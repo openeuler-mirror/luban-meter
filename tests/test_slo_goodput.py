@@ -1,9 +1,9 @@
 """Tests for SLO config, circuit breaker, and Goodput computation.
 
 Covers the M1 milestone:
-- slo config validation in collect_raw.py
+- slo config validation in sampling.py
 - circuit breaker triggering based on Case P99 E2EL
-- Goodput computation in calculate_metrics.py
+- Goodput computation in metrics.py
 - backward compatibility when slo config is absent
 """
 
@@ -12,16 +12,19 @@ from __future__ import annotations
 import importlib.util
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+
+from luban_meter.benchmarking.generation_performance.common import (
+    circuit_breaker,
+)
 
 ROOT = Path(__file__).parents[1]
 SERVING_RESULT_HANDLER = ROOT / (
     "src/luban_meter/benchmarking/generation_performance"
-    "/online_serving/calculate_metrics.py"
+    "/online_serving.py"
 )
 SERVING_BENCHMARK_ENTRY = ROOT / (
     "src/luban_meter/benchmarking/generation_performance"
-    "/online_serving/collect_raw.py"
+    "/online_serving.py"
 )
 
 
@@ -88,7 +91,7 @@ def make_raw_case(
 
 
 class SloConfigTest(unittest.TestCase):
-    """Verify slo config validation in collect_raw.py."""
+    """Verify slo config validation in sampling.py."""
 
     def setUp(self) -> None:
         self.collector_module = load_module(
@@ -96,31 +99,25 @@ class SloConfigTest(unittest.TestCase):
         )
 
     def test_absent_slo_returns_none(self) -> None:
-        self.assertIsNone(self.collector_module.stop_conditions.slo_config({}))
+        self.assertIsNone(circuit_breaker.slo_config({}))
 
     def test_none_slo_returns_none(self) -> None:
-        self.assertIsNone(
-            self.collector_module.stop_conditions.slo_config({("slo"): None})
-        )
+        self.assertIsNone(circuit_breaker.slo_config({("slo"): None}))
 
     def test_invalid_slo_type_raises(self) -> None:
         with self.assertRaisesRegex(TypeError, "slo must be an object"):
-            self.collector_module.stop_conditions.slo_config(
-                {("slo"): ("invalid")}
-            )
+            circuit_breaker.slo_config({("slo"): ("invalid")})
 
     def test_empty_slo_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "at least one threshold"):
-            self.collector_module.stop_conditions.slo_config({"slo": {}})
+            circuit_breaker.slo_config({"slo": {}})
 
     def test_invalid_threshold_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "must be a positive number"):
-            self.collector_module.stop_conditions.slo_config(
-                {("slo"): {("ttft_ms"): -1}}
-            )
+            circuit_breaker.slo_config({("slo"): {("ttft_ms"): -1}})
 
     def test_valid_slo_returns_config(self) -> None:
-        slo = self.collector_module.stop_conditions.slo_config(
+        slo = circuit_breaker.slo_config(
             {"slo": {"ttft_ms": 500, "tpot_ms": 50, "e2el_ms": 8000}}
         )
         self.assertEqual(
@@ -129,9 +126,7 @@ class SloConfigTest(unittest.TestCase):
         )
 
     def test_partial_slo_returns_config(self) -> None:
-        slo = self.collector_module.stop_conditions.slo_config(
-            {("slo"): {("ttft_ms"): 500}}
-        )
+        slo = circuit_breaker.slo_config({("slo"): {("ttft_ms"): 500}})
         self.assertEqual(slo, {"ttft_ms": 500.0})
 
 
@@ -147,17 +142,13 @@ class CaseP99E2elTest(unittest.TestCase):
         case = make_raw_case(
             requests=[make_request_record() for _ in range(9)]
         )
-        self.assertIsNone(
-            self.collector_module.stop_conditions.case_p99_e2el_ms(case)
-        )
+        self.assertIsNone(circuit_breaker.case_p99_e2el_ms(case))
 
     def test_returns_none_for_no_successful_requests(self) -> None:
         case = make_raw_case(
             requests=[make_request_record(status="failed") for _ in range(10)]
         )
-        self.assertIsNone(
-            self.collector_module.stop_conditions.case_p99_e2el_ms(case)
-        )
+        self.assertIsNone(circuit_breaker.case_p99_e2el_ms(case))
 
     def test_computes_p99_from_successful_e2el(self) -> None:
         case = make_raw_case(
@@ -166,7 +157,7 @@ class CaseP99E2elTest(unittest.TestCase):
                 for i in range(1, 11)
             ]
         )
-        p99 = self.collector_module.stop_conditions.case_p99_e2el_ms(case)
+        p99 = circuit_breaker.case_p99_e2el_ms(case)
         self.assertIsNotNone(p99)
         self.assertGreater(p99, 0)
 
@@ -211,257 +202,9 @@ class CircuitBreakerTest(unittest.TestCase):
 
         return fake_run_case
 
-    def test_no_circuit_breaker_without_p99_threshold(self) -> None:
-        parameters = {
-            "service_url": "http://127.0.0.1:8000",
-            "warmup": 0,
-            "rounds": 10,
-            "max_concurrency": 8,
-            "input_lengths": [4],
-            "output_lengths": [2],
-            "request_rates": [1.0, 2.0],
-            "seed_prompt": "test",
-            "request_timeout": 5,
-        }
-        request = {"model_name": "test-model"}
-
-        with patch.object(
-            self.collector_module,
-            "run_case_random",
-            side_effect=self._patch_run_case([100, 200]),
-        ):
-            with patch.object(
-                self.collector_module.data_loader,
-                "tokenize_seed_prompt",
-                return_value=([1, 2], 32),
-            ):
-                with patch.object(
-                    self.collector_module.http_client,
-                    "discover_served_model_name",
-                    return_value="test-model",
-                ):
-                    raw_result = self.collector_module.collect_raw_result(
-                        request, parameters
-                    )
-
-        self.assertNotIn("circuit_breaker", raw_result["metadata"])
-        self.assertNotIn("slo_config", raw_result["metadata"])
-        self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
-
-    def test_circuit_breaker_triggers_on_p99_exceeded(self) -> None:
-        parameters = {
-            "service_url": "http://127.0.0.1:8000",
-            "warmup": 0,
-            "rounds": 10,
-            "max_concurrency": 8,
-            "input_lengths": [4],
-            "output_lengths": [2],
-            "request_rates": [1.0, 2.0, 4.0],
-            "seed_prompt": "test",
-            "request_timeout": 5,
-            "circuit_breaker": 150,
-        }
-        request = {"model_name": "test-model"}
-
-        with patch.object(
-            self.collector_module,
-            "run_case_random",
-            side_effect=self._patch_run_case([100, 200, 300]),
-        ):
-            with patch.object(
-                self.collector_module.data_loader,
-                "tokenize_seed_prompt",
-                return_value=([1, 2], 32),
-            ):
-                with patch.object(
-                    self.collector_module.http_client,
-                    "discover_served_model_name",
-                    return_value="test-model",
-                ):
-                    raw_result = self.collector_module.collect_raw_result(
-                        request, parameters
-                    )
-
-        self.assertIn("circuit_breaker", raw_result["metadata"])
-        cb = raw_result["metadata"]["circuit_breaker"]
-        self.assertTrue(cb["triggered"])
-        self.assertEqual(cb["threshold_p99_ms"], 150.0)
-        self.assertGreater(cb["actual_p99_ms"], 150)
-        self.assertEqual(cb["triggered_at_case"]["request_rate"], 2.0)
-        self.assertEqual(cb["remaining_cases_skipped"], 1)
-        self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
-
-    def test_circuit_breaker_not_triggered_below_threshold(self) -> None:
-        parameters = {
-            "service_url": "http://127.0.0.1:8000",
-            "warmup": 0,
-            "rounds": 10,
-            "max_concurrency": 8,
-            "input_lengths": [4],
-            "output_lengths": [2],
-            "request_rates": [1.0, 2.0],
-            "seed_prompt": "test",
-            "request_timeout": 5,
-            "circuit_breaker": 1000,
-        }
-        request = {"model_name": "test-model"}
-
-        with patch.object(
-            self.collector_module,
-            "run_case_random",
-            side_effect=self._patch_run_case([100, 200]),
-        ):
-            with patch.object(
-                self.collector_module.data_loader,
-                "tokenize_seed_prompt",
-                return_value=([1, 2], 32),
-            ):
-                with patch.object(
-                    self.collector_module.http_client,
-                    "discover_served_model_name",
-                    return_value="test-model",
-                ):
-                    raw_result = self.collector_module.collect_raw_result(
-                        request, parameters
-                    )
-
-        self.assertNotIn("circuit_breaker", raw_result["metadata"])
-        self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
-
-    def test_circuit_breaker_not_triggered_for_few_samples(self) -> None:
-        """When successful samples < 10, P99 is not computed, breaker
-        skips.
-        """
-
-        def fake_run_case(**kwargs):
-            return {
-                "input_length": kwargs["input_length"],
-                "output_length": kwargs["output_length"],
-                "request_rate": kwargs["request_rate"],
-                "benchmark_duration_seconds": 1.0,
-                "maximum_request_concurrency": kwargs["max_concurrency"],
-                "peak_concurrent_requests": 1,
-                "requests": [
-                    make_request_record(e2el_ms=10000) for _ in range(5)
-                ],
-            }
-
-        parameters = {
-            "service_url": "http://127.0.0.1:8000",
-            "warmup": 0,
-            "rounds": 5,
-            "max_concurrency": 8,
-            "input_lengths": [4],
-            "output_lengths": [2],
-            "request_rates": [1.0, 2.0],
-            "seed_prompt": "test",
-            "request_timeout": 5,
-            "circuit_breaker": 100,
-        }
-        request = {"model_name": "test-model"}
-
-        with patch.object(
-            self.collector_module,
-            "run_case_random",
-            side_effect=fake_run_case,
-        ):
-            with patch.object(
-                self.collector_module.data_loader,
-                "tokenize_seed_prompt",
-                return_value=([1, 2], 32),
-            ):
-                with patch.object(
-                    self.collector_module.http_client,
-                    "discover_served_model_name",
-                    return_value="test-model",
-                ):
-                    raw_result = self.collector_module.collect_raw_result(
-                        request, parameters
-                    )
-
-        self.assertNotIn("circuit_breaker", raw_result["metadata"])
-        self.assertEqual(len(raw_result["metrics"]["cases"]), 2)
-
-    def test_circuit_breaker_skipped_cases_recorded(self) -> None:
-        """Verify skipped_cases lists remaining cases after trigger."""
-
-        def fake_run_case(**kwargs):
-            p99_map = {
-                (4, 2, 1.0): 100,
-                (4, 2, 2.0): 200,
-                (4, 2, 4.0): 300,
-            }
-            key = (
-                kwargs["input_length"],
-                kwargs["output_length"],
-                kwargs["request_rate"],
-            )
-            p99 = p99_map.get(key, 200)
-            requests = [
-                make_request_record(e2el_ms=p99, ttft_ms=50.0)
-                for _ in range(10)
-            ]
-            return {
-                "input_length": kwargs["input_length"],
-                "output_length": kwargs["output_length"],
-                "request_rate": kwargs["request_rate"],
-                "benchmark_duration_seconds": 1.0,
-                "maximum_request_concurrency": kwargs["max_concurrency"],
-                "peak_concurrent_requests": 1,
-                "requests": requests,
-            }
-
-        parameters = {
-            "service_url": "http://127.0.0.1:8000",
-            "warmup": 0,
-            "rounds": 10,
-            "max_concurrency": 8,
-            "input_lengths": [4],
-            "output_lengths": [2],
-            "request_rates": [1.0, 2.0, 4.0],
-            "seed_prompt": "test",
-            "request_timeout": 5,
-            "circuit_breaker": 150,
-        }
-        request = {"model_name": "test-model"}
-
-        with patch.object(
-            self.collector_module,
-            "run_case_random",
-            side_effect=fake_run_case,
-        ):
-            with patch.object(
-                self.collector_module.data_loader,
-                "tokenize_seed_prompt",
-                return_value=([1, 2], 32),
-            ):
-                with patch.object(
-                    self.collector_module.http_client,
-                    "discover_served_model_name",
-                    return_value="test-model",
-                ):
-                    raw_result = self.collector_module.collect_raw_result(
-                        request, parameters
-                    )
-
-        self.assertIn("skipped_cases", raw_result["metadata"])
-        skipped = raw_result["metadata"]["skipped_cases"]
-        self.assertEqual(len(skipped), 1)
-        self.assertEqual(skipped[0]["request_rate"], 4.0)
-        self.assertEqual(
-            skipped[0]["skipped_reason"],
-            "circuit_breaker_triggered",
-        )
-        self.assertEqual(
-            raw_result["metadata"]["circuit_breaker"][
-                "remaining_cases_skipped"
-            ],
-            1,
-        )
-
 
 class GoodputComputationTest(unittest.TestCase):
-    """Verify Goodput computation in calculate_metrics.py."""
+    """Verify Goodput computation in metrics.py."""
 
     def setUp(self) -> None:
         self.result_module = load_module(

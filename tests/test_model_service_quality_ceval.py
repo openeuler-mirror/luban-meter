@@ -5,7 +5,6 @@ results.
 from __future__ import annotations
 
 import http.server
-import importlib.util
 import json
 import threading
 from pathlib import Path
@@ -13,36 +12,23 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmarking.model_service_quality.ceval import (
-    collect_raw as ceval,
+from luban_meter.benchmarking.model_service_quality.common import (
+    choice as ceval,
 )
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from luban_meter.benchmarking.model_service_quality.common import choice_result
+from tests.domain_runtime import collect_domain
 
-ROOT = Path(__file__).resolve().parents[1]
-RESULT_PATH = (
-    ROOT
-    / "src"
-    / "luban_meter"
-    / "benchmarking"
-    / "model_service_quality"
-    / "ceval"
-    / "calculate_metrics.py"
+SPEC = ceval.ChoiceBenchmarkDefinition(
+    "ceval", "ceval_choice_accuracy_online_service", "ceval"
 )
 
-MODULE_COUNT = 0
+
+def validate_parameters(parameters):
+    return ceval.validate_choice_parameters(parameters, SPEC)
 
 
-def load_result_module():
-    global MODULE_COUNT
-    MODULE_COUNT += 1
-    spec = importlib.util.spec_from_file_location(
-        f"ceval_result_test_{MODULE_COUNT}", RESULT_PATH
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec and spec.loader
-    spec.loader.exec_module(module)
-    return module
+def process_result(raw):
+    return choice_result.process_choice_result(raw, "ceval")
 
 
 def base_parameters(tmp_path: Path) -> dict[str, Any]:
@@ -83,21 +69,17 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
 
 
 def test_validate_parameters(tmp_path: Path) -> None:
-    config = ceval.validate_parameters(base_parameters(tmp_path))
+    config = validate_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "ppl"
     assert config["prompt_format"] == "base"
     with pytest.raises(ValueError):
-        ceval.validate_parameters(
-            {**base_parameters(tmp_path), "temperature": 1.0}
-        )
+        validate_parameters({**base_parameters(tmp_path), "temperature": 1.0})
     with pytest.raises(ValueError):
-        ceval.validate_parameters(
-            {**base_parameters(tmp_path), "eval_mode": "x"}
-        )
+        validate_parameters({**base_parameters(tmp_path), "eval_mode": "x"})
     with pytest.raises(ValueError):
-        ceval.validate_parameters({**base_parameters(tmp_path), "few_shot": 3})
+        validate_parameters({**base_parameters(tmp_path), "few_shot": 3})
     with pytest.raises(ValueError):
-        ceval.validate_parameters(
+        validate_parameters(
             {**base_parameters(tmp_path), "prompt_format": "chat"}
         )
 
@@ -209,7 +191,7 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
             "prompt_format": "chat",
         }
     )
-    raw = ceval.collect_raw_result({"model_name": "test-model"}, parameters)
+    raw = collect_domain("ceval", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
     assert raw["metrics"]["counts"] == {
         "total": 2,
@@ -220,8 +202,7 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
     assert raw["metadata"]["eval_mode"] == "gen"
     assert raw["metrics"]["samples"][0]["prediction"] == "B"
 
-    result_module = load_result_module()
-    final = result_module.process(raw)
+    final = process_result(raw)
     assert final["status"] == "success"
     ceval_metrics = final["metrics"]["task_view"]["ceval"]
     assert ceval_metrics["accuracy"]["value"] == pytest.approx(0.5)
@@ -234,7 +215,7 @@ def test_end_to_end_gen_mode(fake_service: str, tmp_path: Path) -> None:
 def test_end_to_end_ppl_mode(fake_service: str, tmp_path: Path) -> None:
     parameters = base_parameters(tmp_path)
     parameters["service_url"] = fake_service
-    raw = ceval.collect_raw_result({"model_name": "test-model"}, parameters)
+    raw = collect_domain("ceval", {"model_name": "test-model"}, parameters)
     assert raw["status"] == "success"
     samples = raw["metrics"]["samples"]
     assert all(sample["prediction"] == "B" for sample in samples)
@@ -243,7 +224,6 @@ def test_end_to_end_ppl_mode(fake_service: str, tmp_path: Path) -> None:
 
 
 def test_process_partial_and_failed() -> None:
-    result_module = load_result_module()
 
     def sample(status: str, correct: bool | None) -> dict[str, Any]:
         return {
@@ -268,13 +248,13 @@ def test_process_partial_and_failed() -> None:
         },
         "metadata": {"model": "m"},
     }
-    final = result_module.process(raw)
+    final = process_result(raw)
     assert final["status"] == "partial_failed"
     ceval_metrics = final["metrics"]["task_view"]["ceval"]
     assert ceval_metrics["accuracy"]["value"] == pytest.approx(1.0)
     assert ceval_metrics["service_failed"]["value"] == 1
 
-    failed = result_module.process(
+    failed = process_result(
         {
             "status": "failed",
             "metrics": {},
@@ -286,40 +266,10 @@ def test_process_partial_and_failed() -> None:
     assert failed["error"]["message"] == "boom"
 
     with pytest.raises(ValueError):
-        result_module.process(
+        process_result(
             {
                 "status": "success",
                 "metrics": {"samples": [sample("service_failed", None)]},
                 "metadata": {},
             }
         )
-
-
-def test_registry_discovers_ceval() -> None:
-    registry = BenchmarkRegistry()
-    assert "ceval" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "ceval"
-        / "ceval.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-ceval-test",
-        category_name="model_service_quality",
-        benchmark_name="ceval",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert run.benchmark_definition.collector_path.name == "collect_raw.py"
-    assert (
-        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
-    )
-    assert run.parameters["eval_mode"] == "ppl"
-    assert run.parameters["stop"] == ["\n"]

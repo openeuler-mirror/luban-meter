@@ -24,13 +24,24 @@ class OpenAIClient:
         served_model_name: str = "",
         api_key: str = "",
         timeout: float = 60.0,
+        request_runner=None,
     ) -> None:
         self.service_url = service_url.rstrip("/")
         self.served_model_name = served_model_name
         self.api_key = api_key
         self.timeout = timeout
+        self.request_runner = request_runner
 
     def _post(
+        self, path: str, payload: dict[str, Any]
+    ) -> tuple[dict[str, Any], float]:
+        if self.request_runner is not None and "completions" in path:
+            return self.request_runner(
+                lambda ticket: self._post_direct(path, payload)
+            )
+        return self._post_direct(path, payload)
+
+    def _post_direct(
         self, path: str, payload: dict[str, Any]
     ) -> tuple[dict[str, Any], float]:
         data = json.dumps(payload).encode("utf-8")

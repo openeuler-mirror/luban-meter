@@ -12,15 +12,15 @@ from luban_meter.benchmarking.model_service_quality.common import (
     parsers,
     prompts,
 )
-from luban_meter.benchmarking.model_service_quality.common.dataset import (
-    load_records,
-    select_few_shot,
-    select_records,
-)
 from luban_meter.benchmarking.model_service_quality.common.parameters import (
     enum_value,
     fixed_value,
     positive_integer,
+)
+from luban_meter.data.engine import (
+    load_records,
+    select_few_shot,
+    select_records,
 )
 
 
@@ -165,11 +165,12 @@ def test_dataset_loading_and_sampling(tmp_path: Path) -> None:
     assert [record["id"] for record in few_shot] == ["1", "3"]
 
 
-def test_resolve_data_path_falls_back_to_bundled_package_data(
+def test_resolve_data_path_uses_shared_repository_dataset(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
-    """Default relative dataset paths resolve to bundled package data."""
-    from luban_meter.benchmarking.model_service_quality.common.dataset import (
+    """Shared dataset references work outside the repository CWD."""
+    from luban_meter.data.engine import (
         resolve_data_path,
     )
 
@@ -178,16 +179,16 @@ def test_resolve_data_path_falls_back_to_bundled_package_data(
     absolute.write_text("{}", encoding="utf-8")
     assert resolve_data_path(absolute) == absolute
 
-    # A default YAML relative path resolves to the bundled package data
-    # dir.
-    bundled = resolve_data_path("data/ceval/val.jsonl")
-    assert bundled.is_file()
-    assert resolve_data_path(bundled) == bundled
+    monkeypatch.chdir(tmp_path)
+    # Explicit shared paths also work outside the checkout.
+    shared = resolve_data_path("dataset/ceval/val.jsonl")
+    assert shared.is_file()
+    assert resolve_data_path(shared) == shared
 
     # A missing relative path keeps its original form so load_records
     # raises.
-    missing = resolve_data_path("data/does/not/exist.jsonl")
-    assert missing == Path("data/does/not/exist.jsonl")
+    missing = resolve_data_path("dataset/does/not/exist.jsonl")
+    assert missing == Path("dataset/does/not/exist.jsonl")
 
 
 def test_parameter_validation() -> None:

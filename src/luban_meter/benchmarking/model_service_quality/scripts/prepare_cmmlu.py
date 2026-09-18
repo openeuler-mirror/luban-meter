@@ -3,7 +3,7 @@
 Usage:
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_cmmlu \
-        --source /path/to/cmmlu [--out data/cmmlu]
+        --source /path/to/cmmlu [--out dataset/cmmlu]
 
 Expected layout of the official CMMLU release (e.g. cmmlu_v1_0_1):
     <source>/test/<subject>.csv    # evaluation split -> val.jsonl
@@ -88,7 +88,7 @@ def main() -> None:
         required=True,
         help="directory containing test/ and dev/ subject CSV files",
     )
-    parser.add_argument("--out", type=Path, default=Path("data/cmmlu"))
+    parser.add_argument("--out", type=Path, default=Path("dataset/cmmlu"))
     args = parser.parse_args()
     # Output split -> official CMMLU source split. The official
     # evaluation

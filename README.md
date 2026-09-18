@@ -1,403 +1,325 @@
 # LuBan-Meter
 
-面向异构 AI 硬件环境的模块化 Benchmark 工具集，统一完成 Benchmark 发现、配置加载、任务执行、指标计算和结果落盘。
+统一执行生成式推理性能与模型服务质量评测，保存原始事实、计算指标并导出离线HTML报告。
 
-## 核心能力
+- 生成性能：在线OpenAI兼容流式服务、离线vLLM Engine。
+- 模型服务质量：C-Eval、CMMLU、GSM8K、HumanEval、LCSTS、SQuAD、WikiText。
+- 同一份JSON编排一个或多个任务，每个任务可以展开多个Case。
+- 场景、指标和负载Profile通过类与装饰器注册，内置实现由`__init__.py`显式导入。
+- 性能和质量共用本地数据加载与实际请求调度；Prometheus及硬件监控按需开启。
 
-- **生成式推理性能评测**：测量在线服务和 vLLM 引擎的 TTFT、TPOT、吞吐量等性能指标
-- **模型服务质量评测**：通过标准数据集（C-Eval、CMMLU、GSM8K、HumanEval、LCSTS、SQuAD、WikiText）评估推理质量
-- **Suite 多任务编排**：一次执行多个 Benchmark，统一输出结果
-- **跨硬件复用**：同一套 Benchmark 在不同硬件环境运行，通过统一化、通用化、标准化的多硬件测评工具框架，完成从配置、执行到报告交付的端到端闭环
-
-## 快速开始
-
-### 安装
+## 安装
 
 ```bash
-python3.12 -m pip install -e ".[dev]"
+python3.12 -m pip install -e '.[dev,generation]'
+# LCSTS的中文ROUGE计算需要：
+python3.12 -m pip install -e '.[quality]'
 ```
 
-要求：Python >= 3.12。模型、驱动、推理引擎和在线服务由用户提前准备。
-
-### 查看 Benchmark
-
-```bash
-luban-meter benchmarks list
-```
-
-输出示例：
-
-```text
-generation_performance  offline_vllm_engine,online_serving,vllm_service_metrics  Large-model generation benchmarks
-model_service_quality   ceval,cmmlu,gsm8k,humaneval,lcsts,squad,wikitext   Model service quality benchmarks
-```
-
-### 运行第一个测试
-
-```bash
-luban-meter run \
-  --module generation_performance \
-  --benchmark online_serving \
-  --config src/luban_meter/benchmarking/generation_performance/online_serving/online_serving.yaml \
-  --model-name <served_model_name>
-```
-
-## 使用指南
-
-### 运行单个 Benchmark
-
-```bash
-luban-meter run \
-  --module <category_name> \
-  --benchmark <benchmark_name> \
-  --config <config_path> \
-  [--model-path <model_path>] \
-  [--model-name <model_name>] \
-  [--output runs] \
-  [--timeout 3600]
-```
-
-以上为命令语法示意：尖括号表示需要替换的值，方括号表示可选参数，实际执行时不输入这些括号。
-
-参数说明：
-
-| 参数 | 必填 | 说明 |
-|---|---:|---|
-| `--module` | 是 | `generation_performance` 或 `model_service_quality` |
-| `--benchmark` | 是 | 场景名称（如 `online_serving`、`ceval`） |
-| `--config` | 是 | 本次测试参数 YAML |
-| `--model-path` | 否 | 本地模型路径 |
-| `--model-name` | 否 | 逻辑模型名或在线服务模型名 |
-| `--output` | 否 | 结果根目录，默认 `runs` |
-| `--timeout` | 否 | 执行超时秒数，默认 `3600` |
-| `--name` | 否 | 保存到结果中的易读运行名称 |
-| `--format` | 否 | 控制台输出 `text`（默认）或 `json` |
-| `--monitor-url` | 否 | Prometheus exporter 地址，启用硬件监控 |
-| `--monitor-interval` | 否 | 硬件监控采样间隔秒数，默认 `1.0` |
-
-### 常用命令示例
-
-**在线生成服务性能测试**：
-
-```bash
-luban-meter run \
-  --module generation_performance \
-  --benchmark online_serving \
-  --config src/luban_meter/benchmarking/generation_performance/online_serving/online_serving.yaml \
-  --model-name <served_model_name>
-```
-
-配置示例（`online_serving.yaml`）：
-
-```yaml
-service_url: http://127.0.0.1:8000
-input_lengths: [128, 1024]
-output_lengths: [1, 128]
-request_rates: [1.0, 5.0]
-```
-
-`workload_mode: random` 为默认模式；配置中的 `input_lengths`、`output_lengths` 和 `request_rates` 分别提供输入长度、输出长度和请求速率列表。每组取值形成独立 Case，Case中的字段名为 `input_length`、`output_length` 和 `request_rate`。
-
-**vLLM 离线引擎测试**：
-
-```bash
-CUDA_VISIBLE_DEVICES=0 luban-meter run \
-  --module generation_performance \
-  --benchmark offline_vllm_engine \
-  --config src/luban_meter/benchmarking/generation_performance/offline_vllm_engine/offline_vllm_engine.yaml \
-  --model-path /data/models/<model_directory>
-```
-
-**模型服务质量评测**：
-
-```bash
-# C-Eval 选择题（ppl 模式）
-luban-meter run \
-  --module model_service_quality \
-  --benchmark ceval \
-  --config src/luban_meter/benchmarking/model_service_quality/ceval/ceval.yaml \
-  --model-name <served_model_name>
-
-# HumanEval 代码补全（Pass@1，需先构建沙箱镜像）
-docker build \
-  -f src/luban_meter/benchmarking/model_service_quality/humaneval/Containerfile \
-  -t luban-meter-humaneval-sandbox:v1 \
-  src/luban_meter/benchmarking/model_service_quality/humaneval
-
-luban-meter run \
-  --module model_service_quality \
-  --benchmark humaneval \
-  --config src/luban_meter/benchmarking/model_service_quality/humaneval/humaneval.yaml \
-  --model-name <served_model_name>
-```
-
-### 硬件监控（可选）
-
-通过 `--monitor-url` 指定 Prometheus exporter 地址后，框架在 Benchmark 运行期间周期采集硬件指标（GPU 利用率、功耗、温度、显存 + CPU 利用率、内存）。
-
-```bash
-luban-meter run \
-  --module generation_performance \
-  --benchmark online_serving \
-  --config config.yaml \
-  --monitor-url http://43.138.110.236:9400 \
-  --monitor-interval 1.0
-```
-
-支持的 exporter：
-
-- **DCGM exporter**（NVIDIA GPU）— 默认端口 9400
-- **node_exporter**（CPU/内存）— 默认端口 9100
-
-监控数据注入 `result.json` 的 `environment.device_monitoring`，包含静态硬件环境、设备统计、时间序列和 6 张折线图 PNG。
-
-### 报告生成
-
-执行完成后自动在结果目录的 `report/` 中生成 Markdown、CSV 和静态 PNG。
-
-重新导出已保存的结果：
-
-```bash
-luban-meter report --input runs/<run_id>/result.json
-luban-meter report --input runs/<suite_id>/suite_result.json
-```
-
-### Suite 多任务编排
-
-Suite 用于一次执行多个 Benchmark，统一输出结果。
-
-**定义文件**（`src/luban_meter/suite/definitions/model_service_quality_standard.yaml`）：
-
-```yaml
-name: model_service_quality_standard
-tasks:
-  - name: ceval
-    module: model_service_quality
-    benchmark: ceval
-    config: ../../benchmarking/model_service_quality/ceval/ceval.yaml
-  - name: cmmlu
-    module: model_service_quality
-    benchmark: cmmlu
-    config: ../../benchmarking/model_service_quality/cmmlu/cmmlu.yaml
-  - name: gsm8k
-    module: model_service_quality
-    benchmark: gsm8k
-    config: ../../benchmarking/model_service_quality/gsm8k/gsm8k.yaml
-  - name: humaneval
-    module: model_service_quality
-    benchmark: humaneval
-    config: ../../benchmarking/model_service_quality/humaneval/humaneval.yaml
-```
-
-**运行 Suite**：
-
-```bash
-luban-meter suite \
-  --suite model_service_quality_standard \
-  --model-name <served_model_name>
-```
-
-**输出结构**：
-
-```text
-runs/<suite_id>/
-├── suite_request.json      # 运行请求和定义
-├── suite_result.json       # 汇总结果
-└── tasks/
-    ├── <task_run_id_1>/
-    │   └── result.json     # ceval 完整结果
-    ├── <task_run_id_2>/
-    │   └── result.json     # cmmlu 完整结果
-    └── ...
-```
-
-**特性**：
-- 按顺序执行每个 task，每个 task 生成独立的 `result.json`
-- `suite_result.json` 汇总所有 task 的指标和状态
-- 支持 `--fail-fast`：某个 task 失败时停止后续 task
-- 支持 `--task-config`：为特定 task 覆盖配置（如 `--task-config ceval=ceval_custom.yaml`）
-
-
-## 功能特性
-
-### 生成式推理性能评测
-
-| Benchmark | 工作负载 | 核心指标 | 用途 |
-|---|---|---|---|
-| `online_serving` | random / dataset | TTFT、ITL、TPOT、E2EL、吞吐量 | 在线服务性能与容量评估 |
-| `offline_vllm_engine` | 矩阵遍历 | 内部 TTFT、Prefill/Decode 时延、Engine 吞吐 | vLLM 引擎内部性能分析 |
-| `vllm_service_metrics` | 服务端采集 | 请求/Token 吞吐、TTFT/TPOT 分位数、KV Cache 使用率 | vLLM 服务端指标监控 |
-
-**online_serving** 支持两种模式：
-- **`workload_mode: random`**：精确长度 Token ID Prompt，遍历输入/输出长度和请求速率矩阵
-- **`workload_mode: dataset`**：通过 `dataset_path` 和 `dataset_format` 配置数据；`arrival_process` 支持 `poisson`、`gamma`、`constant`，`burstiness` 控制Gamma到达间隔分布
-
-### 模型服务质量评测
-
-| 数据集 | 任务类型 | 评测模式 | 核心指标 |
-|---|---|---|---|
-| C-Eval | 中文知识问答 | ppl / gen | Accuracy |
-| CMMLU | 中文综合知识 | ppl / gen | Accuracy |
-| GSM8K | 数学推理 | gen | Exact Match |
-| HumanEval | 代码生成 | gen + 沙箱执行 | Pass@1 |
-| LCSTS | 中文摘要 | gen | ROUGE-1/2/L |
-| SQuAD | 阅读理解 | gen | Exact Match、Token F1 |
-| WikiText | 语言建模 | loss | Perplexity、Bits-per-Byte |
-
-数据集默认随包内置在 `benchmarking/model_service_quality/data/`，开箱即用。
-
-
-## 架构与开发
-
-### 执行流程
-
-```text
-CLI
-→ BenchmarkRegistry
-→ RunCoordinator
-→ ExecutionSession
-→ collect_raw.py
-→ raw_result.json
-→ calculate_metrics.py
-→ result.json
-```
-
-单任务通过 `--module`、`--benchmark` 和 `--config` 指定。CLI、文件协议与Python内部字段的对应关系如下：
-
-| CLI选项 | 请求JSON或Suite任务YAML字段 | Python请求字段 |
-|---|---|---|
-| `--module` | `module` | `category_name` |
-| `--benchmark` | `benchmark` | `benchmark_name` |
-| `--config` | `config` | `config_path` |
-| `--model-path` | 请求JSON中的 `model_path` | `model_path` |
-| `--model-name` | 请求JSON中的 `model_name` | `model_name` |
-| `--output` | 请求JSON中的 `output_dir` | `output_dir` |
-| `--timeout` | `timeout` | `timeout` |
-| `--name` | 请求JSON中的 `display_name` | `display_name` |
-
-`--format`控制CLI输出，不属于`RunRequest`字段；`--monitor-url`和`--monitor-interval`通过`LUBAN_MONITOR_URL`、`LUBAN_MONITOR_INTERVAL`传给执行层。Suite定义中的`name`是套件或任务名称，与运行时的`display_name`不同。
-
-### 核心接口
-
-| 接口 | 参数与返回值 |
-|---|---|
-| `BenchmarkRegistry.list_categories()` | 返回类别名称与说明 |
-| `BenchmarkRegistry.list_benchmarks(category_name)` | 返回指定类别的Benchmark名称 |
-| `BenchmarkRegistry.resolve(request)` | 接收`RunRequest`，返回`ResolvedRun` |
-| `RunCoordinator.run(request)` | 接收`RunRequest`，返回`RunResult` |
-| `ExecutionSession.execute(run)` | 接收`ResolvedRun`，返回`RawRunArtifacts` |
-| `ResultManager.process(run, artifacts)` | 接收已解析请求与原始产物，返回`RunResult` |
-| `SuiteLoader.load(suite)` | 接收套件名称，返回`SuiteDefinition` |
-| `SuiteRunner.run(request, definition)` | 接收`SuiteRequest`和`SuiteDefinition`，返回`SuiteResult` |
-
-`ResolvedRun.benchmark_definition`保存`BenchmarkDefinition`，其中`collector_path`和`processor_path`分别指向采集脚本和指标处理脚本。
-
-### 目录结构
-
-```text
-src/luban_meter/
-├── benchmarking/
-│   ├── generation_performance/        # 生成式推理性能评测
-│   │   ├── common/
-│   │   ├── online_serving/
-│   │   ├── offline_vllm_engine/
-│   │   └── vllm_service_metrics/
-│   └── model_service_quality/         # 模型服务质量评测
-│       ├── common/                    # 公共层
-│       ├── scripts/                   # 数据集准备脚本
-│       ├── data/                      # 随包内置数据集
-│       ├── ceval/
-│       ├── cmmlu/
-│       ├── gsm8k/
-│       ├── humaneval/
-│       ├── lcsts/
-│       ├── squad/
-│       └── wikitext/
-├── core/
-├── execution/
-├── result/
-├── reporting/
-├── suite/
-│   └── definitions/
-└── utils/
-```
-
-### Benchmark 发现协议
-
-新增Benchmark推荐使用以下结构：
-
-```text
-benchmarking/<category_name>/<benchmark_name>/
-├── collect_raw.py
-├── calculate_metrics.py
-└── <benchmark_name>.yaml
-```
-
-`BenchmarkRegistry`自动发现`collect_raw.py`和`calculate_metrics.py`同时存在的目录。配置文件通过`--config`指定，不参与发现；内置配置按Benchmark名称命名，例如`online_serving.yaml`和`ceval.yaml`。
-
-### 核心原则
-
-1. **按测试场景组织**：一次采集原始事实，计算多个指标
-2. **跨硬件复用**：同一 Benchmark 在不同环境运行，不按硬件品牌复制脚本
-3. **采集与计算分离**：`collect_raw.py` 采集原始数据，`calculate_metrics.py` 校验并计算指标
-4. **差异通过配置表达**：服务地址、模型、并发度等写入配置，不进入代码分支
-5. **结果可审计**：保留原始记录、参数、日志和失败原因
-
-### 新增 Benchmark 步骤
-
-1. 创建目录 `benchmarking/<category_name>/<benchmark_name>/`
-2. 实现 `collect_raw.py`：接收 `--request` 和 `--output`，输出 `luban-meter.raw/v1`
-3. 实现 `calculate_metrics.py`：定义 `process(raw_result)`，返回含`metrics`等字段的处理结果；`ResultManager`封装为`RunResult`，并写出`luban-meter.result/v2`
-4. 提供 `<benchmark_name>.yaml`：包含配置字段说明和示例值，通过`--config`传入
-5. 校验配置：必填字段、类型、范围、边界
-6. 验证：`luban-meter benchmarks list` 能发现新 Benchmark
-
-
-### 验证清单
-
-- [ ] `luban-meter benchmarks list` 正确发现
-- [ ] 配置正常值、边界值和非法值行为符合预期
-- [ ] 成功运行生成完整的原始结果和最终结果
-- [ ] 失败和超时时生成可诊断结果
-- [ ] 指标单位、样本数和观察边界明确
-- [ ] `pytest -q` 通过
-- [ ] `ruff check src tests` 通过
-
-## 指标说明
-
-### 生成式推理指标
-
-| 指标 | 定义 | 单位 |
-|---|---|---|
-| TTFT | 首 Token 时延（Time To First Token） | ms |
-| ITL | inter-Token Latency，排除首 Token | ms |
-| TPOT | 每输出 Token 时延，包含首 Token 等待 | ms/token |
-| E2EL | 端到端时延（End-to-End Latency） | ms |
-| Request Throughput | 每秒处理的请求数 | req/s |
-| Token Throughput | 每秒生成的 Token 数 | token/s |
-
-在线结果统一采用 GuideLLM 的 Token 指标口径：TPOT 包含首 Token 等待，ITL 排除首 Token；两者按对应 Token 数加权。
-
-### 模型服务质量指标
-
-| 指标 | 定义 | 适用数据集 |
-|---|---|---|
-| Accuracy | 正确预测比例 | C-Eval、CMMLU |
-| Exact Match | 答案完全匹配比例 | GSM8K、SQuAD |
-| Token F1 | 基于 Token 的 F1 分数 | SQuAD |
-| Pass@1 | 单次采样通过单元测试比例 | HumanEval |
-| ROUGE-1/2/L | 基于 n-gram 重叠的摘要质量 | LCSTS |
-| Perplexity | 语言模型预测的不确定性 | WikiText |
-| Bits-per-Byte | 每字节的平均信息量 | WikiText |
-
-## 验证与测试
+Python版本要求≥3.12。模型、在线服务、GPU驱动和vLLM由用户提前准备。
+HumanEval使用Docker沙箱执行候选代码；先按
+[沙箱说明](src/luban_meter/benchmarking/model_service_quality/common/Containerfile)
+构建镜像，禁止回退到宿主机直接执行。数据下载脚本保留在
+`src/luban_meter/benchmarking/model_service_quality/scripts/`，默认输出到
+仓库根目录的[dataset/](dataset/)。性能和质量评测共用该目录，正式评测只读取本地数据。
+数据集不内嵌到Python安装包；仅安装wheel时需自行准备数据并设置`--dataset-path`。
+
+## 单任务
 
 ```bash
 luban-meter benchmarks list
+luban-meter metrics list
+
+luban-meter run \
+  --scenario online_serving \
+  --backend openai_http \
+  --base-url http://127.0.0.1:8000 \
+  --endpoint /v1/completions \
+  --model served-model --tokenizer /models/your-model \
+  --data random_token \
+  --input-tokens 1024 --output-tokens 128 \
+  --profile rate --request-rate 10 --max-concurrency 32 \
+  --arrival-process poisson \
+  --num-requests 1000 --num-warmups 32 \
+  --goodput ttft:1000 tpot:50 e2el:10000 \
+  --result-dir results
+```
+
+`random_token`通过Faker生成随机文本，经本地Tokenizer编码、
+按目标长度截取并解码。不从词表直接随机采样，也不再循环重复种子文本。
+在线发送文本，支持Completions和Chat接口，无需服务提供`/tokenize`；
+`--tokenizer`可指定本地目录或模型标识，未指定时使用`--model`。
+如果服务模型名只是别名，应显式指定Tokenizer。Tokenizer不会自动启用远程代码。
+安装`generation`可选依赖即可使用Faker和Transformers，离线还需自行安装vLLM。
+
+
+```bash
+# 固定输入长度与输出预算
+--input-tokens 1024 --output-tokens 128
+
+# 输入正态采样：均值1024，标准差128；输出预算固定
+--input-tokens 1024 --input-tokens-std 128 --output-tokens 128
+
+# 输入在闭区间内均匀采样；输出预算固定
+--input-tokens-min 512 --input-tokens-max 1536 --output-tokens 128
+```
+
+输出预算也支持`--output-tokens-std/min/max`。标准差缺省或为0时，范围相等即固定，
+否则整数均匀采样；标准差大于0时进行正态采样，再取整并裁剪。
+未提供的边界默认由`目标值±5×标准差`计算，下限至少为1；无标准差时缺省边界为目标值。
+均匀采样建议同时提供min/max，正态采样的均值必须位于上下限内。
+
+`--seed`为基础种子；`--data-seed`可单独覆盖数据种子。文本、输入长度、输出预算、
+预热和请求调度使用独立随机序列，修改速率、并发或预热次数不改变同序号正式输入。
+合成输入在正式计时前准备并保存在内存中；内存用量随请求数和输入长度增长。
+预热使用独立文本。可复现比较需保持Tokenizer文件、Faker等依赖版本一致，随机文本不保证零缓存命中。
+
+默认`--length-policy observe`记录目标长度、实际长度和偏差；`strict`检查服务端实际输入
+是否等于每条请求的目标，不符合时单独标记`nonconforming`，不改写请求成功状态。
+两种模式均按实际Token数统计性能，并报告长度分布摘要、符合/不符合/未知数量与符合率。
+服务缺失usage时长度条件为未知，Token总量和吞吐等无法完整计算的值为null，保留请求延迟。
+
+每条请求先采样输出预算。默认`ignore_eos=true`设置`min_tokens=max_tokens=预算`；
+`--no-ignore-eos`仅设置输出上限，允许自然结束。预算偏差独立记录，不判为HTTP请求失败。
+不支持这些生成参数的服务将按真实HTTP错误记录，不静默降级。
+
+在线可通过`--max-model-len`指定上下文上限；离线读取Engine上限。
+已知上限时提前校验采样范围，Chat输入还计入本地聊天模板；超限不自动缩短。
+在线未指定时不猜测服务上限，也不把Tokenizer的占位极大值视为可信上限。
+
+固定并发使用`--profile concurrent --max-concurrency 32`；不限到达速率使用
+`--profile rate --request-rate inf`。离线引擎使用：
+
+```bash
+luban-meter run --scenario offline_vllm_engine \
+  --model /models/your-model --profile batch --batch-size 8 \
+  --input-tokens 1024 --output-tokens 128 --num-requests 100
+```
+
+最后一批不足8条时保存实际批大小。Engine内部时间和客户端时间分别计算，不混为同一种TTFT。
+
+本地真实输入可选择`json`、`jsonl`、`csv`或`sharegpt`，例如：
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --data sharegpt --dataset-path /data/sharegpt.json \
+  --output-tokens 128 --num-requests 100 --profile concurrent
+```
+
+ShareGPT发送首个有效human消息，保留原文（包括首尾空白），不裁剪或补齐。
+可用`--input-tokens-min/max`验收服务端实际输入长度范围；越界只标记负载条件不符合，
+不筛除样本或改写请求状态。真实文本不使用`input_tokens`作为逐条目标，也不支持输入标准差采样。
+输出预算仍可固定或按分布采样。
+
+默认只读取选定数据一遍；性能任务可用`--repeat-data`循环输入。
+JSON/JSONL/CSV记录的输入字段默认是`prompt`，可通过`--prompt-field`调整。
+主数据集和few-shot通过同一公共`DatasetLoader`读取，保留原始记录；
+Prompt构造、答案解析与指标计算独立执行。Python调用方式见[架构指南](ARCHITECTURE.md)。
+
+质量任务示例：
+
+```bash
+luban-meter run --scenario ceval --model served-model \
+  --base-url http://127.0.0.1:8000 \
+  --dataset-path /data/ceval/val.jsonl \
+  --eval-mode gen --endpoint /v1/chat/completions \
+  --few-shot 0 --max-samples 100 --max-concurrency 8
+```
+
+选择题支持`gen`和`ppl`；`ppl`要求completions接口支持echo/logprobs。
+WikiText使用滑动窗口与Token logprobs。HumanEval只支持每题生成一次和pass@1。
+LCSTS保留中文分词ROUGE，GSM8K保留数值答案抽取，SQuAD保留答案规范化与EM/F1。
+这些处理位于场景的共享模板或领域函数中，数据引擎不会把参考答案和测试代码丢弃。
+
+## 一份配置编排任务
+
+[examples/tasks.json](examples/tasks.json)展示在线性能→C-Eval→HumanEval。
+替换其中的模型、服务与数据路径后运行：
+
+```bash
+luban-meter plan --config examples/tasks.json
+luban-meter run --config examples/tasks.json --result-dir results
+# 只执行指定任务；可以重复传入--task：
+luban-meter run --config examples/tasks.json --task online --task ceval
+```
+
+配置格式为`{"tasks": [{...}, {...}]}`。每个对象独立覆盖同一份显式CLI基础参数，
+不继承前一个对象。优先级为：场景默认值＜CLI＜任务对象＜Case覆盖。
+例如`--model served-model`可作为所有任务的基础参数；任务内`model`可以覆盖它。
+基础CLI只放所有任务都支持的参数，不适用的字段会报错。
+
+CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
+列表整体替换，`stop`等普通列表不会自动展开。Case需显式声明：
+
+```json
+{
+  "tasks": [{
+    "name": "online",
+    "scenario": "online_serving",
+    "model": "served-model",
+    "cases": {
+      "matrix": {
+        "input_tokens": [128, 1024],
+        "request_rate": [1, 10]
+      }
+    }
+  }]
+}
+```
+
+这会生成4个Case。也可使用`"cases":{"items":[{"input_tokens":128},{"input_tokens":1024}]}`。
+只有声明允许按Case变化的参数才能进入矩阵；配置路径相对于JSON所在目录，CLI路径相对于工作目录。
+所有选中任务先完成静态预检，再启动执行；预检不代表服务、GPU或Docker已可用。
+
+## 停止与失败
+
+- 任务顺序执行，失败默认继续；`--fail-fast`跳过后续任务。
+- `--num-requests`统计实际模型请求。一个C-Eval PPL样本可能产生多个请求，不能当作一个请求限速。
+- 数据耗尽、请求数或`--max-duration`任一条件达到即停止新请求，等待在途请求结束。
+- `--num-warmups`按样本预热，不纳入正式请求预算和指标。
+- 首次Ctrl+C停止整个运行的新请求，等待在途工作；第二次取消工作进程并清理本次资源。
+- `--request-timeout`约束HTTP请求，`--task-timeout`约束整个子进程任务。
+- 结果分别记录完整、失败、不完整和未开始样本。多请求样本中途停止后，不进入要求完整答案的正确率分母。
+- `--circuit-breaker`为在线Case的P99 E2EL毫秒阈值，至少10个成功样本才判断；超限跳过该任务后续Case。
+  `--max-error-rate`同样在Case完成后判断。它们不改变逐请求Goodput阈值。
+
+取消本地等待不保证远端模型立即停止计算。父进程被强制杀死或机器掉电时，无法保证自动报告完成；
+首次Ctrl+C停止新请求，默认等待60秒，可用`--interrupt-grace`调整；再次Ctrl+C立即终止工作进程。
+未正常完成采集的Case会删除请求、样本和指标，仅保留配置与丢弃原因，不参与统计。
+完整采集已落盘的Case保留，不因后续指标或报告中断而删除；结果整理不续跑、不重发请求。
+
+## 附加观测与HTML报告
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --observe prometheus --observe-url http://127.0.0.1:8000/metrics \
+  --observe-interval 1 \
+  --device-exporter-url http://127.0.0.1:9400/metrics
+```
+
+服务端Prometheus采样只适用于HTTP任务。硬件exporter地址单独指定；不提供时不启动硬件监控。
+观测故障独立记录，不让推理任务因为指标接口故障而失败。报告保留实际采样时间和缺失信息。
+
+输出目录：
+
+```text
+results/<run_id>/
+  plan.json                  # 有效配置，凭据字段脱敏
+  result.json                # 运行汇总
+  report.html                # 可离线打开的单文件报告
+  tasks/<task_name>/
+    result.json
+    raw/events.jsonl         # 请求、样本和观测事件
+    raw/case_1.json          # Case原始事实
+    raw/case_1.result.json
+    raw/manifest.json
+    logs/stdout.log
+    logs/stderr.log
+    artifacts/
+```
+
+HTML支持任务与Case筛选、指标排序、同类Case比较、观测时间线以及覆盖率与错误详情。
+图表每Case最多展示500个观测点，原始记录保留完整数据；报告不依赖CDN或在线服务。
+可重新导出：
+
+```bash
+luban-meter report --input results/<run_id>/result.json --output report.html
+```
+
+新结果不带协议版本标记。旧配置、文件对发现机制和旧报告读取器已移除，
+已有用户运行文件不会被自动删除。
+
+## 指标口径
+
+在线性能从客户端观察，Engine性能使用引擎提供的内部时间戳。
+令首个有效输出时刻为t1、最后有效输出时刻为tn、请求开始为t0、输出Token数为N：
+
+| 在线指标 | 定义 | 单位 |
+|---|---|---|
+| TTFT | t1−t0 | ms |
+| TPOT | (tn−t0)/N，包含首Token等待 | ms/token |
+| ITL | (tn−t1)/(N−1)，N>1时有效 | ms/token |
+| E2EL | 响应收集结束−t0 | ms |
+| Stream Event ITL | 相邻有效流式事件的时间间隔 | ms |
+| Request/Token Throughput | 对应成功请求或Token数除以统计窗口 | req/s、token/s |
+
+TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包含多个Token，
+因此Stream Event ITL单独统计。`--goodput tpot:50`沿用已有SLO含义，
+约束的是排除首Token等待的ITL，不是报告中的TPOT；多个SLO条件需同时满足。
+迁移保留这些公式，不将CLI风格与其他工具的指标含义混同。
+
+质量指标包括选择题Accuracy、GSM8K数值Exact Match、SQuAD规范化EM/F1、
+HumanEval单次候选pass@1、LCSTS中文ROUGE-1/2/L、WikiText困惑度与Bits-per-Byte。
+完整样本中的服务失败、解析失败、沙箱失败沿用各指标既有分母规则；
+多请求样本因停止条件而不完整时另报覆盖率，不混入完整样本的评分。
+
+
+## 开发
+
+参见[架构与扩展指南](ARCHITECTURE.md)、[领域术语](CONTEXT.md)和[团队开发约定](AGENTS.md)。
+A方案支持仓库内继承、注册与显式导入；独立安装的用户插件不在当前范围。
+
+```bash
 pytest -q
-ruff check --select E,W,F,N --line-length 79 src tests
-ruff check src tests
+ruff check --select E,W,F --line-length 79 src tests
 git diff --check
 ```
 
-硬件差异由运行时环境和配置体现，框架复用用户已准备好的 Python、驱动、推理引擎和在线服务环境。
+模拟HTTP/Engine测试验证调度、结果和公式衔接，不能替代真实模型性能、GPU兼容性或Docker沙箱验证。
+
+
+## BurstGPT长度采样与轨迹回放
+
+CSV使用`timestamp,input_token,output_token`列，时间单位为秒，长度必须为正整数。
+默认遇到非法记录立即报错，包含文件、行号、字段和值；`--skip-invalid`允许跳过，
+准备摘要中保留跳过数量和原因。跳过不改变其他记录的原始时间戳。
+
+长度采样以整条记录为单位保留输入输出长度配对，使用共享合成文本生成器构造请求，
+发送时间由rate、concurrent或batch决定。可用`--shuffle --data-seed 42`确定性打乱。
+请求数量超过选中可用记录时报错，不自动循环。
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --base-url http://127.0.0.1:8000 --tokenizer /models/your-model \
+  --data burstgpt --dataset-path /data/trace.csv --num-requests 100 \
+  --profile rate --request-rate 10 --max-concurrency 32
+```
+
+轨迹回放使用`--profile replay`，稳定排序后取连续片段，首条为时间零点，禁止shuffle。
+`--trace-start`指定从第几条开始（从0计），`--num-requests`指定请求数。
+`--replay-speed 2`表示间隔除以2；时间与输入输出长度始终绑定。
+并发满时排队，保留原计划时间并记录实际准入、提交及调度延迟。达到`--max-duration`后
+不再发送排队请求，等待在途请求结束；这属于正常停止，保留Case及未发送数量。
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --tokenizer /models/your-model --data burstgpt \
+  --dataset-path /data/trace.csv --num-requests 100 \
+  --profile replay --replay-speed 2 --max-concurrency 32
+
+luban-meter run --scenario offline_vllm_async --model /models/your-model \
+  --data burstgpt --dataset-path /data/trace.csv --num-requests 100 \
+  --profile replay --replay-speed 2 --max-concurrency 32
+```
+
+异步Engine需要目标环境安装vLLM，逐条提交请求，复用同一调度策略。
+提交侧时延与Engine内部时间分别记录，内部时间不可用时留空，不互相替代。
+同步`offline_vllm_engine`继续用于batch吞吐测试及长度采样，不接受replay。
+
+## 输入模板与答案解析
+
+常规质量场景使用`--input-template`与`--answer-parser`选择已注册实现，默认行为保持不变。
+内置输入模板有choice、numeric_qa、summarization、reading和format_string；
+解析器有choice、number、text和reading。类型不兼容的组合在请求发出前拒绝。
+例如GSM8K自定义输入文字，同时沿用数值解析及数值准确率：
+
+```bash
+luban-meter run --scenario gsm8k --model served-model \
+  --dataset-path dataset/gsm8k/test.jsonl --max-samples 10 \
+  --input-template format_string --input-format '回答问题：{q}' \
+  --field-mapping q=question --answer-parser number
+```
+
+在线真实文本可选format_string输入模板，默认prompt_record按prompt字段或ShareGPT用户消息取文本。
+WikiText、HumanEval及选择题ppl保留特殊流程，不强行套用通用答案解析器。
+扩展基类、字段契约、策略模式及示例见[架构指南](ARCHITECTURE.md)。
