@@ -120,7 +120,7 @@ class StreamingPerformance(Metric):
         case = {
             "request_rate": rate,
             "benchmark_duration_seconds": facts["window"]["duration_s"],
-            "maximum_request_concurrency": p["max_concurrency"],
+            "maximum_request_concurrency": facts["window"]["request_capacity"],
             "peak_concurrent_requests": facts["window"]["peak_requests"],
             "requests": samples,
         }
@@ -148,7 +148,7 @@ class EnginePerformance(Metric):
         samples = completed_samples(facts)
         if not samples:
             return {"status": "unavailable", "reason": "no complete batches"}
-        # A final smaller batch retains its actual size in a separate group.
+        # Group the final smaller batch by its actual size.
         groups = {}
         for index, sample in enumerate(samples):
             size = sample["size"]

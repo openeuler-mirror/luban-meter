@@ -1,4 +1,4 @@
-"""Generation scenarios use shared admission and preserve timing views."""
+"""Generation scenarios share admission and preserve timing views."""
 
 from __future__ import annotations
 
@@ -30,7 +30,11 @@ from .common.tokenization import (
     load_tokenizer,
     validate_lengths,
 )
-from .common.trace_inputs import TRACE_PARAMETERS, prepare_trace
+from .common.trace_inputs import (
+    TRACE_PARAMETERS,
+    prepare_trace,
+    validate_trace_parameters,
+)
 
 
 def thresholds(entries, allowed):
@@ -75,6 +79,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
     @classmethod
     def validate(cls, parameters):
+        validate_trace_parameters(parameters)
         thresholds(parameters["goodput"], ("ttft", "tpot", "e2el"))
         if parameters["profile"] == "replay":
             if parameters["data"] != "burstgpt" or parameters["shuffle"]:
@@ -313,6 +318,7 @@ class OfflineEngineBenchmark(GenerationPerformanceBenchmark):
     def validate(cls, parameters):
         from .vllm_engine import ENGINE_SLO_DIMENSIONS
 
+        validate_trace_parameters(parameters)
         thresholds(parameters["goodput"], ENGINE_SLO_DIMENSIONS)
         if parameters["data"] == "random_token":
             validate_lengths(parameters)

@@ -103,7 +103,7 @@ Benchmark
 └── ModelServiceQualityBenchmark
 
 Metric                         Profile
-└── 各种独立指标实现            └── rate / concurrent / batch及新增策略
+└── 各种独立指标实现            └── 显式注册的负载入口及扩展Profile
 ```
 
 `Benchmark`固定生命周期，采用模板方法组织采集；Profile创建调度策略，Metric独立组合。
@@ -242,6 +242,8 @@ BurstGPT通过公共加载器读取，轨迹适配器验证时间及正整数长
 `skip_invalid=true`显式跳过并保存诊断，不压缩剩余记录时间。`profile=replay`按时间稳定排序，
 选取连续片段；其他Profile仅使用成对长度，允许确定性打乱。两者均通过公共TextGenerator构造文本。
 请求数超过可用记录时报错，不循环补足。`trace_start`指定排序或打乱后的起始记录，`max_samples`限制候选数。
+BurstGPT的`max_samples`若小于`num_requests`，HTTP、同步Engine与异步Engine均在规划阶段拒绝，
+不初始化Tokenizer或Engine；依赖文件内容的可用记录数检查留在数据准备阶段。
 输入模板、输出解析与指标之间的字段约定由场景定义，不让通用文件读取器承担评分逻辑。
 
 ## 随机文本与长度条件
@@ -273,12 +275,38 @@ BurstGPT通过公共加载器读取，轨迹适配器验证时间及正整数长
 
 策略模式的接口为`plan(metadata)`、`ready(plan, elapsed)`，以及可选的`admitted(plan)`、
 `completed(record)`通知。策略不休眠、不调用后端、不维护另一套并发队列。
+策略可声明可选的`concurrency_limit`正整数上限，默认`None`表示不附加限制；
+调度器取`Profile.workers`与该上限的较小值作为实际容量，保存到原始窗口的
+`request_capacity`。指标使用实际容量，不能只从用户参数推断并发能力。
 `RequestPlan.offset_s=None`表示并发空位出现即可发送；非空值为相对正式采集起点的计划时间。
 策略调用由调度器串行化。预热使用独立的即时策略，不消耗正式轨迹或速率随机序列。请求的`scheduling`元数据随样本绑定，轨迹包含`trace_index`和`offset_s`。
 
-`rate`支持constant、poisson、gamma；`concurrent`完成后补充请求；`batch`串行批量执行；
-`replay`用原始相对时间除以`replay_speed`。并发满时排队，不平移后续计划。
-同一时刻按记录顺序准入，记录计划时间、准入时间与调度延迟。队列中的请求达到时长限制后不再发送，
+六个明确策略类集中在`runtime/scheduling_strategies.py`：
+
+| Profile入口 | 策略类 | 调度约定 |
+| --- | --- | --- |
+| `constant` | `AsyncConstantStrategy` | 计划时间为0、1/r、2/r，有限正速率 |
+| `poisson` | `AsyncPoissonStrategy` | 首次为0，后续指数间隔，独立seed随机状态 |
+| `concurrent` | `ConcurrentStrategy` | 声明N并发上限，空位出现即可准入 |
+| `throughput` | `ThroughputStrategy` | 无主动到达等待，受Profile容量约束 |
+| `replay` | `TraceReplayStrategy` | 轨迹时间除以回放速度，按trace_index准入 |
+| `synchronous` | `SynchronousStrategy` | 声明并发上限1，由公共调度器执行 |
+
+三种无独立到达时间的策略复用`ImmediateStrategy`的计划逻辑。Concurrent与Throughput
+相同容量下具有相同的即时准入行为；不会为了类名差异复制锁或制造等待。
+样本池仍以样本完成为补充时机，输入准备、评分和多请求样本均可能留下空隙。
+容量1约束实际请求不重叠，不承诺多线程调用者之间的FIFO顺序。
+这一策略模式隔离到达算法与容量约束，代价是少量类及容量解析；测试覆盖策略时间序列、
+并发上限、失败释放以及CLI/任务JSON到子进程的执行路径。
+
+兼容入口`rate`按`arrival_process`选择Constant、Poisson或`AsyncGammaStrategy`；
+后者仍以`burstiness`为Gamma形状参数。旧`RateStrategy(parameters)`作为委托适配器保留。
+`rate=inf`沿用全部计划时间为0的历史语义；`throughput`以准入时刻作为计划时间，
+二者的调度延迟不可直接比较。`batch`继续用即时策略串行执行批次，批内可包含多条输入。
+不新增渐增负载或自动寻找最优并发的能力。
+
+并发满时排队，不平移后续计划。Replay同一时间戳按记录顺序准入；速率策略不保证
+多个过期计划的竞争顺序。记录计划时间、准入时间与调度延迟。队列中的请求达到时长限制后不再发送，
 已发请求按自身超时等待结束；正常达到预算、时长或数据末尾的Case仍保留。
 
 场景通过`profile_modes`声明兼容的requests、trace或batch能力。HTTP与`offline_vllm_async`

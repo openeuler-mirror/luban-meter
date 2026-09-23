@@ -1,4 +1,4 @@
-"""Paired trace records, transport-neutral scheduling and Engine lifecycle."""
+"""Paired trace records, shared scheduling and Engine lifecycle."""
 
 import asyncio
 import json
@@ -243,6 +243,56 @@ def test_sync_batch_rejects_replay_before_engine_start(tmp_path):
         }
     )
     json.dumps(plan)
+
+
+@pytest.mark.parametrize(
+    "scenario,profile",
+    [
+        ("online_serving", "rate"),
+        ("online_serving", "replay"),
+        ("offline_vllm_engine", "batch"),
+        ("offline_vllm_async", "concurrent"),
+        ("offline_vllm_async", "replay"),
+    ],
+)
+@pytest.mark.parametrize("maximum", [None, 2, 3, 4])
+def test_trace_candidate_limit_is_checked_during_planning(
+    tmp_path, scenario, profile, maximum
+):
+    parameters = {
+        "scenario": scenario,
+        "profile": profile,
+        "model": "unused",
+        "data": "burstgpt",
+        "dataset_path": str(trace_file(tmp_path)),
+        "num_requests": 3,
+        "max_samples": maximum,
+    }
+    if maximum == 2:
+        with pytest.raises(ValueError, match="max_samples.*num_requests"):
+            build_plan(parameters)
+    else:
+        plan = build_plan(parameters)
+        actual = plan["tasks"][0]["cases"][0]["parameters"]
+        assert actual["num_requests"] == 3
+        assert actual["max_samples"] == maximum
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["online_serving", "offline_vllm_engine", "offline_vllm_async"],
+)
+def test_trace_limit_does_not_restrict_synthetic_inputs(scenario):
+    plan = build_plan(
+        {
+            "scenario": scenario,
+            "model": "unused",
+            "data": "random_token",
+            "num_requests": 3,
+            "max_samples": 2,
+        }
+    )
+    assert plan["tasks"][0]["cases"][0]["parameters"]["num_requests"] == 3
 
 
 def test_real_http_trace_replay_preserves_paired_lengths(

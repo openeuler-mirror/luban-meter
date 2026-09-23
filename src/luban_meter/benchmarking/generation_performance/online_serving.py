@@ -491,7 +491,7 @@ def process_case(
             "token/s",
         ),
     }
-    # Missing usage preserves request success but cannot imply zero tokens.
+    # Missing usage preserves success but cannot imply zero tokens.
     missing_input = len(input_token_samples) < successful_count
     missing_output = len(output_token_samples) < successful_count
     for field, missing in (

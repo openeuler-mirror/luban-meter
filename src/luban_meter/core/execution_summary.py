@@ -14,7 +14,7 @@ def case_summary(scenario, parameters):
 
 def prepared_summary(context, scenario):
     metadata = dict(scenario.metadata(context))
-    # Full diagnostics remain in Case metadata; console output stays bounded.
+    # Keep full diagnostics in Case metadata and bound console output.
     if "skip_reasons" in metadata:
         metadata["skip_reason_examples"] = metadata.pop("skip_reasons")[:20]
     return {"selected_samples": context.total_samples, **metadata}

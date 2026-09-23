@@ -24,10 +24,11 @@ class RequestScheduler:
     def __init__(
         self, profile, parameters, stop_requested, emit, *, warmup=False
     ):
+        capacity = profile.workers
         if (
-            not isinstance(profile.workers, int)
-            or isinstance(profile.workers, bool)
-            or profile.workers < 1
+            not isinstance(capacity, int)
+            or isinstance(capacity, bool)
+            or capacity < 1
         ):
             raise ValueError("profile.workers must be a positive integer")
         self.profile = profile
@@ -40,6 +41,16 @@ class RequestScheduler:
             if warmup
             else profile.create_strategy()
         )
+        limit = self.strategy.concurrency_limit
+        if limit is not None:
+            if (
+                not isinstance(limit, int)
+                or isinstance(limit, bool)
+                or limit < 1
+            ):
+                raise ValueError("strategy concurrency_limit must be positive")
+            capacity = min(capacity, limit)
+        self.capacity = capacity
         self.count = 0
         self.active = 0
         self.peak = 0
@@ -83,7 +94,7 @@ class RequestScheduler:
                     if plan.offset_s is not None
                     else 0.0
                 )
-                if self.active < self.profile.workers and self.strategy.ready(
+                if self.active < self.capacity and self.strategy.ready(
                     plan, time.perf_counter() - self.started
                 ):
                     break

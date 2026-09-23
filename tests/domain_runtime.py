@@ -16,7 +16,7 @@ from luban_meter.runtime.evaluation_session import run_case
 def collect_domain(name, request, parameters):
     bootstrap()
     implementation = benchmarks.get(name)
-    domain = implementation.handler
+    domain = implementation.domain_module
     if name in ("ceval", "cmmlu"):
         spec = domain.ChoiceBenchmarkDefinition(
             name, f"{name}_choice_accuracy_online_service", name

@@ -1,4 +1,4 @@
-"""Shared trace-length text construction for HTTP and Engine backends."""
+"""Shared trace text construction for HTTP and Engine backends."""
 
 from luban_meter.core.parameters import Parameter
 from luban_meter.data import DatasetLoader
@@ -8,6 +8,19 @@ TRACE_PARAMETERS = {
     "trace_start": Parameter(int, 0, minimum=0),
     "skip_invalid": Parameter(bool, False),
 }
+
+
+def validate_trace_parameters(parameters):
+    """Reject conflicting trace limits before loading resources."""
+    if parameters["data"] != "burstgpt":
+        return
+    maximum = parameters.get("max_samples")
+    requested = parameters["num_requests"]
+    if maximum is not None and maximum < requested:
+        raise ValueError(
+            f"burstgpt max_samples ({maximum}) must be at least "
+            f"num_requests ({requested})"
+        )
 
 
 def prepare_trace(context, generator, batch_size=1):

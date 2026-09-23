@@ -7,7 +7,7 @@ import random
 from pathlib import Path
 from typing import Any
 
-# Shared datasets belong to the source repository, not the Python package.
+# Shared datasets live in the source repo, outside the Python package.
 _SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -99,7 +99,7 @@ def select_records(
 def select_few_shot(
     records: list[dict[str, Any]], key: str, value: Any, count: int
 ) -> list[dict[str, Any]]:
-    """Pick the first `count` records whose `key` field equals `value`."""
+    """Pick the first `count` records with `key` equal to `value`."""
     if count <= 0:
         return []
     matched = [record for record in records if record.get(key) == value]
