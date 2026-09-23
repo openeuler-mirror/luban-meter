@@ -10,12 +10,10 @@ from typing import Any
 
 import pytest
 
-from luban_meter.benchmarking.model_service_quality.common import metrics
-from luban_meter.benchmarking.model_service_quality.wikitext import (
-    collect_raw as wikitext,
+from luban_meter.benchmarking.model_service_quality import (
+    language_modeling as wikitext,
 )
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
-from luban_meter.core.run_contracts import RunRequest
+from luban_meter.benchmarking.model_service_quality.common import metrics
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULT_PATH = (
@@ -24,8 +22,7 @@ RESULT_PATH = (
     / "luban_meter"
     / "benchmarking"
     / "model_service_quality"
-    / "wikitext"
-    / "calculate_metrics.py"
+    / "language_modeling.py"
 )
 
 MODULE_COUNT = 0
@@ -329,33 +326,3 @@ def test_process_raw_failed() -> None:
 
 
 # ---- Registry discovery ----
-
-
-def test_registry_discovers_wikitext() -> None:
-    registry = BenchmarkRegistry()
-    assert "wikitext" in registry.list_benchmarks("model_service_quality")
-    config = (
-        ROOT
-        / "src"
-        / "luban_meter"
-        / "benchmarking"
-        / "model_service_quality"
-        / "wikitext"
-        / "wikitext.yaml"
-    )
-    request = RunRequest(
-        run_id="model_service_quality-wikitext-test",
-        category_name="model_service_quality",
-        benchmark_name="wikitext",
-        config_path=config,
-        model_path=None,
-        model_name=None,
-        output_dir=ROOT / "runs",
-    )
-    run = registry.resolve(request)
-    assert (
-        run.benchmark_definition.processor_path.name == "calculate_metrics.py"
-    )
-    assert run.parameters["eval_mode"] == "loss"
-    assert run.parameters["max_context_length"] == 2048
-    assert run.parameters["stride"] is None

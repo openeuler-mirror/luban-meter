@@ -10,17 +10,17 @@ Usage::
     # Download from Hugging Face
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_lcsts \
-        --out data/lcsts
+        --out dataset/lcsts
 
     # Use local files
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_lcsts \
-        --source /path/to/lcsts --out data/lcsts
+        --source /path/to/lcsts --out dataset/lcsts
 
     # Specify number of few-shot examples
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_lcsts \
-        --out data/lcsts --few-shot 8
+        --out dataset/lcsts --few-shot 8
 
 Source format (from Hugging Face suolyer/lcsts)::
 
@@ -235,8 +235,8 @@ def main() -> None:
     parser.add_argument(
         "--out",
         type=Path,
-        default=Path("data/lcsts"),
-        help="Output directory (default: data/lcsts)",
+        default=Path("dataset/lcsts"),
+        help="Output directory (default: dataset/lcsts)",
     )
     parser.add_argument(
         "--few-shot",

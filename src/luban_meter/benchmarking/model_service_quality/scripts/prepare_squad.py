@@ -3,7 +3,7 @@
 Run after installing luban-meter (pip install -e .):
 python -m \
 luban_meter.benchmarking.model_service_quality.scripts.prepare_squad \
-    --source /path/to/dev-v2.0.json --out data/squad/validation.jsonl
+    --source /path/to/dev-v2.0.json --out dataset/squad/validation.jsonl
 No dataset download occurs. Original question IDs are preserved.
 """
 
@@ -11,16 +11,14 @@ import argparse
 import json
 from pathlib import Path
 
-from luban_meter.benchmarking.model_service_quality.squad.dataset import (
-    load_samples,
-)
+from ..reading_comprehension import load_samples
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument(
-        "--out", type=Path, default=Path("data/squad/validation.jsonl")
+        "--out", type=Path, default=Path("dataset/squad/validation.jsonl")
     )
     args = parser.parse_args()
     if args.source.resolve() == args.out.resolve():

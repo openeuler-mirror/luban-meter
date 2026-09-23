@@ -3,7 +3,7 @@
 Usage:
     python -m \
         luban_meter.benchmarking.model_service_quality.scripts.prepare_ceval \
-        --source /path/to/ceval [--out data/ceval]
+        --source /path/to/ceval [--out dataset/ceval]
 
 Expected layout of the official C-Eval release:
     <source>/val/<subject>.csv     # columns: question,A,B,C,D,answer
@@ -87,7 +87,7 @@ def main() -> None:
         required=True,
         help="directory containing val/ and dev/ subject CSV files",
     )
-    parser.add_argument("--out", type=Path, default=Path("data/ceval"))
+    parser.add_argument("--out", type=Path, default=Path("dataset/ceval"))
     args = parser.parse_args()
     for split in ("val", "dev"):
         split_dir = args.source / split

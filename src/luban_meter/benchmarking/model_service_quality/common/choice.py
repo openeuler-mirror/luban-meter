@@ -4,22 +4,16 @@ family.
 
 from __future__ import annotations
 
-import argparse
-import json
 from collections.abc import Mapping
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
+from luban_meter.benchmarking.model_service_quality.common import (
+    template_adapters,
+)
 from luban_meter.benchmarking.model_service_quality.common.client import (
     OpenAIClient,
     ServiceError,
-)
-from luban_meter.benchmarking.model_service_quality.common.dataset import (
-    load_records,
-    select_few_shot,
-    select_records,
 )
 from luban_meter.benchmarking.model_service_quality.common.parameters import (
     boolean_value,
@@ -51,24 +45,6 @@ class ChoiceBenchmarkDefinition:
     benchmark_name: str
     measurement: str
     dataset_label: str
-
-
-def parse_args(description: str) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--request", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    return parser.parse_args()
-
-
-def load_request(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    request = payload.get("request")
-    parameters = payload.get("parameters")
-    if not isinstance(request, Mapping):
-        raise TypeError("request must be an object")
-    if not isinstance(parameters, Mapping):
-        raise TypeError("parameters must be an object")
-    return dict(request), dict(parameters)
 
 
 def validate_choice_parameters(
@@ -180,7 +156,15 @@ def collect_sample(
     sample_id = str(sample.get("id", ""))
     subject = str(sample.get("subject", "unknown"))
     answer = str(sample.get("answer", "")).strip().upper()
-    prompt = render_choice_prompt(sample, few_shot_samples=few_shot_samples)
+    rendered = template_adapters.render_input(
+        config,
+        sample,
+        few_shot_samples,
+        lambda: render_choice_prompt(
+            sample, few_shot_samples=few_shot_samples
+        ),
+    )
+    prompt = rendered["prompt"]
     record: dict[str, Any] = {
         "id": sample_id,
         "subject": subject,
@@ -217,7 +201,9 @@ def collect_sample(
         else:
             response = generate_answer(client, prompt, config)
             raw_output = response["text"]
-            prediction = extract_choice(raw_output)
+            prediction = template_adapters.parse_output(
+                config, sample, rendered, raw_output, extract_choice
+            )
             record.update(
                 {
                     "raw_output": raw_output,
@@ -242,139 +228,3 @@ def collect_sample(
 def probe_logprobs_support(client: OpenAIClient) -> None:
     """Fail fast when the service cannot echo prompt logprobs."""
     client.completion_logprobs("A")
-
-
-def collect_choice_raw_result(
-    request: dict[str, Any],
-    parameters: dict[str, Any],
-    benchmark_definition: ChoiceBenchmarkDefinition,
-) -> dict[str, Any]:
-    config = validate_choice_parameters(parameters, benchmark_definition)
-    served_model_name = request.get("model_name")
-    if not isinstance(served_model_name, str) or not served_model_name:
-        served_model_name = OpenAIClient(
-            config["service_url"],
-            api_key=config["api_key"],
-            timeout=config["request_timeout"],
-        ).discover_served_model_name()
-    client = OpenAIClient(
-        config["service_url"],
-        served_model_name=served_model_name,
-        api_key=config["api_key"],
-        timeout=config["request_timeout"],
-    )
-
-    records = load_records(config["dataset_path"])
-    samples = select_records(
-        records,
-        max_samples=config["max_samples"],
-        shuffle=config["shuffle"],
-        seed=config["seed"],
-    )
-    if not samples:
-        raise ValueError("dataset contains no samples")
-
-    few_shot_records: list[dict[str, Any]] = []
-    if config["few_shot"] > 0:
-        few_shot_records = load_records(config["few_shot_path"])
-
-    if config["eval_mode"] == "ppl":
-        probe_logprobs_support(client)
-
-    def few_shot_for(sample: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-        if not few_shot_records:
-            return []
-        return select_few_shot(
-            few_shot_records,
-            "subject",
-            sample.get("subject"),
-            config["few_shot"],
-        )
-
-    with ThreadPoolExecutor(max_workers=config["max_concurrency"]) as executor:
-        futures = [
-            executor.submit(
-                collect_sample, client, sample, few_shot_for(sample), config
-            )
-            for sample in samples
-        ]
-        sample_records = [future.result() for future in futures]
-
-    counts = {
-        "total": len(sample_records),
-        "correct": sum(
-            1
-            for record in sample_records
-            if record["status"] == "success" and record["correct"]
-        ),
-        "parse_failed": sum(
-            1
-            for record in sample_records
-            if record["status"] == "parse_failed"
-        ),
-        "service_failed": sum(
-            1
-            for record in sample_records
-            if record["status"] == "service_failed"
-        ),
-    }
-    return {
-        "schema_version": "luban-meter.raw/v1",
-        "status": "success",
-        "metrics": {"samples": sample_records, "counts": counts},
-        "metadata": {
-            "measurement": benchmark_definition.measurement,
-            "protocol": PROTOCOL,
-            "service_url": config["service_url"],
-            "model": served_model_name,
-            "dataset": benchmark_definition.dataset_label,
-            "dataset_path": config["dataset_path"],
-            "split": config["split"],
-            "sample_count": counts["total"],
-            "few_shot": config["few_shot"],
-            "eval_mode": config["eval_mode"],
-            "prompt_format": config["prompt_format"],
-            "prompt_version": config["prompt_version"],
-            "temperature": 0.0,
-            "max_tokens": (
-                config["max_tokens"] if config["eval_mode"] == "gen" else None
-            ),
-            "stop": config["stop"] if config["eval_mode"] == "gen" else [],
-            "max_concurrency": config["max_concurrency"],
-            "scorer_version": SCORER_VERSION,
-        },
-        "artifacts": {},
-    }
-
-
-def build_choice_failure_result(
-    error: Exception, benchmark_definition: ChoiceBenchmarkDefinition
-) -> dict[str, Any]:
-    return {
-        "schema_version": "luban-meter.raw/v1",
-        "status": "failed",
-        "metrics": {},
-        "metadata": {
-            "measurement": benchmark_definition.measurement,
-            "protocol": PROTOCOL,
-        },
-        "artifacts": {},
-        "error": {"type": type(error).__name__, "message": str(error)},
-    }
-
-
-def run_choice_cli(
-    benchmark_definition: ChoiceBenchmarkDefinition, description: str
-) -> None:
-    args = parse_args(description)
-    try:
-        request, parameters = load_request(args.request)
-        result = collect_choice_raw_result(
-            request, parameters, benchmark_definition
-        )
-    except Exception as exc:  # noqa: BLE001
-        result = build_choice_failure_result(exc, benchmark_definition)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
-    )

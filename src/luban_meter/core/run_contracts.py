@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -22,60 +21,3 @@ class CommandResult:
     stdout: str
     stderr: str
     duration_seconds: float
-
-
-@dataclass(frozen=True)
-class RunRequest:
-    run_id: str
-    category_name: str = field(metadata={"json_name": "module"})
-    benchmark_name: str = field(metadata={"json_name": "benchmark"})
-    config_path: Path = field(metadata={"json_name": "config"})
-    model_path: Path | None
-    model_name: str | None
-    output_dir: Path
-    timeout: int = 3600
-    display_name: str | None = None
-
-
-@dataclass(frozen=True)
-class BenchmarkDefinition:
-    """Convention-resolved Benchmark implementation."""
-
-    category_name: str
-    benchmark_name: str
-    collector_path: Path
-    processor_path: Path
-
-
-@dataclass(frozen=True)
-class ResolvedRun:
-    request: RunRequest
-    benchmark_definition: BenchmarkDefinition
-    parameters: Mapping[str, Any]
-
-
-@dataclass(frozen=True)
-class RawRunArtifacts:
-    raw_result: Path
-    stdout_log: Path
-    stderr_log: Path
-    artifact_dir: Path
-
-
-@dataclass
-class RunResult:
-    schema_version: str
-    run_id: str
-    status: str
-    category_name: str = field(metadata={"json_name": "module"})
-    benchmark_name: str = field(metadata={"json_name": "benchmark"})
-    config_path: str = field(metadata={"json_name": "config"})
-    model_info: Mapping[str, Any] = field(
-        default_factory=dict, metadata={"json_name": "model"}
-    )
-    environment: Mapping[str, Any] = field(default_factory=dict)
-    parameters: Mapping[str, Any] = field(default_factory=dict)
-    metrics: Mapping[str, Any] = field(default_factory=dict)
-    artifacts: Mapping[str, str] = field(default_factory=dict)
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-    error: Mapping[str, Any] | None = None

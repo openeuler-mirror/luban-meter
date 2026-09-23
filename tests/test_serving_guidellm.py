@@ -4,11 +4,7 @@ execution.
 
 import importlib.util
 import json
-import os
-import subprocess
-import sys
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -22,13 +18,14 @@ from luban_meter.benchmarking.generation_performance.common.streaming import (
 
 ROOT = Path(__file__).parents[1]
 SERVING = (
-    ROOT / "src/luban_meter/benchmarking/generation_performance/online_serving"
+    ROOT / "src/luban_meter/benchmarking/generation_performance"
+    / "online_serving.py"
 )
 
 
 def load_module(filename):
     spec = importlib.util.spec_from_file_location(
-        f"guidellm_test_{filename}", SERVING / f"{filename}.py"
+        f"guidellm_test_{filename}", SERVING
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -37,7 +34,7 @@ def load_module(filename):
 
 @pytest.fixture
 def processor():
-    return load_module("calculate_metrics")
+    return load_module("metrics")
 
 
 def record(*, tokens=2, first=900, last=1000, end=1500):
@@ -227,7 +224,7 @@ def test_invalid_slo_in_raw_result_is_rejected(processor, threshold):
 
 
 def test_collector_retains_last_content_time():
-    benchmark = load_module("collect_raw")
+    benchmark = load_module("sampling")
     collected = benchmark._build_request_record(
         request_index=0,
         started=10,
@@ -286,91 +283,3 @@ class SyntheticServer(BaseHTTPRequestHandler):
         self.wfile.write(
             ("data: " + json.dumps(usage) + "\n\ndata: [DONE]\n\n").encode()
         )
-
-
-@pytest.mark.parametrize("mode", ["random", "dataset"])
-def test_script_raw_and_result_pipeline(tmp_path, processor, mode):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), SyntheticServer)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        dataset = tmp_path / "prompts.jsonl"
-        dataset.write_text('{"prompt": "test"}\n', encoding="utf-8")
-        parameters = {
-            "workload_mode": mode,
-            "warmup": 0,
-            "rounds": 1,
-            "input_lengths": [4],
-            "output_lengths": [3],
-            "request_rates": [1],
-            "dataset_path": str(dataset),
-            "dataset_format": "jsonl",
-            "slo": {"tpot_ms": 100000},
-            "service_url": f"http://127.0.0.1:{server.server_port}",
-        }
-        request = tmp_path / "request.json"
-        request.write_text(
-            json.dumps(
-                {
-                    "request": {"model_name": "synthetic"},
-                    "parameters": parameters,
-                }
-            ),
-            encoding="utf-8",
-        )
-        output = tmp_path / "raw.json"
-        subprocess.run(
-            [
-                sys.executable,
-                str(SERVING / "collect_raw.py"),
-                "--request",
-                str(request),
-                "--output",
-                str(output),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=15,
-            env={
-                **os.environ,
-                "PYTHONPATH": str(ROOT / "src"),
-            },
-        )
-        raw = json.loads(output.read_text())
-        assert raw["status"] == "success", raw
-        assert "token_metrics_semantics" not in raw["metadata"]
-        result = processor.process(raw)
-        assert result["status"] == "success"
-        assert "token_metrics_semantics" not in result["metadata"]
-        view = result["metrics"]["cases"][0]["request_view"]
-        assert view["tpot"]["weight_sum"] == 3
-        assert view["itl"]["weight_sum"] == 2
-        assert view["stream_event_itl"]["count"] == 1
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-
-
-def test_script_input_failure_writes_diagnostic_raw(tmp_path):
-    output = tmp_path / "raw.json"
-    subprocess.run(
-        [
-            sys.executable,
-            str(SERVING / "collect_raw.py"),
-            "--request",
-            str(tmp_path / "missing.json"),
-            "--output",
-            str(output),
-        ],
-        check=True,
-        capture_output=True,
-        timeout=10,
-        env={
-            **os.environ,
-            "PYTHONPATH": str(ROOT / "src"),
-        },
-    )
-    raw = json.loads(output.read_text())
-    assert raw["status"] == "failed"
-    assert raw["error"]["type"] == "FileNotFoundError"

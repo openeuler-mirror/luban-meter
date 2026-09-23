@@ -10,26 +10,19 @@ import threading
 import unittest
 from pathlib import Path
 
+from luban_meter.benchmarking.model_service_quality import (
+    reading_comprehension,
+)
+from luban_meter.benchmarking.model_service_quality import (
+    reading_comprehension as benchmark,
+)
+from luban_meter.benchmarking.model_service_quality import (
+    reading_comprehension as result,
+)
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_squad_prompt,
 )
-from luban_meter.benchmarking.model_service_quality.squad import (
-    calculate_metrics as result,
-)
-from luban_meter.benchmarking.model_service_quality.squad import (
-    collect_raw as benchmark,
-)
-from luban_meter.benchmarking.model_service_quality.squad.dataset import (
-    convert_official,
-    load_samples,
-    validate_records,
-)
-from luban_meter.benchmarking.model_service_quality.squad.scoring import (
-    normalize_answer,
-    parse_answer,
-    score_answer,
-)
-from luban_meter.core.benchmark_registry import BenchmarkRegistry
+from tests.domain_runtime import collect_domain
 
 
 def row(sample_id="q1", impossible=False):
@@ -70,29 +63,48 @@ def official():
 
 class ScoringTests(unittest.TestCase):
     def test_official_normalization_boundaries(self):
-        self.assertEqual(normalize_answer("The, BLUE car!"), "blue car")
-        self.assertEqual(normalize_answer("a_b"), "ab")
-        self.assertEqual(normalize_answer("3.14"), "314")
-        self.assertEqual(normalize_answer("“The car”"), "“ car”")
-        self.assertEqual(score_answer("blue blue", ["blue"]), (0, 2 / 3))
-        self.assertEqual(score_answer("Ada", ["Someone", "Ada"]), (1, 1))
-        self.assertEqual(score_answer("", []), (1, 1))
-        self.assertEqual(score_answer("Ada", []), (0, 0))
-        self.assertEqual(score_answer("", ["the"]), (1, 1))
+        self.assertEqual(
+            reading_comprehension.normalize_answer("The, BLUE car!"),
+            "blue car",
+        )
+        self.assertEqual(reading_comprehension.normalize_answer("a_b"), "ab")
+        self.assertEqual(reading_comprehension.normalize_answer("3.14"), "314")
+        self.assertEqual(
+            reading_comprehension.normalize_answer("“The car”"), "“ car”"
+        )
+        self.assertEqual(
+            reading_comprehension.score_answer("blue blue", ["blue"]),
+            (0, 2 / 3),
+        )
+        self.assertEqual(
+            reading_comprehension.score_answer("Ada", ["Someone", "Ada"]),
+            (1, 1),
+        )
+        self.assertEqual(reading_comprehension.score_answer("", []), (1, 1))
+        self.assertEqual(reading_comprehension.score_answer("Ada", []), (0, 0))
+        self.assertEqual(
+            reading_comprehension.score_answer("", ["the"]), (1, 1)
+        )
 
     def test_refusal_is_explicit(self):
-        self.assertEqual(parse_answer(" unanswerable\n"), "")
-        self.assertEqual(parse_answer("unanswerable."), "unanswerable.")
         self.assertEqual(
-            parse_answer("3.14, approximately"), "3.14, approximately"
+            reading_comprehension.parse_answer(" unanswerable\n"), ""
+        )
+        self.assertEqual(
+            reading_comprehension.parse_answer("unanswerable."),
+            "unanswerable.",
+        )
+        self.assertEqual(
+            reading_comprehension.parse_answer("3.14, approximately"),
+            "3.14, approximately",
         )
         for value in (None, "", "  ", []):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                parse_answer(value)
+                reading_comprehension.parse_answer(value)
 
     def test_loader_and_preparer(self):
         payload = official()
-        rows = convert_official(payload)
+        rows = reading_comprehension.convert_official(payload)
         self.assertEqual(rows[0]["answers"], [])
         with tempfile.TemporaryDirectory() as directory:
             src = Path(directory) / "dev.json"
@@ -114,7 +126,7 @@ class ScoringTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
-            self.assertEqual(load_samples(out), rows)
+            self.assertEqual(reading_comprehension.load_samples(out), rows)
         for rows in (
             [],
             [row(), row()],
@@ -127,7 +139,7 @@ class ScoringTests(unittest.TestCase):
             [row() | {"is_impossible": "false"}],
         ):
             with self.subTest(rows=rows), self.assertRaises(ValueError):
-                validate_records(rows)
+                reading_comprehension.validate_records(rows)
 
     def test_parameters_and_registry(self):
         params = {"dataset_path": "some.json"}
@@ -150,7 +162,9 @@ class ScoringTests(unittest.TestCase):
                 benchmark.validate_parameters(params | {key: value})
         self.assertIn(
             "squad",
-            BenchmarkRegistry().list_benchmarks("model_service_quality"),
+            __import__(
+                "luban_meter.api", fromlist=["benchmarks"]
+            ).benchmarks.names(),
         )
         prompt = render_squad_prompt(row())
         self.assertIn(row()["context"], prompt)
@@ -203,7 +217,8 @@ class IntegrationTests(unittest.TestCase):
                 ]
                 path.write_text("\n".join(json.dumps(r) for r in rows))
                 for fmt in ("chat", "base"):
-                    raw = benchmark.collect_raw_result(
+                    raw = collect_domain(
+                        "squad",
                         {"model_name": "fake"},
                         {
                             "dataset_path": str(path),
@@ -230,17 +245,6 @@ class IntegrationTests(unittest.TestCase):
                 # Exercise the actual CLI, subprocess collector and
                 # reports.
                 path.write_text(json.dumps(row()) + "\n")
-                config = Path(directory) / "squad.yaml"
-                config.write_text(
-                    json.dumps(
-                        {
-                            "dataset_path": str(path),
-                            (
-                                "service_url"
-                            ): f"http://127.0.0.1:{server.server_port}",
-                        }
-                    )
-                )
                 output = Path(directory) / "runs"
                 completed = subprocess.run(
                     [
@@ -248,15 +252,15 @@ class IntegrationTests(unittest.TestCase):
                         "-m",
                         "luban_meter.cli",
                         "run",
-                        "--module",
-                        "model_service_quality",
-                        "--benchmark",
+                        "--scenario",
                         "squad",
-                        "--model-name",
+                        "--model",
                         "fake",
-                        "--config",
-                        str(config),
-                        "--output",
+                        "--dataset-path",
+                        str(path),
+                        "--base-url",
+                        f"http://127.0.0.1:{server.server_port}",
+                        "--result-dir",
                         str(output),
                     ],
                     capture_output=True,
@@ -264,10 +268,10 @@ class IntegrationTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 final_paths = list(output.rglob("result.json"))
-                self.assertEqual(len(final_paths), 1)
+                self.assertEqual(len(final_paths), 2)
                 final = json.loads(final_paths[0].read_text())
                 self.assertEqual(final["status"], "success")
-                self.assertTrue(list(output.rglob("report.md")))
+                self.assertTrue(list(output.rglob("report.html")))
         finally:
             server.shutdown()
             server.server_close()

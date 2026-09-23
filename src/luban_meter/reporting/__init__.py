@@ -1,1 +1,1 @@
-"""Independent reports for v2 Benchmark and Suite results."""
+"""Offline HTML reports for current unversioned results."""

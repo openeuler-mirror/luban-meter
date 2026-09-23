@@ -12,8 +12,8 @@ import random
 import sys
 from pathlib import Path
 
-from luban_meter.benchmarking.model_service_quality.squad.scoring import (
-    score_answer,
+from luban_meter.benchmarking.model_service_quality import (
+    reading_comprehension,
 )
 
 
@@ -59,7 +59,7 @@ def main():
             }
         ]
         em, f1 = official.get_raw_scores(dataset, {"q": prediction})
-        actual = score_answer(prediction, refs)
+        actual = reading_comprehension.score_answer(prediction, refs)
         if actual != (em["q"], f1["q"]):
             raise AssertionError((prediction, refs, actual, em, f1))
     print("Official get_raw_scores comparison: 1000/1000 matched")

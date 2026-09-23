@@ -8,12 +8,11 @@ version = "0.1.0"
 description = "Modular benchmark toolkit for multiple AI hardware environments"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-  "PyYAML>=6.0",
-  "matplotlib>=3.8",
-]
+dependencies = []
 
 [project.optional-dependencies]
+generation = ["Faker>=30", "transformers>=4.45,<6", "jinja2>=3.1"]
+quality = ["jieba>=0.42", "rouge-chinese>=1.0"]
 dev = [
   "pytest>=7.4",
   "ruff>=0.6",
@@ -27,16 +26,9 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 luban_meter = [
-  "benchmarking/**/collect_raw.py",
-  "benchmarking/**/calculate_metrics.py",
-  "benchmarking/**/executor.py",
+  "reporting/template.html",
   "benchmarking/**/sandbox_runner.py",
   "benchmarking/**/Containerfile",
-  "benchmarking/**/*.yaml",
-  "benchmarking/model_service_quality/data/**/*.jsonl",
-  "benchmarking/model_service_quality/data/**/*.json",
-  "benchmarking/model_service_quality/data/**/LICENSE*",
-  "suite/definitions/*.yaml",
 ]
 
 [tool.pytest.ini_options]

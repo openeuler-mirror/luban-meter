@@ -3,7 +3,7 @@
 Usage:
     python -m \
 luban_meter.benchmarking.model_service_quality.scripts.prepare_wikitext \
-        --source /path/to/wikitext-2-raw-v1 [--out data/wikitext]
+        --source /path/to/wikitext-2-raw-v1 [--out dataset/wikitext]
 
 Expected layout of the official WikiText-2-raw-v1 release:
     <source>/wiki.valid.raw    # validation split
@@ -126,7 +126,7 @@ def main() -> None:
         required=True,
         help=("directory containing wiki.valid.raw and/or wiki.test.raw"),
     )
-    parser.add_argument("--out", type=Path, default=Path("data/wikitext"))
+    parser.add_argument("--out", type=Path, default=Path("dataset/wikitext"))
     parser.add_argument(
         "--prefix",
         type=str,
