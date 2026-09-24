@@ -87,8 +87,38 @@ luban-meter run \
 已知上限时提前校验采样范围，Chat输入还计入本地聊天模板；超限不自动缩短。
 在线未指定时不猜测服务上限，也不把Tokenizer的占位极大值视为可信上限。
 
-固定并发使用`--profile concurrent --max-concurrency 32`；不限到达速率使用
-`--profile rate --request-rate inf`。离线引擎使用：
+逐请求负载提供以下明确入口，CLI与任务JSON使用相同参数：
+
+| Profile | CLI参数示例 | 行为 |
+| --- | --- | --- |
+| `constant` | `--request-rate 10 --max-concurrency 32` | 从时间0开始，每0.1秒计划一次请求 |
+| `poisson` | `--request-rate 10 --max-concurrency 32` | 首次计划在0，后续指数间隔，平均每秒10次 |
+| `concurrent` | `--max-concurrency 8` | 最多8个请求并发，样本完成后补充 |
+| `throughput` | `--max-concurrency 32` | 在并发容量内持续尽快发送，无到达速率等待 |
+| `replay` | `--replay-speed 2 --max-concurrency 32` | 按轨迹时间的1/2安排请求，详见轨迹回放 |
+| `synchronous` | 无需额外参数 | 请求逐个执行，并发容量固定为1 |
+
+例如，将在线命令的负载参数改为`--profile throughput --max-concurrency 32`，
+即可执行有界尽力发送；改为`--profile synchronous`即可串行执行。
+`constant`和`poisson`默认速率为1、并发上限为32；速率必须有限且为正。
+`concurrent`默认并发上限为8，`throughput`为32；并发上限均须为正整数。
+`synchronous`只允许省略`max_concurrency`或设为1，其他值提前报错。
+输入准备、评分和客户端调度会影响实际请求间隔及并发，不能保证始终满并发。
+相同容量下，`concurrent`与`throughput`共享即时准入行为；后者不会自动搜索最佳并发。
+
+现有`--profile rate --arrival-process constant/poisson/gamma`继续可用。
+Gamma通过`--burstiness`控制间隔分布形状：小于1更易扎堆，等于1与指数分布相同，
+大于1更均匀；平均间隔仍为`1/request_rate`。例如：
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --profile rate --request-rate 10 --arrival-process gamma --burstiness 0.5
+```
+
+旧的`--profile rate --request-rate inf`继续可用，仍受`max_concurrency`限制，
+所有请求的计划时间保持为Case起点。新增`throughput`的计划时间取实际准入时间，
+因此两者的`scheduling_delay_s`含义不同，不应直接对比；请求延迟和吞吐计算方式不变。
+`batch`继续用于同步离线Engine：
 
 ```bash
 luban-meter run --scenario offline_vllm_engine \
@@ -287,6 +317,8 @@ luban-meter run --scenario online_serving --model served-model \
 
 轨迹回放使用`--profile replay`，稳定排序后取连续片段，首条为时间零点，禁止shuffle。
 `--trace-start`指定从第几条开始（从0计），`--num-requests`指定请求数。
+BurstGPT的`--max-samples`限制候选记录数；若小于`--num-requests`，规划阶段直接报错，
+不加载Tokenizer或Engine。实际可用记录不足仍在读取轨迹后报错。
 `--replay-speed 2`表示间隔除以2；时间与输入输出长度始终绑定。
 并发满时排队，保留原计划时间并记录实际准入、提交及调度延迟。达到`--max-duration`后
 不再发送排队请求，等待在途请求结束；这属于正常停止，保留Case及未发送数量。

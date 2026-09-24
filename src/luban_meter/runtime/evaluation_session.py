@@ -136,7 +136,7 @@ def collect_samples(scenario, context):
     """Bound sample futures as well as actual model-request concurrency."""
     samples = enumerate(scenario.samples(context))
     rows = []
-    workers = context.scheduler.profile.workers
+    workers = context.scheduler.capacity
     exhausted = False
     with ThreadPoolExecutor(max_workers=workers) as pool:
         pending = set()
@@ -289,6 +289,7 @@ def run_case(
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "duration_s": duration,
+                "request_capacity": context.scheduler.capacity,
                 "peak_requests": context.scheduler.peak,
                 "admitted_requests": context.scheduler.count,
                 "stop_reason": context.scheduler.reason or "data_exhausted",

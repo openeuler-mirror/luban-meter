@@ -1,4 +1,4 @@
-"""Quality scenarios compose shared input, scheduling and domain rules."""
+"""Quality scenarios share input, scheduling and domain rules."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         "input_format": Parameter(str, ""),
         "field_mapping": Parameter(list, [], item_type=str),
     }
-    handler = None
+    domain_module = None
     default_input_template = ""
     default_answer_parser = ""
     record_fields = {}
@@ -96,7 +96,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
             ),
             max_concurrency=parameters.get("max_concurrency", 8),
         )
-        return cls.handler.validate_parameters(values)
+        return cls.domain_module.validate_parameters(values)
 
     @classmethod
     def validate(cls, parameters):
@@ -105,11 +105,11 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         cls.pipeline(parameters)
 
     def prepare_records(self, records):
-        sampler = self.handler
-        if hasattr(sampler, "prepare_samples"):
-            return sampler.prepare_samples(records)
-        if hasattr(sampler, "validate_records"):
-            sampler.validate_records(records)
+        module = self.domain_module
+        if hasattr(module, "prepare_samples"):
+            return module.prepare_samples(records)
+        if hasattr(module, "validate_records"):
+            module.validate_records(records)
         return records
 
     def prepare(self, context):
@@ -156,7 +156,9 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         return iter(self.records)
 
     def evaluate(self, sample, context):
-        return self.handler.collect_sample(self.client, sample, self.config)
+        return self.domain_module.collect_sample(
+            self.client, sample, self.config
+        )
 
     def metadata(self, context):
         return {
@@ -179,13 +181,13 @@ class ChoiceBenchmark(QualityBenchmark):
         "stop": Parameter(list, ["\n"], item_type=str),
         "eval_mode": Parameter(str, "gen", choices=("gen", "ppl")),
     }
-    handler = choice
+    domain_module = choice
     capabilities = frozenset({"choice_answers", "correctness"})
     default_metrics = ("choice_accuracy",)
 
     @classmethod
     def domain_parameters(cls, parameters):
-        module = cls.handler
+        module = cls.domain_module
         template = parameters["template"]
         definition = module.ChoiceBenchmarkDefinition(
             template, f"{template}_choice_accuracy", template
@@ -209,7 +211,7 @@ class ChoiceBenchmark(QualityBenchmark):
             sample.get("subject"),
             self.config["few_shot"],
         )
-        return self.handler.collect_sample(
+        return self.domain_module.collect_sample(
             self.client, sample, examples, self.config
         )
 
@@ -236,7 +238,7 @@ class FewShotQualityBenchmark(QualityBenchmark):
     }
 
     def evaluate(self, sample, context):
-        return self.handler.collect_sample(
+        return self.domain_module.collect_sample(
             self.client,
             sample,
             self.few_shot[: self.config["few_shot"]],
@@ -250,7 +252,7 @@ class GSM8KBenchmark(FewShotQualityBenchmark):
     default_answer_parser = "number"
     record_fields = {"question": str, "answer": str, "reference_number": float}
     prediction_type = (float, type(None))
-    handler = arithmetic_qa
+    domain_module = arithmetic_qa
     capabilities = frozenset({"numeric_answers", "correctness"})
     default_metrics = ("numeric_accuracy",)
     parameters = {"template": Parameter(str, "gsm8k", choices=("gsm8k",))}
@@ -261,7 +263,7 @@ class LCSTSBenchmark(FewShotQualityBenchmark):
     default_input_template = "summarization"
     default_answer_parser = "text"
     record_fields = {"content": str, "abst": str}
-    handler = text_summarization
+    domain_module = text_summarization
     capabilities = frozenset({"summary_answers"})
     default_metrics = ("chinese_rouge",)
     parameters = {"template": Parameter(str, "lcsts", choices=("lcsts",))}
@@ -272,7 +274,7 @@ class SquadBenchmark(QualityBenchmark):
     default_input_template = "reading"
     default_answer_parser = "reading"
     record_fields = {"question": str, "context": str, "answers": list}
-    handler = reading_comprehension
+    domain_module = reading_comprehension
     capabilities = frozenset({"reading_answers"})
     default_metrics = ("reading_accuracy",)
     parameters = {
@@ -282,14 +284,12 @@ class SquadBenchmark(QualityBenchmark):
     }
 
     def prepare_records(self, records):
-        from .reading_comprehension import validate_records
-
-        return validate_records(records)
+        return reading_comprehension.validate_records(records)
 
 
 @benchmarks.register("wikitext")
 class WikiTextBenchmark(QualityBenchmark):
-    handler = language_modeling
+    domain_module = language_modeling
     capabilities = frozenset({"token_logprobs"})
     default_metrics = ("language_model_loss",)
     parameters = {
@@ -305,7 +305,7 @@ class WikiTextBenchmark(QualityBenchmark):
 
 @benchmarks.register("humaneval")
 class HumanEvalBenchmark(QualityBenchmark):
-    handler = code_generation
+    domain_module = code_generation
     capabilities = frozenset({"code_execution"})
     default_metrics = ("code_pass_rate",)
     resources = ("docker_sandbox",)
@@ -323,7 +323,7 @@ class HumanEvalBenchmark(QualityBenchmark):
 
     def prepare(self, context):
         super().prepare(context)
-        module = self.handler
+        module = self.domain_module
         self.sandbox = module.DockerSandboxExecutor(
             module._sandbox_config(self.config)
         )
@@ -333,7 +333,7 @@ class HumanEvalBenchmark(QualityBenchmark):
         )
 
     def evaluate(self, sample, context):
-        return self.handler.collect_sample(
+        return self.domain_module.collect_sample(
             self.client, self.sandbox, self.semaphore, sample, self.config
         )
 
@@ -341,5 +341,7 @@ class HumanEvalBenchmark(QualityBenchmark):
         return {
             **super().metadata(context),
             "sandbox": self.sandbox_environment,
-            "dataset_sha256": self.handler._file_sha256(context.dataset_path),
+            "dataset_sha256": self.domain_module._file_sha256(
+                context.dataset_path
+            ),
         }

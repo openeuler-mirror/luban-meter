@@ -1,4 +1,4 @@
-"""Public dataset loading with shared path, format and sampling rules."""
+"""Dataset loading with shared path, format and sampling rules."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,10 +12,10 @@ from luban_meter.data.sources import sources
 class DatasetLoader:
     """Load complete local records through a registered format adapter.
 
-    An explicit base_dir anchors relative paths without fallback. Otherwise
-    paths use the working directory and the shared repository dataset root.
-    Format inference only identifies file syntax; semantic formats such as
-    ShareGPT and SQuAD must be selected explicitly.
+    An explicit base_dir anchors relative paths without fallback.
+    Otherwise, paths use the working directory and shared dataset root.
+    Format inference identifies file syntax only. Semantic formats
+    such as ShareGPT and SQuAD must be selected explicitly.
     """
 
     path: str | Path

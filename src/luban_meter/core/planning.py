@@ -1,4 +1,4 @@
-"""Resolve independent tasks and explicit Case matrices before execution."""
+"""Resolve independent tasks and Case matrices before execution."""
 
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
             supplied.pop("name", None)
             case_definition = supplied.pop("cases", None)
             schema = schema_for(scenario, supplied)
-            # Resolve CLI-origin paths before applying file-relative paths.
+            # Resolve CLI paths before applying file-relative paths.
             for key, value in common.items():
                 if key not in entry and key in schema and schema[key].path:
                     if value:

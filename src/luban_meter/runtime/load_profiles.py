@@ -7,9 +7,14 @@ from abc import ABC, abstractmethod
 from luban_meter.core.parameters import Parameter
 from luban_meter.core.registry import Registry
 from luban_meter.runtime.scheduling_strategies import (
+    AsyncConstantStrategy,
+    AsyncPoissonStrategy,
+    ConcurrentStrategy,
     ImmediateStrategy,
-    RateStrategy,
+    SynchronousStrategy,
+    ThroughputStrategy,
     TraceReplayStrategy,
+    rate_strategy,
 )
 
 
@@ -65,7 +70,28 @@ class RateProfile(Profile):
     }
 
     def create_strategy(self):
-        return RateStrategy(self.parameters)
+        return rate_strategy(self.parameters)
+
+
+class _ArrivalProfile(Profile):
+    """Finite arrival rates with explicit distribution-specific entrypoints."""
+
+    parameters = {
+        "request_rate": Parameter(float, 1.0, minimum=1e-12, matrix=True),
+        "max_concurrency": Parameter(int, 32, minimum=1, matrix=True),
+    }
+
+
+@profiles.register("constant")
+class ConstantProfile(_ArrivalProfile):
+    def create_strategy(self):
+        return AsyncConstantStrategy(self.parameters)
+
+
+@profiles.register("poisson")
+class PoissonProfile(_ArrivalProfile):
+    def create_strategy(self):
+        return AsyncPoissonStrategy(self.parameters)
 
 
 @profiles.register("concurrent")
@@ -75,7 +101,27 @@ class ConcurrentProfile(Profile):
     }
 
     def create_strategy(self):
-        return ImmediateStrategy()
+        return ConcurrentStrategy(self.workers)
+
+
+@profiles.register("throughput")
+class ThroughputProfile(Profile):
+    parameters = {
+        "max_concurrency": Parameter(int, 32, minimum=1, matrix=True),
+    }
+
+    def create_strategy(self):
+        return ThroughputStrategy()
+
+
+@profiles.register("synchronous")
+class SynchronousProfile(Profile):
+    parameters = {
+        "max_concurrency": Parameter(int, 1, minimum=1, maximum=1),
+    }
+
+    def create_strategy(self):
+        return SynchronousStrategy()
 
 
 @profiles.register("batch")
