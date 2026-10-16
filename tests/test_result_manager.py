@@ -2,7 +2,8 @@ import importlib.util
 import io
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+
+import httpx
 
 from luban_meter.benchmarking.generation_performance.common.streaming import (
     collect_completion_stream,
@@ -189,12 +190,16 @@ class ServingCollectionTest(unittest.TestCase):
             "serving_benchmark_mismatch", SERVING_BENCHMARK_ENTRY
         )
         now = benchmark.time.perf_counter()
-        with patch.object(
-            benchmark.urllib.request,
-            "urlopen",
-            return_value=FakeStreamingResponse(4, 2),
-        ):
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, stream=httpx.ByteStream(
+                    FakeStreamingResponse(4, 2).getvalue()
+                )
+            )
+        )
+        with httpx.Client(transport=transport) as client:
             record = benchmark.execute_request(
+                client=client,
                 request_index=0,
                 payload={
                     "model": "test-model",

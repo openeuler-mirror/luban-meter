@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import time
-import urllib.error
-import urllib.request
+from contextlib import closing
 from typing import Any
+
+import httpx
+
+from luban_meter.runtime.http_client import create_http_client
 
 
 class ServiceError(RuntimeError):
@@ -14,9 +17,7 @@ class ServiceError(RuntimeError):
 
 
 class OpenAIClient:
-    """Minimal OpenAI-compatible client using only the standard
-    library.
-    """
+    """Minimal OpenAI-compatible client."""
 
     def __init__(
         self,
@@ -25,12 +26,23 @@ class OpenAIClient:
         api_key: str = "",
         timeout: float = 60.0,
         request_runner=None,
+        *,
+        max_connections: int = 100,
+        keepalive_expiry: float = 5.0,
     ) -> None:
         self.service_url = service_url.rstrip("/")
         self.served_model_name = served_model_name
         self.api_key = api_key
         self.timeout = timeout
         self.request_runner = request_runner
+        self.http = create_http_client(
+            timeout,
+            max_connections=max_connections,
+            keepalive_expiry=keepalive_expiry,
+        )
+
+    def close(self) -> None:
+        self.http.close()
 
     def _post(
         self, path: str, payload: dict[str, Any]
@@ -48,25 +60,25 @@ class OpenAIClient:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        request = urllib.request.Request(
+        request = self.http.build_request(
+            "POST",
             f"{self.service_url}{path}",
-            data=data,
+            content=data,
             headers=headers,
-            method="POST",
         )
         start = time.perf_counter()
         try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout
-            ) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:500]
+            with closing(self.http.send(request, stream=True)) as response:
+                content = response.read()
+                response.raise_for_status()
+                body = json.loads(content.decode("utf-8"))
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.read().decode("utf-8", "replace")[:500]
             raise ServiceError(
-                f"HTTP {exc.code} from {path}: {detail}"
+                f"HTTP {exc.response.status_code} from {path}: {detail}"
             ) from exc
         except (
-            urllib.error.URLError,
+            httpx.HTTPError,
             TimeoutError,
             OSError,
             json.JSONDecodeError,
@@ -185,18 +197,18 @@ class OpenAIClient:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        request = urllib.request.Request(
+        request = self.http.build_request(
+            "GET",
             f"{self.service_url}/v1/models",
             headers=headers,
-            method="GET",
         )
         try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout
-            ) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with closing(self.http.send(request, stream=True)) as response:
+                content = response.read()
+                response.raise_for_status()
+                body = json.loads(content.decode("utf-8"))
         except (
-            urllib.error.URLError,
+            httpx.HTTPError,
             TimeoutError,
             OSError,
             json.JSONDecodeError,

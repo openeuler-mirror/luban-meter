@@ -12,6 +12,14 @@ HTTP = {
         choices=("/v1/completions", "/v1/chat/completions"),
     ),
     "api_key": Parameter(str, "", secret=True),
+    "http_max_connections": Parameter(
+        int, None, minimum=1, matrix=True,
+        help="HTTP connection limit; defaults to effective request capacity",
+    ),
+    "http_keepalive_expiry": Parameter(
+        float, 5.0, minimum=0.0, matrix=True,
+        help="HTTP idle connection lifetime in seconds (must be positive)",
+    ),
     "temperature": Parameter(float, 0.0, choices=(0.0,)),
 }
 DATA = {
