@@ -23,6 +23,7 @@ from luban_meter.core.template_contracts import TemplatePipeline
 from luban_meter.data import DatasetLoader
 from luban_meter.data.engine import select_few_shot
 from luban_meter.data.sources import sources
+from luban_meter.runtime.http_client import http_settings
 
 from . import (
     arithmetic_qa,
@@ -100,6 +101,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
 
     @classmethod
     def validate(cls, parameters):
+        http_settings(parameters)
         sources.get(parameters["data"])
         cls.domain_parameters(parameters)
         cls.pipeline(parameters)
@@ -133,12 +135,15 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         if not self.records:
             raise ValueError("dataset contains no samples")
         context.total_samples = len(self.records)
+        self.http_settings = http_settings(context.parameters)
         self.client = OpenAIClient(
             context.parameters["base_url"],
             served_model_name=context.parameters["model"],
             api_key=context.parameters["api_key"],
             timeout=context.parameters["request_timeout"],
             request_runner=context.request,
+            max_connections=self.http_settings["max_connections"],
+            keepalive_expiry=self.http_settings["keepalive_expiry"],
         )
         self.few_shot = []
         if self.config.get("few_shot", 0):
@@ -152,6 +157,10 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
                     record, self.few_shot, self.config
                 )
 
+    def close(self):
+        if getattr(self, "client", None) is not None:
+            self.client.close()
+
     def samples(self, context):
         return iter(self.records)
 
@@ -162,6 +171,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
 
     def metadata(self, context):
         return {
+            "http_client": self.http_settings,
             "dataset_path": context.parameters["dataset_path"],
             "model": context.parameters["model"],
             "eval_mode": self.config["eval_mode"],

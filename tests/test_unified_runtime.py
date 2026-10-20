@@ -223,12 +223,19 @@ def test_flat_cli_plan(capsys):
                 "128",
                 "--request-rate",
                 "inf",
+                "--http-max-connections",
+                "128",
+                "--http-keepalive-expiry",
+                "7.5",
             ]
         )
         == 0
     )
     output = json.loads(capsys.readouterr().out)
     assert output["tasks"][0]["cases"][0]["parameters"]["input_tokens"] == 128
+    parameters = output["tasks"][0]["cases"][0]["parameters"]
+    assert parameters["http_max_connections"] == 128
+    assert parameters["http_keepalive_expiry"] == 7.5
     with pytest.raises(SystemExit) as error:
         main(["plan", "--module", "generate"])
     assert error.value.code == 2

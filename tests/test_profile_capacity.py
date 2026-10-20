@@ -106,6 +106,8 @@ def test_profile_cli_worker_metrics(
         "input_tokens": 8,
         "output_tokens": 3,
         "num_requests": 1,
+        "http_max_connections": capacity + 2,
+        "http_keepalive_expiry": 7.5,
         **options,
     }
     output = tmp_path / "results"
@@ -133,6 +135,11 @@ def test_profile_cli_worker_metrics(
     assert case["window"]["peak_requests"] == 1
     facts = json.loads(Path(case["raw"]).read_text())
     assert facts["window"]["request_capacity"] == capacity
+    settings = facts["metadata"]["http_client"]
+    assert settings["max_connections"] == capacity + 2
+    assert settings["max_keepalive_connections"] == capacity + 2
+    assert settings["keepalive_expiry"] == 7.5
+    assert settings["http2"] is False
     assert facts["requests"][0]["status"] == "success"
     if profile == "rate":
         assert facts["parameters"]["request_rate"] == "inf"

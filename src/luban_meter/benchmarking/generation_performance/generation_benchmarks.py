@@ -18,6 +18,7 @@ from luban_meter.core.template_contracts import (
 )
 from luban_meter.data import DatasetLoader
 from luban_meter.data.sources import sources
+from luban_meter.runtime.http_client import create_http_client, http_settings
 
 from .common.lengths import assess_lengths
 from .common.tokenization import (
@@ -79,6 +80,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
     @classmethod
     def validate(cls, parameters):
+        http_settings(parameters)
         validate_trace_parameters(parameters)
         thresholds(parameters["goodput"], ("ttft", "tpot", "e2el"))
         if parameters["profile"] == "replay":
@@ -146,6 +148,16 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         from .online_serving import ActiveRequestTracker
 
         self.tracker = ActiveRequestTracker()
+        self.http_settings = http_settings(self.p)
+        self.client = create_http_client(
+            self.p["request_timeout"],
+            max_connections=self.http_settings["max_connections"],
+            keepalive_expiry=self.http_settings["keepalive_expiry"],
+        )
+
+    def close(self):
+        if getattr(self, "client", None) is not None:
+            self.client.close()
 
     def samples(self, context):
         phase = context.phase
@@ -226,6 +238,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
         def send(ticket):
             record = execute_request(
+                client=self.client,
                 request_index=ticket.index,
                 payload=payload,
                 endpoint=self.p["endpoint"],
@@ -268,6 +281,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
     def metadata(self, context):
         return {
+            "http_client": self.http_settings,
             **(
                 generated_summary(self.generated["formal"])
                 if hasattr(self, "generated")

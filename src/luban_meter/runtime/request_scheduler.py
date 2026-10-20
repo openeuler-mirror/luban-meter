@@ -20,17 +20,30 @@ class Ticket:
     cost: int
 
 
+def request_capacity(workers, concurrency_limit):
+    """Resolve capacity for admission and transport preflight."""
+    if (
+        not isinstance(workers, int)
+        or isinstance(workers, bool)
+        or workers < 1
+    ):
+        raise ValueError("profile.workers must be a positive integer")
+    if concurrency_limit is not None:
+        if (
+            not isinstance(concurrency_limit, int)
+            or isinstance(concurrency_limit, bool)
+            or concurrency_limit < 1
+        ):
+            raise ValueError("strategy concurrency_limit must be positive")
+        return min(workers, concurrency_limit)
+    return workers
+
+
 class RequestScheduler:
     def __init__(
         self, profile, parameters, stop_requested, emit, *, warmup=False
     ):
-        capacity = profile.workers
-        if (
-            not isinstance(capacity, int)
-            or isinstance(capacity, bool)
-            or capacity < 1
-        ):
-            raise ValueError("profile.workers must be a positive integer")
+        workers = profile.workers
         self.profile = profile
         self.parameters = parameters
         self.stop_requested = stop_requested
@@ -41,16 +54,9 @@ class RequestScheduler:
             if warmup
             else profile.create_strategy()
         )
-        limit = self.strategy.concurrency_limit
-        if limit is not None:
-            if (
-                not isinstance(limit, int)
-                or isinstance(limit, bool)
-                or limit < 1
-            ):
-                raise ValueError("strategy concurrency_limit must be positive")
-            capacity = min(capacity, limit)
-        self.capacity = capacity
+        self.capacity = request_capacity(
+            workers, self.strategy.concurrency_limit
+        )
         self.count = 0
         self.active = 0
         self.peak = 0
