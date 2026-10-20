@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .request_details import load_details
+
 STATUSES = {
     "success",
     "partial_failed",
@@ -70,18 +72,20 @@ def metric_rows(value, path="", unit="", count=None):
         yield {"metric": path, "value": value, "unit": unit, "count": count}
 
 
-def report_data(payload):
+def report_data(payload, *, include_requests=False, raw_root=None):
     tasks = validate_result(payload)
     rows = []
     observations = []
-    for task in tasks:
-        for case in task["cases"]:
+    for task_index, task in enumerate(tasks):
+        for case_index, case in enumerate(task["cases"]):
             if case["status"] == "discarded":
                 continue
             label = {
                 "task": task["name"],
                 "case": case["id"],
                 "category": task["category"],
+                "task_index": task_index,
+                "case_index": case_index,
             }
             for row in metric_rows(case.get("metrics", {})):
                 rows.append({**label, **row})
@@ -160,16 +164,27 @@ def report_data(payload):
         if payload["kind"] == "run"
         else rendered_tasks[0]
     )
-    return {
+    data = {
         "result": rendered_result,
         "rows": rows,
         "observations": observations,
     }
+    if include_requests:
+        if raw_root is None:
+            raise ValueError("full report requires raw_root")
+        data["request_details"] = [
+            [load_details(case, task, raw_root, run=payload["kind"] == "run")
+             for case in task["cases"]]
+            for task in tasks
+        ]
+    return data
 
 
-def write_html(payload, destination):
+def write_html(payload, destination, *, include_requests=False, raw_root=None):
     data = json.dumps(
-        report_data(payload), ensure_ascii=False, allow_nan=False
+        report_data(
+            payload, include_requests=include_requests, raw_root=raw_root
+        ), ensure_ascii=False, allow_nan=False
     )
     data = data.replace("<", "\\u003c").replace("&", "\\u0026")
     html = TEMPLATE.replace("__REPORT_DATA__", data)
@@ -187,4 +202,7 @@ def load_result(path):
 
 TEMPLATE = (
     Path(__file__).with_name("template.html").read_text(encoding="utf-8")
+).replace(
+    "__REQUEST_SCRIPT__",
+    Path(__file__).with_name("requests.js").read_text(encoding="utf-8"),
 )
