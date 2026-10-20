@@ -27,6 +27,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 luban_meter = [
   "reporting/template.html",
+  "reporting/requests.js",
   "benchmarking/**/sandbox_runner.py",
   "benchmarking/**/Containerfile",
 ]

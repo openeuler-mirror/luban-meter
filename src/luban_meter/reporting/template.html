@@ -11,13 +11,19 @@ header{display:flex;justify-content:space-between;gap:20px;align-items:center;ma
 input,select,button{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}input{min-width:240px;flex:1}button{cursor:pointer}button:hover{border-color:var(--accent)}select{max-width:100%}
 .table-wrap{overflow:auto;max-height:540px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}th{position:sticky;top:0;background:var(--panel);cursor:pointer}td.metric{min-width:290px;overflow-wrap:anywhere}td.num{font-variant-numeric:tabular-nums}svg{width:100%;min-height:230px;color:var(--muted)}.chart{overflow:auto}.badge{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--bg);border:1px solid var(--line)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}details{border-top:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:600}.empty{padding:36px;color:var(--muted);text-align:center}footer{color:var(--muted);font-size:12px;margin-bottom:20px}
 @media(max-width:700px){main{padding:16px}.cards{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start}h1{font-size:25px}}
+a{color:var(--accent);text-underline-offset:3px}
+a:focus-visible,details:focus-visible{outline:3px solid var(--accent)}
+[id]{scroll-margin-top:16px}.case-summary{padding:14px 0;border-top:1px solid var(--line)}
+h3{margin:4px 0}.metric-links{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.metric-links a{padding:6px 10px;border:1px solid var(--line);border-radius:8px}
 </style></head><body><main>
-<header><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
+<header id="overview" tabindex="-1"><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
 <div class="cards" id="cards"></div>
+<section id="summary-section"><h2>结果摘要</h2><p class="muted">每个 Case 单独展示；点击摘要查看详情。缺失值不代表零，失败和丢弃结果需结合诊断阅读。</p><div id="run-context"></div><div id="case-summaries"></div></section>
 <section><h2>任务与指标</h2><p class="muted">客户端、Engine内部与服务端观测分别展示。缺失值不代表零；准确率应结合覆盖率阅读。</p><div class="toolbar"><select id="task"><option value="">全部任务</option></select><select id="case"><option value="">全部Case</option></select><input id="search" placeholder="搜索指标、任务或Case" aria-label="搜索指标"></div><div class="table-wrap"><table><thead><tr><th data-sort="task">任务</th><th data-sort="case">Case</th><th data-sort="metric">指标 ↕</th><th data-sort="value">数值 ↕</th><th>单位</th><th>样本数</th></tr></thead><tbody id="rows"></tbody></table></div><p id="rowCount" class="muted"></p></section>
 <section><h2>同类Case指标比较</h2><select id="metric" aria-label="比较指标"></select><div id="comparison" class="chart"></div><p class="muted">只比较同一类别、同一指标路径和单位；横轴为任务/Case。</p></section>
 <section><h2>附加观测时间线</h2><select id="series" aria-label="观测序列"></select><div id="observation" class="chart"></div><p class="muted">按实际采样时间展示。每Case图表最多使用500个采样点；完整原始记录单独保存。任务详情最多列出20条观测错误，完整信息见原始结果。</p></section>
-<section><h2>执行条件、覆盖率与诊断</h2><div id="details"></div></section>
+<section id="diagnostics"><h2>执行条件、覆盖率与诊断</h2><div id="details"></div></section>
 <footer>离线单文件报告 · 无外部脚本或网络依赖 · 可从保存的新结果重新导出</footer>
 </main><script type="application/json" id="report-data">__REPORT_DATA__</script><script>
 'use strict';
@@ -27,8 +33,20 @@ const names={success:'成功',partial_failed:'部分失败',failed:'失败',inte
 const fmt=v=>v==null?'—':typeof v==='number'?Number(v.toPrecision(7)).toLocaleString('zh-CN',{maximumFractionDigits:7}):String(v);
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
 $('subtitle').textContent=(R.id||R.name)+' · '+(names[R.status]||R.status);
-const cases=tasks.flatMap(t=>t.cases||[]),complete=cases.reduce((n,c)=>n+(c.coverage?.complete||0),0),selected=cases.reduce((n,c)=>n+(c.coverage?.selected||0),0);
-for(const [label,value] of [['任务数',tasks.length],['Case数',cases.length],['完成样本',complete],['样本完成比例',selected?(100*complete/selected).toFixed(1)+'%':'—']]){const c=el('div',undefined,'card');c.append(el('div',label,'muted'),el('div',value,'number'));$('cards').append(c)}
+const cases=tasks.flatMap(t=>t.cases||[]);
+function totalCoverage(key) {
+  if (!cases.length || cases.some(c =>
+    typeof c.coverage?.[key] !== 'number')) return null;
+  return cases.reduce((n,c) => n+c.coverage[key],0);
+}
+const complete=totalCoverage('complete');
+for(const [label,value] of [['任务数',tasks.length],['Case数',cases.length],
+  ['完成样本',complete],['失败样本',totalCoverage('failed')]]) {
+  const c=el('div',undefined,'card');
+  c.append(el('div',label,'muted'),el('div',value==null?'未采集':fmt(value),'number'));
+  c.append(link('查看详情','summary-section'));
+  $('cards').append(c);
+}
 function option(parent,value,text){const o=el('option',text);o.value=value;parent.append(o)}
 for(const t of tasks)option($('task'),t.name,t.name+' · '+(names[t.status]||t.status));
 for(const c of [...new Set(cases.map(c=>c.id))])option($('case'),c,c);
@@ -39,6 +57,182 @@ function svgElement(tag,attrs){const n=document.createElementNS('http://www.w3.o
 function chart(id,points,line=false){const box=$(id);box.replaceChildren();points=points.filter(p=>typeof p.value==='number'&&Number.isFinite(p.value));if(!points.length){box.append(el('div','没有可展示的数据','empty'));return}const width=Math.max(700,line?700:points.length*80),height=300,pad=50,values=points.map(p=>p.value),lo=Math.min(0,...values),hi=Math.max(1,...values),scale=v=>height-pad-(v-lo)/(hi-lo)*(height-pad*2);const svg=svgElement('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':line?'观测时间线':'Case指标比较'});const minTime=points[0].time,maxTime=points.at(-1).time;const x=(p,i)=>line?pad+(p.time-minTime)/Math.max(1e-9,maxTime-minTime)*(width-pad*2):pad+(i+.5)*(width-pad*2)/points.length;for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=scale(v);svg.append(svgElement('line',{x1:pad,y1:y,x2:width-pad,y2:y,stroke:'var(--line)'}));const text=svgElement('text',{x:4,y:y+4,fill:'currentColor','font-size':11});text.textContent=fmt(v);svg.append(text)}if(line)svg.append(svgElement('polyline',{points:points.map((p,i)=>`${x(p,i)},${scale(p.value)}`).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':2}));points.forEach((p,i)=>{const px=x(p,i),y=scale(p.value);const mark=line?svgElement('circle',{cx:px,cy:y,r:3,fill:'var(--accent)'}):svgElement('rect',{x:px-15,y:Math.min(y,scale(0)),width:30,height:Math.max(1,Math.abs(scale(0)-y)),rx:3,fill:'var(--accent)'});const title=svgElement('title',{});title.textContent=p.label+': '+fmt(p.value);mark.append(title);svg.append(mark);if(!line||i===0||i===points.length-1){const t=svgElement('text',{x:px,y:height-12,'text-anchor':'middle',fill:'currentColor','font-size':10});t.textContent=p.label;svg.append(t)}});box.append(svg)}
 function comparison(){const key=$('metric').value;chart('comparison',visibleRows().filter(r=>JSON.stringify([r.category,r.metric,r.unit])===key).map(r=>({value:r.value,label:r.task+'/'+r.case})))}
 const series=new Map();for(const s of D.observations){const k=[s.task,s.case,s.metric,JSON.stringify(s.labels)].join(' · ');if(!series.has(k))series.set(k,[]);series.get(k).push({value:s.value,time:s.time,label:new Date(s.time*1000).toLocaleTimeString()})}for(const key of series.keys())option($('series'),key,key);function observation(){chart('observation',series.get($('series').value)||[],true)}
-for(const task of tasks){const section=el('details');section.append(el('summary',task.name+' · '+task.scenario+' · '+(names[task.status]||task.status)));for(const c of task.cases||[]){const detail=el('details');detail.append(el('summary',c.id+' · '+(names[c.status]||c.status)));const info={parameters:c.parameters,reason:c.reason,collection_complete:c.collection_complete,metrics_status:c.metrics_status,device_observation:c.device_observation,coverage:c.coverage,window:c.window,observation:c.observation?{status:c.observation.status,valid_samples:c.observation.valid_samples,failed_samples:c.observation.failed_samples,actual_window_s:c.observation.actual_window_s,failures:c.observation.failure_examples}:undefined,error:c.error,cleanup_error:c.cleanup_error,metrics:c.metrics,metric_errors:Object.fromEntries(Object.entries(c.metrics||{}).filter(([k,v])=>v.error)),raw:c.raw};detail.append(el('pre',JSON.stringify(info,null,2)));section.append(detail)}if(task.errors)section.append(el('pre',JSON.stringify(task.errors,null,2)));$('details').append(section)}
+// Stable positional anchors do not depend on user-supplied task names.
+function link(text, target) {
+  const a = el('a', text);
+  a.href = '#' + target;
+  return a;
+}
+function showTarget() {
+  const target = $(ensureRequestTarget(location.hash.slice(1)));
+  if (!target) return;
+  for (let parent = target; parent; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  }
+  target.scrollIntoView({block: 'start'});
+  target.focus({preventScroll: true});
+}
+window.addEventListener('hashchange', showTarget);
+document.addEventListener('click', event => {
+  const anchor = event.target.closest('a[href^="#"]');
+  if (anchor && anchor.hash === location.hash) {
+    event.preventDefault();
+    showTarget();
+  }
+});
+function block(parent, id, title, value) {
+  const d = el('details');
+  d.id = id;
+  d.tabIndex = -1;
+  d.append(el('summary', title));
+  d.append(el('pre', value == null ? '未采集' :
+    JSON.stringify(value, null, 2)));
+  d.append(link('返回摘要', 'overview'));
+  parent.append(d);
+  return d;
+}
+function recorded(value) {
+  return value == null || value === '' ? '未采集' : fmt(value);
+}
+const stamp = value => typeof value === 'number' ?
+  new Date(value * 1000).toLocaleString('zh-CN') : recorded(value);
+$('run-context').append(el('p', '运行时间：' + stamp(R.started_at) +
+  ' → ' + stamp(R.finished_at ?? R.ended_at), 'muted'));
+if (R.errors?.length) block($('run-context'), 'run-errors', '整轮诊断', R.errors);
+function metricLabel(path) {
+  const labels = {ttft:'首 Token 延迟（均值）', e2el:'完整耗时（均值）',
+    itl:'Token 间延迟（均值）', tpot:'每输出 Token 耗时（均值）',
+    input_tokens:'实际输入 Token（均值）', output_tokens:'实际输出 Token（均值）',
+    request_throughput:'请求吞吐量', output_token_throughput:'输出 Token 吞吐量',
+    accuracy:'准确率', exact_match:'精确匹配', f1:'F1', token_f1:'Token F1',
+    rouge1:'ROUGE-1', rouge2:'ROUGE-2', rougeL:'ROUGE-L',
+    pass_at_1:'Pass@1', perplexity:'困惑度',
+    internal_ttft:'Engine 首 Token 延迟（均值）',
+    engine_execution_latency:'Engine 执行耗时（均值）',
+    aggregate_decode_token_throughput:'Engine 解码吞吐量（均值）'};
+  const parts = path.split('/');
+  const key = parts.at(-1) === 'mean' ? parts.at(-2) : parts.at(-1);
+  return labels[key] || key;
+}
+const important = /\/(ttft|e2el|itl|tpot|input_tokens|output_tokens|internal_ttft|engine_execution_latency|aggregate_decode_token_throughput)\/mean$|\/service_view\/(request_throughput|output_token_throughput)$|\/(accuracy|exact_match|token_f1|f1|rouge1|rouge2|rougeL|pass_at_1|perplexity)$/;
+__REQUEST_SCRIPT__
+if (D.request_details) $('run-context').append(el('p',
+  '完整详情报告：包含已保存的原始输入输出。缺失记录将明确标注；' +
+  '分页不减少文件体积。', 'muted'));
+tasks.forEach((task, ti) => {
+  const section = el('details');
+  section.id = 'task-' + ti;
+  section.tabIndex = -1;
+  section.append(el('summary', task.name + ' · ' +
+    recorded(task.scenario) + ' · ' + (names[task.status] || task.status)));
+  if (task.errors?.length || task.error) block(section, 'task-errors-' + ti,
+    '任务诊断', task.errors?.length ? task.errors : task.error);
+  if (!task.cases.length) {
+    const notice = el('p');
+    notice.append(link(task.name + '：没有 Case，查看任务详情', section.id));
+    $('case-summaries').append(notice);
+  }
+  task.cases.forEach((c, ci) => {
+    const id = 'case-' + ti + '-' + ci;
+    const detail = el('details');
+    detail.id = id;
+    detail.tabIndex = -1;
+    detail.append(el('summary', c.id + ' · ' +
+      (names[c.status] || c.status)));
+    const p = c.parameters || {}, coverage = c.coverage || {};
+    const requestData = D.request_details?.[ti]?.[ci];
+    const summary = el('article', undefined, 'case-summary');
+    const title = el('h3');
+    title.append(link(task.name + ' / ' + c.id + ' · ' +
+      (names[c.status] || c.status), id));
+    summary.append(title);
+    const conditions = el('p');
+    conditions.append(link([
+      '场景：' + recorded(task.scenario),
+      '模型：' + recorded(p.model), '数据：' + recorded(p.data),
+      '策略：' + recorded(p.profile),
+      '并发上限：' + recorded(p.max_concurrency),
+      '输入长度参数/输出上限 Token：' + recorded(p.input_tokens) +
+      ' / ' + recorded(p.output_tokens)
+    ].join(' · '), id + '-conditions'));
+    summary.append(conditions);
+    const counts = el('p');
+    ['complete', 'failed', 'incomplete', 'not_started'].forEach((key, i) => {
+      if (i) counts.append(document.createTextNode(' · '));
+      counts.append(link(['完成', '失败', '未完成', '未开始'][i] +
+        '：' + recorded(coverage[key]),
+        id + (key === 'failed' ?
+          (requestData?.status === 'available' ? '-requests-failed' : '-errors') :
+          '-coverage')));
+    });
+    summary.append(counts);
+    const metrics = el('div', undefined, 'metric-links');
+    const rows = c.status === 'discarded' ? [] : D.rows.filter(r =>
+      r.task_index === ti && r.case_index === ci && important.test(r.metric));
+    const caseRows = D.rows.filter(r =>
+      r.task_index === ti && r.case_index === ci);
+    for (const row of rows) {
+      metrics.append(link(metricLabel(row.metric) +
+        '：' + recorded(row.value) + ' ' + row.unit,
+        id + '-metric-' + caseRows.indexOf(row)));
+    }
+    if (!rows.length) metrics.append(link(
+      c.status === 'discarded' ? '已丢弃，不展示有效指标' :
+        '查看指标详情（无可用核心摘要）', id + '-metrics'));
+    summary.append(metrics);
+    const metricErrors = Object.fromEntries(Object.entries(c.metrics || {})
+      .filter(([, v]) => v.error || v.status === 'failed'));
+    const diagnostics = {reason: c.reason, error: c.error,
+      cleanup_error: c.cleanup_error, metric_errors: metricErrors,
+      observation: c.observation, device_observation: c.device_observation};
+    if (c.status !== 'success' || c.error || c.cleanup_error ||
+        c.observation?.error || c.device_observation?.error ||
+        Object.keys(metricErrors).length) {
+      summary.append(link('查看异常与诊断', id + '-errors'));
+    }
+    $('case-summaries').append(summary);
+    if (requestData) requestPanel(detail, summary, id, requestData);
+    block(detail, id + '-conditions', '测试条件与完整配置', p);
+    block(detail, id + '-coverage', '覆盖率与执行窗口', {
+      coverage: c.coverage, window: c.window,
+      collection_complete: c.collection_complete,
+      metrics_status: c.metrics_status});
+    const metricBlock = block(detail, id + '-metrics',
+      '指标详情：数值、分位数、单位和样本数', c.metrics);
+    const table = el('table');
+    const head = el('tr');
+    for (const title of ['指标路径 / 统计量', '数值', '单位', '样本数'])
+      head.append(el('th', title));
+    const thead = el('thead');
+    thead.append(head);
+    table.append(thead);
+    const body = el('tbody');
+    caseRows.forEach((row, ri) => {
+      const tr = el('tr');
+      tr.id = id + '-metric-' + ri;
+      tr.tabIndex = -1;
+      for (const value of [row.metric, row.value, row.unit, row.count])
+        tr.append(el('td', recorded(value)));
+      body.append(tr);
+    });
+    table.append(body);
+    metricBlock.insertBefore(table, metricBlock.children[1]);
+    const rawMetrics = metricBlock.querySelector('pre');
+    const rawDetails = el('details');
+    rawDetails.append(el('summary', '原始指标与附加说明'), rawMetrics);
+    metricBlock.append(rawDetails);
+    const explanation = el('p',
+      '以下为保存的原始指标口径。客户端、Engine 与服务端观测不可混用；' +
+      'count 与 weight_sum 保留原意，不能一律视为请求数。' +
+      '缺失分位数或公式不补算；失败处理与统计窗口请结合覆盖率查看。',
+      'muted');
+    metricBlock.insertBefore(explanation, metricBlock.children[1]);
+    block(detail, id + '-errors', '错误与观测诊断', diagnostics);
+    block(detail, id + '-raw', '原始结果位置（需在原运行环境访问）', c.raw);
+    section.append(detail);
+  });
+  $('details').append(section);
+});
+showTarget();
 $('theme').onclick=()=>document.body.classList.toggle('dark');for(const id of ['task','case','search'])$(id).addEventListener('input',render);$('metric').onchange=comparison;$('series').onchange=observation;document.querySelectorAll('[data-sort]').forEach(n=>n.onclick=()=>{ascending=sort===n.dataset.sort?!ascending:true;sort=n.dataset.sort;render()});render();observation();
 </script></body></html>

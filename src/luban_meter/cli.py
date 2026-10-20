@@ -46,6 +46,14 @@ def _build_parser():
     report = commands.add_parser("report")
     report.add_argument("--input", type=Path, required=True)
     report.add_argument("--output", type=Path)
+    report.add_argument(
+        "--include-requests", action="store_true",
+        help="内嵌原始请求及已保存的输入输出，生成完整详情 HTML",
+    )
+    report.add_argument(
+        "--raw-root", type=Path,
+        help="原始运行目录；默认使用输入结果文件所在目录",
+    )
     return parser, schema
 
 
@@ -62,8 +70,19 @@ def main(argv=None):
                 print(f"{name}\t{','.join(sorted(implementation.requires))}")
             return 0
         if args.command == "report":
-            path = args.output or args.input.parent / "report.html"
-            print(write_html(load_result(args.input), path))
+            if args.raw_root and not args.include_requests:
+                raise ValueError("--raw-root requires --include-requests")
+            filename = "report-full.html" if args.include_requests else (
+                "report.html"
+            )
+            path = args.output or args.input.parent / filename
+            print(write_html(
+                load_result(args.input), path,
+                include_requests=args.include_requests,
+                raw_root=args.raw_root or args.input.parent,
+            ))
+            if args.include_requests:
+                print("完整报告含已保存的原始输入输出；未采集字段不补造。")
             return 0
         values = vars(args)
         base = {
