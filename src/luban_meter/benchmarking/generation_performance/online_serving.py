@@ -7,10 +7,10 @@ import json
 import math
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+import httpx
 
 from luban_meter.benchmarking.generation_performance.common import (
     http_client,
@@ -20,6 +20,7 @@ from luban_meter.benchmarking.generation_performance.common.statistics import (
     summarize,
     summarize_weighted,
 )
+from luban_meter.runtime.http_client import iter_response_lines
 
 
 class ActiveRequestTracker:
@@ -102,6 +103,7 @@ def _build_request_record(
 
 def execute_request(
     *,
+    client: httpx.Client,
     request_index: int,
     payload: dict[str, Any],
     endpoint: str,
@@ -120,54 +122,67 @@ def execute_request(
     ``collect_chat_stream``.
     """
     url = f"{service_url.rstrip('/')}/{endpoint.lstrip('/')}"
-    http_request = urllib.request.Request(
+    http_request = client.build_request(
+        "POST",
         url,
-        data=json.dumps(payload).encode("utf-8"),
+        content=json.dumps(payload).encode("utf-8"),
         headers=http_client.request_headers(api_key),
-        method="POST",
+        timeout=timeout,
     )
+    response = None
+    observation = None
+    error = None
+    cleanup_error = None
     started = time.perf_counter()
     tracker.enter()
     try:
-        with urllib.request.urlopen(http_request, timeout=timeout) as response:
-            observation = stream_collector(response)
-            ended = time.perf_counter()
-
-        return _build_request_record(
-            request_index=request_index,
-            started=started,
-            ended=ended,
-            benchmark_start=benchmark_start,
-            scheduled_time=scheduled_time,
-            observation=observation,
-            error=None,
-        )
-    except urllib.error.HTTPError as exc:
+        response = client.send(http_request, stream=True)
+        response.raise_for_status()
+        lines = iter_response_lines(response)
+        observation = stream_collector(lines)
         ended = time.perf_counter()
-        detail = exc.read().decode("utf-8", errors="replace")
-        error: Exception = RuntimeError(f"HTTP {exc.code}: {detail}")
-        return _build_request_record(
-            request_index=request_index,
-            started=started,
-            ended=ended,
-            benchmark_start=benchmark_start,
-            scheduled_time=scheduled_time,
-            observation=None,
-            error=error,
-        )
+        try:
+            # Preserve the collector's end time while finishing HTTP framing.
+            for _ in lines:
+                pass
+        except Exception as exc:  # noqa: BLE001
+            cleanup_error = exc
+    except httpx.HTTPStatusError as exc:
+        ended = time.perf_counter()
+        response = exc.response
+        try:
+            detail = response.read().decode("utf-8", errors="replace")
+        except httpx.HTTPError as read_error:
+            detail = str(read_error)
+        error = RuntimeError(f"HTTP {response.status_code}: {detail}")
     except Exception as exc:  # noqa: BLE001
         ended = time.perf_counter()
-        return _build_request_record(
-            request_index=request_index,
-            started=started,
-            ended=ended,
-            benchmark_start=benchmark_start,
-            scheduled_time=scheduled_time,
-            observation=None,
-            error=exc,
-        )
+        error = exc
     finally:
-        tracker.exit()
+        try:
+            if response is not None:
+                response.close()
+        except Exception as exc:  # noqa: BLE001
+            cleanup_error = cleanup_error or exc
+        finally:
+            tracker.exit()
+    record = _build_request_record(
+        request_index=request_index,
+        started=started,
+        ended=ended,
+        benchmark_start=benchmark_start,
+        scheduled_time=scheduled_time,
+        observation=observation,
+        error=error,
+    )
+    if response is not None:
+        record["http_version"] = response.http_version
+    if cleanup_error is not None:
+        record["connection_cleanup_error"] = {
+            "type": type(cleanup_error).__name__,
+            "message": str(cleanup_error),
+        }
+    return record
 
 
 def numeric(record: Mapping[str, Any], name: str) -> float:

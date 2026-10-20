@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import BinaryIO
 
 from .token_counting import (
     token_usage,
@@ -22,7 +21,7 @@ class StreamObservation:
 
 
 def collect_completion_stream(
-    stream: BinaryIO,
+    stream: Iterable[bytes],
     clock: Callable[[], float] = time.perf_counter,
 ) -> StreamObservation:
     """Consume an SSE stream and retain only valid, non-empty output
@@ -77,7 +76,7 @@ def collect_completion_stream(
 
 
 def collect_chat_stream(
-    stream: BinaryIO,
+    stream: Iterable[bytes],
     clock: Callable[[], float] = time.perf_counter,
 ) -> StreamObservation:
     """Consume an SSE chat completion stream and retain output events.

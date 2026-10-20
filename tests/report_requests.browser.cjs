@@ -26,6 +26,8 @@ const {chromium} = require('playwright');
     await panel.getByRole('button', {name: '下一页'}).click();
     assert.match(await panel.innerText(), /第 2 \/ 3 页/);
     await page.getByRole('link', {name: '最慢请求：219 ms', exact: true}).click();
+    await page.waitForFunction(() =>
+      document.activeElement.id === 'case-0-0-request-119');
     assert.equal(await page.evaluate(() => document.activeElement.id),
       'case-0-0-request-119');
     assert.match(await panel.innerText(), /第 3 \/ 3 页/);
@@ -33,6 +35,8 @@ const {chromium} = require('playwright');
     await panel.locator('pre').first().waitFor({state: 'visible'});
     assert.match(await panel.innerText(), /<script>alert\(1\)<\/script>/);
     await page.getByRole('link', {name: '失败：12', exact: true}).click();
+    await page.waitForFunction(() =>
+      document.activeElement.id === 'case-0-0-requests');
     assert.match(await panel.innerText(), /13 条记录/);
     const search = panel.getByRole('textbox');
     await search.fill('orphan');
@@ -46,6 +50,8 @@ const {chromium} = require('playwright');
       document.activeElement.id === 'case-0-0-request-119');
     assert.equal(await search.inputValue(), '');
     await page.getByRole('link', {name: '请求详情不可用（查看原因）'}).click();
+    await page.waitForFunction(() =>
+      document.querySelector('#case-0-1-requests').open);
     assert.match(await page.locator('#case-0-1-requests').innerText(),
       /原始文件缺失/);
     assert.deepEqual(errors, []);

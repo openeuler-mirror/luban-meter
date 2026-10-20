@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Modular benchmark toolkit for multiple AI hardware environments"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["httpx>=0.28.1,<0.29"]
 
 [project.optional-dependencies]
 generation = ["Faker>=30", "transformers>=4.45,<6", "jinja2>=3.1"]

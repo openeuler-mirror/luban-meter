@@ -17,6 +17,7 @@ python3.12 -m pip install -e '.[quality]'
 ```
 
 Python版本要求≥3.12。模型、在线服务、GPU驱动和vLLM由用户提前准备。
+HTTPX作为基础依赖随工具安装，在线性能与质量评测使用同步HTTP/1.1连接池。
 HumanEval使用Docker沙箱执行候选代码；先按
 [沙箱说明](src/luban_meter/benchmarking/model_service_quality/common/Containerfile)
 构建镜像，禁止回退到宿主机直接执行。数据下载脚本保留在
@@ -201,6 +202,31 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 只有声明允许按Case变化的参数才能进入矩阵；配置路径相对于JSON所在目录，CLI路径相对于工作目录。
 所有选中任务先完成静态预检，再启动执行；预检不代表服务、GPU或Docker已可用。
 
+## HTTP连接复用
+
+在线生成和模型服务质量评测保留线程池及原有调度，每个Case创建一个共享HTTPX客户端。
+预热与正式请求共用连接池，Case结束后关闭；不同Case不共享连接。Prometheus采样独立运行。
+
+| CLI参数 | 任务JSON字段 | 默认值与约束 |
+|---|---|---|
+| `--http-max-connections` | `http_max_connections` | 未指定或JSON为`null`时自动采用实际请求容量；显式值必须为正整数且不低于该容量 |
+| `--http-keepalive-expiry` | `http_keepalive_expiry` | 空闲连接保留秒数，默认5，必须为有限正数 |
+
+两项参数均可按Case配置。空闲连接上限等于连接总上限；实际请求容量由Profile与策略共同决定，
+不一定等于`max_concurrency`。连接池大小不会提高调度并发，128也不是程序硬上限。
+服务端关闭连接或连接空闲过期后会重新建连；顺序预热不保证所有并发连接都已建立。
+
+固定使用HTTP/1.1，不新增自动重试，不跨请求保留Cookie，使用`Accept-Encoding: identity`。
+证书信任沿用系统SSL上下文，代理继续按环境发现。常规重定向继续处理，POST的307/308不自动重发。
+客户端版本及有效连接配置保存在Case原始事实的`metadata.http_client`中。
+
+请求构造完成后开始计时，TTFT包含实际发生的建连和连接池等待。有效流式采集结束时固定E2EL，
+随后消费剩余HTTP响应以归还连接；该收尾不改变输出事件或Token计数。
+收尾失败会关闭连接并记录请求级`connection_cleanup_error`，不改变已有效生成的成功状态。
+收尾仍占用请求执行槽并计入Case统计窗口，不从吞吐量分母中扣除。
+原始请求结构和指标公式保持兼容；底层网络错误的`error.type`可能改为HTTPX异常类型。
+连接复用会改变真实客户端开销，新旧结果数值不要求相同，比较时应注明客户端与连接条件。
+
 ## 停止与失败
 
 - 任务顺序执行，失败默认继续；`--fail-fast`跳过后续任务。
@@ -208,7 +234,8 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 - 数据耗尽、请求数或`--max-duration`任一条件达到即停止新请求，等待在途请求结束。
 - `--num-warmups`按样本预热，不纳入正式请求预算和指标。
 - 首次Ctrl+C停止整个运行的新请求，等待在途工作；第二次取消工作进程并清理本次资源。
-- `--request-timeout`约束HTTP请求，`--task-timeout`约束整个子进程任务。
+- `--request-timeout`约束HTTP连接、读、写及连接池等待，收尾沿用读超时；不是请求总时限。
+  持续输出的长请求可以超过此时长。`--task-timeout`约束整个子进程任务。
 - 结果分别记录完整、失败、不完整和未开始样本。多请求样本中途停止后，不进入要求完整答案的正确率分母。
 - `--circuit-breaker`为在线Case的P99 E2EL毫秒阈值，至少10个成功样本才判断；超限跳过该任务后续Case。
   `--max-error-rate`同样在Case完成后判断。它们不改变逐请求Goodput阈值。
