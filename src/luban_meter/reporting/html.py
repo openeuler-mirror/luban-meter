@@ -5,71 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .data import load_result as load_result
+from .data import metric_rows, validate_result
 from .request_details import load_details
-
-STATUSES = {
-    "success",
-    "partial_failed",
-    "failed",
-    "interrupted",
-    "skipped",
-    "discarded",
-}
-
-
-def validate_result(payload):
-    if not isinstance(payload, dict) or "schema_version" in payload:
-        raise ValueError(
-            "expected a new result object without a version field"
-        )
-    if payload.get("kind") not in ("run", "task"):
-        raise ValueError("result.kind must be run or task")
-    if payload.get("status") not in STATUSES:
-        raise ValueError("invalid result status")
-    tasks = payload.get("tasks") if payload["kind"] == "run" else [payload]
-    if not isinstance(tasks, list):
-        raise ValueError("result.tasks must be a list")
-    for task in tasks:
-        if not isinstance(task, dict) or task.get("status") not in STATUSES:
-            raise ValueError("invalid task result")
-        if not isinstance(task.get("cases"), list):
-            raise ValueError("task.cases must be a list")
-        if any(
-            not isinstance(task.get(key), str) for key in ("name", "category")
-        ):
-            raise ValueError("task name and category must be strings")
-        for case in task["cases"]:
-            if (
-                not isinstance(case, dict)
-                or not isinstance(case.get("id"), str)
-                or case.get("status") not in STATUSES
-            ):
-                raise ValueError("invalid Case result")
-            if not isinstance(case.get("metrics", {}), dict):
-                raise ValueError("Case metrics must be an object")
-    return tasks
-
-
-def metric_rows(value, path="", unit="", count=None):
-    if isinstance(value, dict):
-        unit = value.get("unit", unit)
-        count = value.get("sample_count", value.get("count", count))
-        if "value" in value:
-            yield {
-                "metric": path,
-                "value": value["value"],
-                "unit": unit,
-                "count": count,
-            }
-        else:
-            for name, item in value.items():
-                if name not in ("unit", "count", "sample_count", "weight_sum"):
-                    yield from metric_rows(item, f"{path}/{name}", unit, count)
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            yield from metric_rows(item, f"{path}/{index}", unit, count)
-    elif isinstance(value, (int, float)) and not isinstance(value, bool):
-        yield {"metric": path, "value": value, "unit": unit, "count": count}
 
 
 def report_data(payload, *, include_requests=False, raw_root=None):
@@ -192,12 +130,6 @@ def write_html(payload, destination, *, include_requests=False, raw_root=None):
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(html, encoding="utf-8")
     return destination
-
-
-def load_result(path):
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    validate_result(payload)
-    return payload
 
 
 TEMPLATE = (

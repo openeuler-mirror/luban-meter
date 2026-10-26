@@ -1,6 +1,7 @@
 # LuBan-Meter
 
-统一执行生成式推理性能与模型服务质量评测，保存原始事实、计算指标并导出离线HTML报告。
+统一执行生成式推理性能与模型服务质量评测，保存原始事实、计算指标，
+提供终端结果摘要与离线HTML报告。
 
 - 生成性能：在线OpenAI兼容流式服务、离线vLLM Engine。
 - 模型服务质量：C-Eval、CMMLU、GSM8K、HumanEval、LCSTS、SQuAD、WikiText。
@@ -383,6 +384,166 @@ luban-meter run --scenario gsm8k --model served-model \
 WikiText、HumanEval及选择题ppl保留特殊流程，不强行套用通用答案解析器。
 扩展基类、字段契约、策略模式及示例见[架构指南](ARCHITECTURE.md)。
 
+
+## 服务器终端结果摘要
+
+`run` 完成后默认打印简洁摘要；`run --no-summary` 关闭摘要。结果保存、HTML
+生成和运行退出码保持原行为，摘要显示故障不改变 Benchmark 的执行结果。
+
+```bash
+luban-meter report --input results/<run>/result.json --format text
+luban-meter report --input results/<run>/result.json --format text --verbose
+luban-meter report --input results/<run>/result.json --format text --all
+luban-meter report --input results/<run>/result.json --format text \
+  --task task_1 --case case_1 --verbose
+luban-meter report --input results/<run>/result.json --format text \
+  --case task_2/case_1 --output report.txt
+luban-meter report --input results/<run>/result.json --format text | less
+```
+
+默认展示运行和 Case 状态、模型/场景/数据源、并发/预热、覆盖率、窗口时长、
+实际保存的性能或质量统计及必要错误。`--verbose` 增加绝对时间戳、目标长度、
+aggregation、percentile_method、weight_sum、统计口径和已保存的诊断元数据。
+`--all` 只控制 Case 数量，不代替 `--verbose`。
+
+- 默认显示前 5 个匹配 Case；状态汇总包含全部匹配 Case，并提示省略数量。
+  `--task`、`--case` 可重复使用，各自取并集，两类条件取交集。
+  同名 Case 用 `TASK/CASE` 区分；未知筛选条件报错。
+- 表格从现有统计节点动态生成，不按场景名推测分数，也不补齐固定性能指标。
+  默认优先显示已保存的 TTFT、ITL、TPOT、E2EL、输入/输出 Token、请求与输出
+  Token 吞吐量；其他性能项提示数量并在 `--verbose` 中完整展示。若没有这些
+  优先项，则直接展示已有统计，未知指标不会被丢弃。
+  新增 F1、pass@k、自定义统计节点无需修改终端指标白名单；原字段名未配置
+  展示别名时直接保留。CEVAL/CMMLU 的按学科分数也按保存结构显示。
+- Mean/Value、P50、P95、Unit、N 读取已保存结果。N 不由总样本数推算。
+  浮点值显示最多三位小数，微小非零值使用科学计数法，绝不修改 JSON 精度。
+  标量质量指标使用 Metric/Value/Unit/N 四列，ratio 保持原比例，不自动转百分比。
+  不存在的指标不显示；存在但不可用的值显示 N/A，真实 0 保持 0。
+  无统计样本时不把占位零当作有效测量；标量的分位数不适用。
+- 请求级 Token 数是请求分布，服务级 `total_*_tokens` 是总数，
+  `*token_throughput` 是吞吐量；请求级速率和服务级吞吐量分表、分名显示。
+  简洁模式把 sample/request/token/s 单位的标量计数或窗口信息压缩为文本行；
+  详细模式恢复表格。两种模式均保留这些值和已保存的缺失原因。
+- ASCII 边框和中英表头不依赖颜色。76 列及以上使用表格，窄窗口采用分块布局。报告最多占 120 列，
+  避免超宽终端或 `COLUMNS` 将 Metric 列无限拉长；按中文显示宽度计算对齐。
+  结果路径及查看命令不人为折行，以便复制执行；终端可自然折行，`less -S`
+  可横向滚动。输出重定向与 `--output` 都是纯 UTF-8 文本。
+- 输出末尾包含真实结果路径及带原筛选条件的详细查看命令。失败 Case 另有
+  精确定位命令，以及 `--details errors` 查看已保存请求错误的命令。
+  原始目录齐全时也可使用 `report --include-requests` 导出 HTML。
+- 文本摘要不读取原始请求、不连接模型、不重算指标。HTML 和终端共用
+  `reporting/data.py` 的结果校验、单位及计数继承规则。默认 `report` 仍导出 HTML；
+  `--verbose`、`--all`、任务/Case 筛选只适用于文本，`--include-requests`
+  只适用于 HTML。`--raw-root` 也可用于文本请求详情。
+  文本 `--output` 不允许覆盖输入 JSON，请求详情也禁止覆盖原始 Case 文件。
+- 支持当前未标版本的 run/task 结果，包括缺失可选字段的历史结果；
+  `schema_version` 等旧协议结构不自动迁移，明确报错并保留原文件。
+  未掌握旧字段的统计定义时，不猜测转换为当前口径。
+
+ITL/TPOT 权重核对：当前在线计算器以最后内容事件为 Token 计时终点；
+ITL=(最后内容延迟−TTFT)/(输出 Token 数−1)，按 Token 间隔数加权；
+TPOT=最后内容延迟/输出 Token 数，包含首 Token 等待，按输出 Token 数加权。
+缺失最后内容时间时 TPOT 使用既有 E2EL 回退，ITL 无该样本值。
+`count` 为有效请求数，`weight_sum` 为对应权重，分位数采用保存的 weighted CDF。
+因此合成示例的 50 条、每条 16 Token 对应 ITL 权重 750、TPOT 权重 800。
+本次报告改进没有修改上述公式。
+
+体验与验收样例：
+
+```bash
+luban-meter report --input examples/terminal-result.json --format text
+luban-meter report --input examples/terminal-result.json --format text --verbose
+luban-meter report --input examples/terminal-gsm8k-result.json --format text
+python examples/generate_terminal_examples.py
+```
+
+`terminal-result.json` 是合成请求经过现有计算器生成的展示数据，并非真实 GPU
+性能。`terminal-gsm8k-result.json` 是仓库已有 2026-10-08 GSM8K 运行结果的原样
+副本（Qwen2.5-3B，5 条，Exact Match=0.2），不是本次新运行；其中原始文件的
+绝对路径只在原环境有效。生成脚本不访问模型，会在 `results/terminal-report-v1/`
+保存成功、部分失败、历史质量结果、混合多 Case 的 JSON 及默认/详细/40 列文本。
+失败样例来自模拟原始请求和真实计算器；多 Case 是演示组合，不代表一次真实运行。
+
+## SSH 请求详情与慢请求定位
+
+请求详情在已有摘要之上按需读取原始 Case 文件；不会重新执行请求，不修改
+JSON 或重算指标。仅支持命令式文本输出，不包含全屏 TUI。
+
+```bash
+luban-meter report --input results/<run>/result.json --format text \
+  --details errors --case task_1/case_1
+luban-meter report --input results/<run>/result.json --format text \
+  --details requests --sort e2el --limit 10
+luban-meter report --input results/<run>/result.json --format text \
+  --details requests --task task_1 --include-body --limit 1 --verbose
+luban-meter report --input result.json --format text --details errors \
+  --raw-root /path/to/original/run --output errors.txt
+luban-meter report --input results/<run>/result.json --format text \
+  --details requests --limit 100 | less
+```
+
+- `--details errors` 包含已保存的失败、超时、取消、未完成请求，以及关联样本的
+  错误诊断；请求失败数和仅有样本的记录数分开显示。样本答错不等于请求失败。
+  无关联请求的样本标为 `sample-only`，不伪造请求 ID。未知状态明确提示，
+  不自动视为成功；无错误记录时明确说明，缺失原始文件时不声称全部成功。
+- `--details requests` 读取所有匹配 Case。`--limit` 是跨 Case 的全局展示上限，
+  默认 10，必须是正整数；不受摘要的前 5 个 Case 限制，`--all` 不扩大请求数。
+  默认保持 Task/Case 和原始记录顺序，这不一定等于请求开始顺序。
+  `--task`、`--case` 沿用摘要的筛选规则，只加载匹配的 Case。
+  默认表格直接显示 Request ID，并在表内标明 Task/Case 分组；80 列下用
+  Request ID 替代序号列，长标识换行显示。成功请求的 raw_index、sample_id、
+  facts.status 及样本事实移到 `--verbose`，避免表后逐条重复定位信息。
+  错误、未知状态、原始负值和连接清理问题仍保留必要诊断。
+- `--sort` 可选 `e2el`、`ttft`、`itl`、`tpot`、`latency`、`input_tokens`、
+  `output_tokens`，仅读取 `response` 中对应的 `*_ms` 或 Token 字段。
+  降序排列，相同值保留原序；缺失/无效值放在末尾，明确显示其数量，仍受 limit
+  限制。原始负值保留并提示核查。慢请求不自动被标记为性能异常。
+  `latency` 专指已保存的 `response.latency_ms`，不冒充 E2EL。
+- N/A 表示字段未保存、不适用或不是有效数值；真实 0 保留。
+  当前流式原始响应通常没有独立保存 `itl_ms`、`tpot_ms`，因此显示 N/A；
+  Case 汇总中的 ITL/TPOT 仍采用现有计算结果，不用均值反填单请求。
+  `duration_ms` 原样标注，不用调度起止时间补算 E2EL。批次记录保留逻辑请求数，
+  不拆成虚构的单请求耗时。
+- 质量评测的耗时、Token 和正文可能只存在于 `samples[].facts`。按 `sample_id`
+  关联后在 `--verbose` 中标为样本事实；错误详情也保留相关样本事实。
+  不混入请求表格或请求排序；缺少 ID 时不猜测关联。
+  不改动现有评分或数据采集。错误类型未保存时显示 N/A，不从错误文本猜类型。
+  展示记录中的相同错误消息只打印一次，后续以 E1 等错误编号引用；
+  每条记录分别列出 request、response、
+  sample[index]、sample[index].facts 的实际来源及各自保存的错误类型；
+  不把 sample 的错误类型填给 request。不同消息不因预览截断而合并。
+- 默认隐藏 Prompt/模型回答。`--include-body` 必须与 `--details` 配合使用，
+  输出敏感信息提醒及实际保存正文的预览；每字段最多 2000 字符、每记录最多
+  展示 5 条关联样本，优先显示失败样本，超出部分明确提示查看 raw。
+  正文来源标明原始样本索引。普通错误/诊断每字段预览
+  最多 500 字符；控制字符转义，保留原文件完整内容。数据集原文与实际请求
+  正文分别标注，未保存时说明，不重新生成。错误描述本身也可能含服务返回内容。
+- `--verbose` 增加已保存的调度时间字段；请求表格支持 80/100/120 列，窄窗口
+  使用分块布局，仍支持重定向、UTF-8 文本文件和 less。
+- 复用 HTML 的原始数据读取与目录边界校验。搬迁整次运行目录可自动定位，
+  不读取指定根目录之外的文件或符号链接目标。历史未标版本结果若缺少
+  requests/samples 中一个数组，展示剩余记录并标注不完整；不支持的原始结构
+  显示原因，旧协议 result.json 仍明确拒绝，不猜测迁移。
+- 各 Case 顺序读取，排序只保留 limit 条候选；单个 Case 的 JSON 仍需完整解析，
+  内存需要容纳最大的原始 Case 文件。limit 限制输出，不会改变保存的请求数。
+
+可复现验收样例（全部为符合原始结构的模拟数据，无模型请求）：
+
+```bash
+python examples/generate_terminal_details.py
+COLUMNS=80 luban-meter report \
+  --input results/terminal-report-v2/partial/result.json --format text \
+  --details errors
+COLUMNS=80 luban-meter report \
+  --input results/terminal-report-v2/partial/result.json --format text \
+  --details requests --sort e2el --limit 10
+COLUMNS=80 luban-meter report \
+  --input results/terminal-report-v2/partial/missing-result.json --format text \
+  --details errors
+```
+
+生成目录同时保存 40/80/100/120 列、正文和详细模式的文本样例；其中缺失文件
+案例是刻意缺失，ITL/TPOT 的 N/A 是未保存请求字段，不代表 Case 统计不可用。
 
 ## HTML 结果摘要与详情导航
 

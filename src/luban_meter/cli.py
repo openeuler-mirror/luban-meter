@@ -13,7 +13,14 @@ from luban_meter.core.execution_summary import case_summary
 from luban_meter.core.metric import metrics
 from luban_meter.core.planning import build_plan, cli_schema, public_plan
 from luban_meter.core.run_coordinator import RunCoordinator
-from luban_meter.reporting.html import load_result, write_html
+from luban_meter.reporting.data import load_result
+from luban_meter.reporting.html import write_html
+from luban_meter.reporting.terminal import render_text
+from luban_meter.reporting.terminal_details import (
+    DEFAULT_LIMIT,
+    SORT_FIELDS,
+    render_details,
+)
 
 
 def _build_parser():
@@ -31,6 +38,11 @@ def _build_parser():
         run.add_argument("--task", action="append", default=[])
         run.add_argument("--result-dir", type=Path, default=Path("runs"))
         run.add_argument("--fail-fast", action="store_true")
+        if command == "run":
+            run.add_argument(
+                "--no-summary", action="store_true",
+                help="关闭运行结束后的终端结果摘要",
+            )
         run.add_argument("--observe", choices=("prometheus",))
         run.add_argument("--observe-url")
         run.add_argument("--observe-interval", type=float, default=1.0)
@@ -46,6 +58,23 @@ def _build_parser():
     report = commands.add_parser("report")
     report.add_argument("--input", type=Path, required=True)
     report.add_argument("--output", type=Path)
+    report.add_argument("--format", choices=("html", "text"), default="html")
+    report.add_argument("--verbose", action="store_true",
+                        help="文本报告显示统计口径、时间戳和诊断信息")
+    report.add_argument("--task", action="append", default=[])
+    report.add_argument("--case", action="append", default=[])
+    report.add_argument("--details", choices=("errors", "requests"),
+                        help="按需读取原始文件，显示错误或请求列表（文本）")
+    report.add_argument("--sort", choices=tuple(SORT_FIELDS),
+                        help="请求详情按已保存指标降序；缺失值放在末尾")
+    report.add_argument("--limit", type=int,
+                        help="请求详情最多显示的记录数，默认 10，必须为正数")
+    report.add_argument("--include-body", action="store_true",
+                        help="请求详情显式显示已保存正文预览，可能含敏感信息")
+    report.add_argument(
+        "--all", dest="all_cases", action="store_true",
+        help="显示全部匹配 Case；文本报告默认最多显示 5 个",
+    )
     report.add_argument(
         "--include-requests", action="store_true",
         help="内嵌原始请求及已保存的输入输出，生成完整详情 HTML",
@@ -70,6 +99,53 @@ def main(argv=None):
                 print(f"{name}\t{','.join(sorted(implementation.requires))}")
             return 0
         if args.command == "report":
+            if not args.details and (
+                args.sort or args.limit is not None or args.include_body
+            ):
+                raise ValueError(
+                    "--sort, --limit and --include-body require --details"
+                )
+            if args.details and args.format != "text":
+                raise ValueError("--details requires --format text")
+            if args.format == "text":
+                if args.include_requests or (
+                    args.raw_root and not args.details
+                ):
+                    raise ValueError(
+                        "text reports do not support --include-requests; "
+                        "--raw-root requires --details"
+                    )
+                result = load_result(args.input)
+                if args.details:
+                    text = render_details(
+                        result, raw_root=args.raw_root or args.input.parent,
+                        details=args.details, tasks=args.task, cases=args.case,
+                        sort=args.sort,
+                        limit=(DEFAULT_LIMIT if args.limit is None
+                               else args.limit),
+                        verbose=args.verbose, include_body=args.include_body,
+                        result_path=args.input, output_path=args.output,
+                    )
+                else:
+                    text = render_text(
+                        result, tasks=args.task, cases=args.case,
+                        all_cases=args.all_cases, verbose=args.verbose,
+                        result_path=args.input,
+                    )
+                if args.output:
+                    if args.output.resolve() == args.input.resolve():
+                        raise ValueError(
+                            "output must not overwrite input JSON"
+                        )
+                    args.output.parent.mkdir(parents=True, exist_ok=True)
+                    args.output.write_text(text + "\n", encoding="utf-8")
+                else:
+                    print(text)
+                return 0
+            if args.task or args.case or args.all_cases or args.verbose:
+                raise ValueError(
+                    "--task, --case, --all and --verbose require --format text"
+                )
             if args.raw_root and not args.include_requests:
                 raise ValueError("--raw-root requires --include-requests")
             filename = "report-full.html" if args.include_requests else (
@@ -128,6 +204,17 @@ def main(argv=None):
         report_path = write_html(result, directory / "report.html")
         print(f"{result['status']} | {directory / 'result.json'}")
         print(f"HTML: {report_path}")
+        if not args.no_summary:
+            try:
+                print(render_text(
+                    result, result_path=directory / "result.json",
+                ))
+            except Exception as exc:
+                # Display is optional: facts, HTML and exit status come first.
+                try:
+                    print(f"终端摘要未能显示: {exc}", file=sys.stderr)
+                except (OSError, UnicodeError):
+                    pass
         return (
             0
             if result["status"] == "success"

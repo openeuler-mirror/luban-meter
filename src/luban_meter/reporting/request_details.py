@@ -66,7 +66,7 @@ def request_rows(requests, samples):
     return rows
 
 
-def load_details(case, task, root, *, run):
+def load_details(case, task, root, *, run, allow_partial=False):
     """Read only within the explicit result root, including relocated runs."""
     if case["status"] == "discarded":
         return {"status": "unavailable", "reason": "Case 已丢弃，无原始记录"}
@@ -74,16 +74,16 @@ def load_details(case, task, root, *, run):
     recorded = case.get("raw")
     if not recorded:
         return {"status": "unavailable", "reason": "结果未记录原始文件路径"}
-    original = Path(recorded)
     conventional = (
         root / "tasks" / task["name"] / "raw" / (case["id"] + ".json")
         if run else root / "raw" / (case["id"] + ".json")
     )
-    candidates = [
-        original if original.is_absolute() else root / original,
-        conventional,
-    ]
     try:
+        original = Path(recorded)
+        candidates = [
+            original if original.is_absolute() else root / original,
+            conventional,
+        ]
         path = next((
             candidate.resolve() for candidate in candidates
             if candidate.resolve().is_relative_to(root) and candidate.is_file()
@@ -97,6 +97,13 @@ def load_details(case, task, root, *, run):
         if not isinstance(raw, dict):
             raise ValueError("原始文件必须是 JSON 对象")
         requests, samples = raw.get("requests"), raw.get("samples")
+        warnings = []
+        if allow_partial and ("requests" in raw or "samples" in raw):
+            for key in ("requests", "samples"):
+                if key not in raw:
+                    warnings.append(f"原始文件未保存 {key} 数组；详情不完整")
+            requests = raw.get("requests", [])
+            samples = raw.get("samples", [])
         if not isinstance(requests, list) or not isinstance(samples, list):
             raise ValueError("原始文件缺少 requests/samples 数组")
         if any(not isinstance(row, dict) for row in requests + samples):
@@ -109,6 +116,7 @@ def load_details(case, task, root, *, run):
             "requests": requests,
             "samples": samples,
             "rows": request_rows(requests, samples),
+            "warnings": warnings,
         }
     except (OSError, ValueError, TypeError) as exc:
         return {"status": "unavailable", "reason": str(exc)}
