@@ -1,0 +1,277 @@
+{
+  "kind": "run",
+  "id": "synthetic-terminal-example",
+  "status": "success",
+  "tasks": [
+    {
+      "kind": "task",
+      "name": "task_1",
+      "scenario": "online_serving",
+      "category": "generation_performance",
+      "status": "success",
+      "cases": [
+        {
+          "id": "case_1",
+          "status": "success",
+          "parameters": {
+            "model": "demo-model",
+            "data": "random_token",
+            "profile": "synchronous",
+            "max_concurrency": 1,
+            "num_warmups": 5,
+            "input_tokens": 64,
+            "output_tokens": 16
+          },
+          "coverage": {
+            "selected": 50,
+            "complete": 50,
+            "failed": 0,
+            "incomplete": 0,
+            "not_started": 0
+          },
+          "window": {
+            "duration_s": 17,
+            "started_at": 100,
+            "ended_at": 117,
+            "request_capacity": 1,
+            "peak_requests": 1
+          },
+          "metrics": {
+            "streaming_performance": {
+              "status": "success",
+              "observation_boundary": "client",
+              "values": {
+                "request_rate": null,
+                "request_outcome": "all_success",
+                "request_view": {
+                  "ttft": {
+                    "unit": "ms",
+                    "count": 50,
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "p50": 20.0,
+                    "p90": 20.0,
+                    "p95": 20.0,
+                    "p99": 20.0,
+                    "p999": 20.0,
+                    "min": 20.0,
+                    "max": 20.0,
+                    "stddev": 0.0
+                  },
+                  "itl": {
+                    "unit": "ms/token",
+                    "count": 50,
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "p50": 20.0,
+                    "p90": 20.0,
+                    "p95": 20.0,
+                    "p99": 20.0,
+                    "p999": 20.0,
+                    "min": 20.0,
+                    "max": 20.0,
+                    "stddev": 0.0,
+                    "weight_sum": 750,
+                    "aggregation": "token_weighted",
+                    "percentile_method": "weighted_cdf"
+                  },
+                  "tpot": {
+                    "unit": "ms/token",
+                    "count": 50,
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "p50": 20.0,
+                    "p90": 20.0,
+                    "p95": 20.0,
+                    "p99": 20.0,
+                    "p999": 20.0,
+                    "min": 20.0,
+                    "max": 20.0,
+                    "stddev": 0.0,
+                    "weight_sum": 800,
+                    "aggregation": "token_weighted",
+                    "percentile_method": "weighted_cdf"
+                  },
+                  "stream_event_itl": {
+                    "unit": "ms",
+                    "count": 750,
+                    "mean": 20.0,
+                    "median": 20.0,
+                    "p50": 20.0,
+                    "p90": 20.0,
+                    "p95": 20.0,
+                    "p99": 20.0,
+                    "p999": 20.0,
+                    "min": 20.0,
+                    "max": 20.0,
+                    "stddev": 0.0
+                  },
+                  "e2el": {
+                    "unit": "ms",
+                    "count": 50,
+                    "mean": 320.0,
+                    "median": 320.0,
+                    "p50": 320.0,
+                    "p90": 320.0,
+                    "p95": 320.0,
+                    "p99": 320.0,
+                    "p999": 320.0,
+                    "min": 320.0,
+                    "max": 320.0,
+                    "stddev": 0.0
+                  },
+                  "scheduled_latency": {
+                    "unit": "ms",
+                    "count": 50,
+                    "mean": 320.0,
+                    "median": 320.0,
+                    "p50": 320.0,
+                    "p90": 320.0,
+                    "p95": 320.0,
+                    "p99": 320.0,
+                    "p999": 320.0,
+                    "min": 320.0,
+                    "max": 320.0,
+                    "stddev": 0.0
+                  },
+                  "input_tokens": {
+                    "unit": "token",
+                    "count": 50,
+                    "mean": 64.0,
+                    "median": 64.0,
+                    "p50": 64.0,
+                    "p90": 64.0,
+                    "p95": 64.0,
+                    "p99": 64.0,
+                    "p999": 64.0,
+                    "min": 64.0,
+                    "max": 64.0,
+                    "stddev": 0.0
+                  },
+                  "output_tokens": {
+                    "unit": "token",
+                    "count": 50,
+                    "mean": 16.0,
+                    "median": 16.0,
+                    "p50": 16.0,
+                    "p90": 16.0,
+                    "p95": 16.0,
+                    "p99": 16.0,
+                    "p999": 16.0,
+                    "min": 16.0,
+                    "max": 16.0,
+                    "stddev": 0.0
+                  },
+                  "output_token_throughput": {
+                    "unit": "token/s",
+                    "count": 50,
+                    "mean": 50.0,
+                    "median": 50.0,
+                    "p50": 50.0,
+                    "p90": 50.0,
+                    "p95": 50.0,
+                    "p99": 50.0,
+                    "p999": 50.0,
+                    "min": 50.0,
+                    "max": 50.0,
+                    "stddev": 0.0
+                  },
+                  "decode_token_throughput": {
+                    "unit": "token/s",
+                    "count": 50,
+                    "mean": 50.0,
+                    "median": 50.0,
+                    "p50": 50.0,
+                    "p90": 50.0,
+                    "p95": 50.0,
+                    "p99": 50.0,
+                    "p999": 50.0,
+                    "min": 50.0,
+                    "max": 50.0,
+                    "stddev": 0.0
+                  },
+                  "dispatch_delay": {
+                    "unit": "ms",
+                    "count": 50,
+                    "mean": 0.0,
+                    "median": 0.0,
+                    "p50": 0.0,
+                    "p90": 0.0,
+                    "p95": 0.0,
+                    "p99": 0.0,
+                    "p999": 0.0,
+                    "min": 0.0,
+                    "max": 0.0,
+                    "stddev": 0.0
+                  }
+                },
+                "service_view": {
+                  "benchmark_duration": {
+                    "value": 17.0,
+                    "unit": "s"
+                  },
+                  "offered_request_rate": {
+                    "value": null,
+                    "unit": "req/s"
+                  },
+                  "achieved_request_start_rate": {
+                    "value": 3.03,
+                    "unit": "req/s"
+                  },
+                  "total_requests": {
+                    "value": 50,
+                    "unit": "request"
+                  },
+                  "successful_requests": {
+                    "value": 50,
+                    "unit": "request"
+                  },
+                  "failed_requests": {
+                    "value": 0,
+                    "unit": "request"
+                  },
+                  "average_concurrency": {
+                    "value": 0.941,
+                    "unit": "request"
+                  },
+                  "maximum_request_concurrency": {
+                    "value": 1,
+                    "unit": "request"
+                  },
+                  "peak_concurrent_requests": {
+                    "value": 1,
+                    "unit": "request"
+                  },
+                  "total_input_tokens": {
+                    "value": 3200,
+                    "unit": "token"
+                  },
+                  "total_output_tokens": {
+                    "value": 800,
+                    "unit": "token"
+                  },
+                  "request_throughput": {
+                    "value": 2.941,
+                    "unit": "req/s"
+                  },
+                  "input_token_throughput": {
+                    "value": 188.235,
+                    "unit": "token/s"
+                  },
+                  "output_token_throughput": {
+                    "value": 47.059,
+                    "unit": "token/s"
+                  },
+                  "total_token_throughput": {
+                    "value": 235.294,
+                    "unit": "token/s"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

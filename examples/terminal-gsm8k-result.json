@@ -1,0 +1,113 @@
+{
+  "finished_at": 1791426754.5453727,
+  "id": "run-20261008T023221Z-744b063e",
+  "kind": "run",
+  "started_at": 1791426741.1426122,
+  "status": "success",
+  "tasks": [
+    {
+      "artifacts": "/home/haiyang/LuBan-Meter/results/run-20261008T023221Z-744b063e/tasks/task_1",
+      "cases": [
+        {
+          "collection_complete": true,
+          "coverage": {
+            "complete": 5,
+            "completion_ratio": 1.0,
+            "failed": 0,
+            "incomplete": 0,
+            "not_started": 0,
+            "selected": 5
+          },
+          "id": "case_1",
+          "metrics": {
+            "numeric_accuracy": {
+              "status": "success",
+              "values": {
+                "task_view": {
+                  "gsm8k": {
+                    "exact_match": {
+                      "count": 5,
+                      "unit": "ratio",
+                      "value": 0.2
+                    },
+                    "parse_failed": {
+                      "unit": "sample",
+                      "value": 0
+                    },
+                    "scored_samples": {
+                      "unit": "sample",
+                      "value": 5
+                    },
+                    "service_failed": {
+                      "unit": "sample",
+                      "value": 0
+                    },
+                    "total_samples": {
+                      "unit": "sample",
+                      "value": 5
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "metrics_status": "complete",
+          "parameters": {
+            "answer_parser": "",
+            "api_key": "",
+            "backend": "openai_http",
+            "base_url": "http://127.0.0.1:8000",
+            "data": "jsonl",
+            "dataset_path": "/home/haiyang/LuBan-Meter/dataset/gsm8k/test.jsonl",
+            "device_exporter_url": "",
+            "device_sample_interval": 1.0,
+            "endpoint": "/v1/completions",
+            "eval_mode": "gen",
+            "few_shot": 0,
+            "few_shot_path": "",
+            "field_mapping": [],
+            "input_format": "",
+            "input_template": "",
+            "interrupt_grace": 60.0,
+            "max_concurrency": 1,
+            "max_duration": null,
+            "max_samples": 5,
+            "metrics": [
+              "numeric_accuracy"
+            ],
+            "model": "Qwen2.5-3B",
+            "num_requests": null,
+            "num_warmups": 0,
+            "output_tokens": 128,
+            "profile": "synchronous",
+            "request_timeout": 120.0,
+            "seed": 42,
+            "shuffle": false,
+            "split": "test",
+            "stop": [],
+            "task_timeout": 3600.0,
+            "temperature": 0.0,
+            "template": "gsm8k"
+          },
+          "raw": "/home/haiyang/LuBan-Meter/results/run-20261008T023221Z-744b063e/tasks/task_1/raw/case_1.json",
+          "status": "success",
+          "stop_reason": null,
+          "window": {
+            "admitted_requests": 5,
+            "duration_s": 13.25051294900004,
+            "ended_at": 1791426754.4882717,
+            "peak_requests": 1,
+            "request_capacity": 1,
+            "started_at": 1791426741.2540977,
+            "stop_reason": "data_exhausted"
+          }
+        }
+      ],
+      "category": "model_service_quality",
+      "kind": "task",
+      "name": "task_1",
+      "scenario": "gsm8k",
+      "status": "success"
+    }
+  ]
+}
