@@ -28,6 +28,7 @@ where = ["src"]
 luban_meter = [
   "reporting/template.html",
   "reporting/requests.js",
+  "reporting/case_analysis.js",
   "benchmarking/**/sandbox_runner.py",
   "benchmarking/**/Containerfile",
 ]

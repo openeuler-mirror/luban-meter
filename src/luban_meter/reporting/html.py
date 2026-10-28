@@ -137,4 +137,7 @@ TEMPLATE = (
 ).replace(
     "__REQUEST_SCRIPT__",
     Path(__file__).with_name("requests.js").read_text(encoding="utf-8"),
+).replace(
+    "__CASE_SCRIPT__",
+    Path(__file__).with_name("case_analysis.js").read_text(encoding="utf-8"),
 )

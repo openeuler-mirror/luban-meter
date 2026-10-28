@@ -302,7 +302,7 @@ results/<run_id>/
     artifacts/
 ```
 
-HTML支持任务与Case筛选、指标排序、同类Case比较、观测时间线以及覆盖率与错误详情。
+HTML支持任务与Case筛选、摘要表格排序、Case指标分析、观测时间线以及覆盖率与错误详情。
 图表每Case最多展示500个观测点，原始记录保留完整数据；报告不依赖CDN或在线服务。
 可重新导出：
 
@@ -410,6 +410,34 @@ luban-meter run --scenario gsm8k --model served-model \
 WikiText、HumanEval及选择题ppl保留特殊流程，不强行套用通用答案解析器。
 扩展基类、字段契约、策略模式及示例见[架构指南](ARCHITECTURE.md)。
 
+
+## 运行中的终端进度
+
+`run` 默认在 stderr 显示整轮 Case 进度与当前 Case 的请求/样本进度。
+交互终端使用两行原位刷新，显示任务、Case、当前阶段和已用时间；窄终端会
+缩短行宽。重定向或非交互终端仅输出阶段和 Case 状态变化，不逐请求刷屏。
+
+```bash
+luban-meter run --config tasks.json
+luban-meter run --config tasks.json --no-progress
+luban-meter run --config tasks.json --no-progress --no-summary
+```
+
+- `--no-progress` 仅关闭运行进度；`--no-summary` 仅关闭结束后的摘要。
+  进度开关不进入 Benchmark 参数或结果 JSON。
+- 整轮分母取计划 Case 数，“已结束”包含成功、失败、跳过、中断/丢弃，
+  这些状态分别计数；100% 结束不代表全部成功。
+- 当前 Case 的样本数使用已保存事件的 `weight`，请求数使用
+  `logical_requests`，两者分别显示。正式进度排除预热，不等同于评分正确率。
+  未完成和未开始样本单列，不算作已完成样本。
+- 样本总量取 `case_ready.total_samples`，请求总量取配置的请求数量上限。
+  无已知总量时显示“未知”及累计数、已用时间，不推算百分比或 ETA；达到
+  时间限制、数据耗尽或中断时，不强行将当前 Case 的计数补满。
+- 读取已有事件和 Case 提交结果，约每 0.25 秒刷新，每次最多读取 1 MiB
+  事件；最终 Case 状态以保存结果为准。高吞吐或大记录下实时计数可能滞后，
+  不截断原始文件。无法解析的记录不补造计数，最终样本数以覆盖率校准。
+- 准备摘要输出前清除进度行；结束或中断后换行。进度读取或输出失败会关闭
+  进度显示，不改变评测执行、指标、退出码或结果保存。
 
 ## 服务器终端结果摘要
 
@@ -573,9 +601,42 @@ COLUMNS=80 luban-meter report \
 
 ## HTML 结果摘要与详情导航
 
-离线单文件报告先展示运行状态与每个 Case 的关键测试条件、覆盖率和核心指标。
-点击摘要指标可定位到对应指标行并自动展开任务、Case 和指标详情；点击失败数
-可查看 Case 错误与指标诊断，详情提供“返回摘要”。无需额外服务器或外部脚本。
+离线单文件报告的概览卡片只显示标题和数量。结果摘要按任务分表，每行一个
+Case；共同模型、场景和数据来源在表格上方，变化条件与核心指标在行内。
+性能任务默认展示 TTFT Mean、TPOT Mean 和窗口输出吞吐量；质量任务根据已保存
+指标生成列，不强制使用 Accuracy。完成、失败、未完成和未开始样本分别保留，
+不能把完成数当作评分分母。数值列可排序，表头固定，窄屏可横向滚动。
+“完成 / 失败”和“未完成 / 未开始”组合列按前一项排序。
+
+点击每行的“分析”会定位并选中对应任务和 Case；重名任务或 Case 用各自位置
+区分。Case 指标分析在桌面端横向排列带标签的选择框，窄屏自动换行：
+
+- 生成性能任务：任务 → Case → 性能指标。主菜单按 TTFT、TPOT、ITL、E2EL、
+  请求吞吐量、输出 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
+  已保存统计量、单位及 count；有分位数时显示分位数图，标量只显示聚合值。
+  Median 和 P50 分别保留，不根据数值相等推定统计定义相同。
+- 质量任务：任务 → Case，隐藏第三个选择框。自动展示全部已保存指标，按
+  所属维度和单位分表。CMMLU 主分析区隐藏各学科正确率，保留总体指标；
+  学科原始数据仍可在“任务与指标”和原始详情查看，其他数据集分类不受影响。GSM8K 的
+  Exact Match、HumanEval 的 Pass@1、PPL 等以保存字段为准，不补造 Pass@k。
+- 比例单位 `ratio` 显示为百分比；悬停数值可看原值，展开原始精度与路径可看
+  统计口径。原始指标说明、权重及评分信息均保留；未知指标使用字段名回退。
+- 无指标、空任务、失败或丢弃 Case 显示对应提示；丢弃 Case 不展示有效指标。
+  “测试条件、覆盖率与诊断”可进入原有详情，并继续访问完整报告中的请求列表。
+
+Case 分析与下方“任务与指标”的搜索、筛选相互独立。无需额外服务器或外部脚本。
+
+左侧导航覆盖六个模块，支持平滑滚动及当前位置高亮；窄屏折叠为顶部菜单，
+明暗主题共用样式。相邻任务摘要之间自动使用虚线分隔。页面将 `performance`
+显示为“推理性能评测”、`knowledge_accuracy` 显示为“模型能力评测”，
+`online_serving` 显示为“在线服务”；JSON 标识及未知任务名保持原样。
+
+核心性能菜单严格匹配 `streaming_performance.values.request_view` 下的
+`ttft/tpot/itl/e2el`，及 `streaming_performance.values.service_view` 下的
+`request_throughput/output_token_throughput`。不替代为其他来源的同名指标。
+默认 TTFT，缺失时选择第一个可用项；切换 Case 保留仍存在的选择，否则回退。
+其他性能诊断数据继续保留在“任务与指标”及原始详情中。
+
 
 每个 Case 独立展示，不跨场景合并均值。缺失数据标为“未采集”，实际 Token
 长度与输入长度参数分别呈现；失败、丢弃和未完成状态保留，不补算缺失指标。
@@ -590,8 +651,9 @@ luban-meter report --input results/<run>/result.json --include-requests
 
 默认生成同目录的 `report-full.html`，也可使用 `--output` 指定文件名。
 完整报告内嵌原始 Case 文件中保存的请求及样本，可以独立离线转发；请留意其中
-包含原始输入输出。支持编号搜索、异常筛选、耗时排序和每页 50 条记录；点击
-摘要的失败数或最慢请求可定位到列表。长文本、计时和原始字段点击后展开。
+包含原始输入输出。支持编号搜索、异常筛选、耗时排序和每页 50 条记录。
+从 Case 分析进入详情后，“异常请求/样本”或最慢请求可定位到列表。
+长文本、计时和原始字段点击后展开。
 分页不会截断内嵌数据，也不会减少 HTML 文件体积，完整报告导出和打开时需要
 容纳这些数据的内存。无明确大小上限，不静默删减记录。
 
@@ -610,3 +672,15 @@ luban-meter report --input results/<run>/result.json --include-requests
 耗时采用响应中的 `e2el_ms`、`latency_ms` 或 `duration_ms`，不会以调度占位时间
 替代响应耗时。Engine 批次和质量样本的专用事实保留在展开详情中，不伪装成
 单请求客户端 TTFT。
+
+
+HTML Case 分析的离线浏览器回归（使用已安装的 Playwright 和 Edge）：
+
+```bash
+python tests/test_report_analysis.py results/report-display-review/fixture.html
+node tests/report_analysis.browser.cjs <真实报告.html> \
+  results/report-display-review/fixture.html results/report-display-review/screenshots
+```
+
+此真实数据回归针对包含 12 个性能 Case 和 1 个 CMMLU Case 的报告；额外结构和
+异常场景使用明确标注的合成测试数据。只读取保存结果，不调用模型或下载数据。
