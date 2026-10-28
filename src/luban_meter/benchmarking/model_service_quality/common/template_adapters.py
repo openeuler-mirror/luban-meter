@@ -21,8 +21,14 @@ class ChoiceTemplate(InputTemplate):
     requires = {"question": str, "choices": list}
 
     def render(self, record, examples, parameters):
+        version = parameters.get("prompt_version", "choice-v3")
         return {
-            "prompt": render_choice_prompt(record, few_shot_samples=examples)
+            "prompt": render_choice_prompt(
+                record,
+                few_shot_samples=examples,
+                strict_final_answer=not version.endswith("-v1"),
+                answer_only=version.endswith("-v3"),
+            )
         }
 
 
