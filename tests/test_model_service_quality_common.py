@@ -67,7 +67,7 @@ def test_mean_loss_and_perplexity() -> None:
 def test_extract_choice() -> None:
     assert parsers.extract_choice("答案是 B。") == "B"
     assert parsers.extract_choice("B") == "B"
-    assert parsers.extract_choice("选 C") == "C"
+    assert parsers.extract_choice("选 C") is None
     assert parsers.extract_choice("Answer: D") == "D"
     assert parsers.extract_choice("无法确定") is None
     assert parsers.extract_choice("") is None

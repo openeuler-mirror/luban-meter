@@ -5,12 +5,21 @@ from __future__ import annotations
 import re
 import string
 
-_CHOICE_PATTERNS = (
-    re.compile(r"答案是\s*[:：]?\s*([A-D])"),
-    re.compile(r"选\s*[:：]?\s*([A-D])"),
-    re.compile(r"[Aa]nswer\s*(?:is)?\s*[:：]?\s*([A-D])", re.IGNORECASE),
-    re.compile(r"^([A-D])(?![a-zA-Z])"),
-    re.compile(r"(?<![A-Za-z])([A-D])(?![a-z])"),
+_THINK_TAG = re.compile(r"</?think>", re.IGNORECASE)
+_CHOICE_PREFIX = (
+    r"(?:(?:最终答案|正确答案|答案)(?:是)?\s*[:：]?\s*"
+    r"|Answer\s*(?:is\s*)?[:：]?\s*)"
+)
+_CHOICE_LINE = re.compile(
+    _CHOICE_PREFIX + r"([A-D])\s*[。.!！]?",
+    re.IGNORECASE,
+)
+_BOXED_CHOICE = re.compile(r"\\boxed\{\s*([A-D])\s*\}", re.IGNORECASE)
+_BOXED_TOKEN = r"\\boxed\{\s*[A-D]\s*\}"
+_BOXED_DISPLAY = re.compile(
+    r"^[ \t]*(?:\$\$\s*(" + _BOXED_TOKEN + r")\s*\$\$"
+    r"|\\\[\s*(" + _BOXED_TOKEN + r")\s*\\\])[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
 )
 _GSM8K_DELIMITED = re.compile(r"####\s*([-+]?[0-9][0-9,]*(?:\.[0-9]+)?)")
 _NUMBER = re.compile(r"[-+]?[0-9][0-9,]*(?:\.[0-9]+)?")
@@ -21,18 +30,63 @@ _CODE_FENCE = re.compile(
 )
 
 
+def _extract_boxed_choice(line: str) -> str | None:
+    prefix = re.match(_CHOICE_PREFIX, line, re.IGNORECASE)
+    if prefix:
+        line = line[prefix.end():].strip()
+        if line.endswith(("。", ".", "!", "！")):
+            line = line[:-1].rstrip()
+    for opening, closing in (
+        ("$$", "$$"), ("$", "$"), (r"\(", r"\)"), (r"\[", r"\]"),
+    ):
+        if line.startswith(opening) and line.endswith(closing):
+            line = line[len(opening):-len(closing)].strip()
+            break
+    match = _BOXED_CHOICE.fullmatch(line)
+    return match.group(1).upper() if match else None
+
+
 def extract_choice(text: str) -> str | None:
-    """Extract an A-D letter from generated text; None when
-    unparseable.
+    """Parse an unambiguous final answer outside complete think blocks.
+
+    Unclosed/malformed thinking and conflicting answer lines fail closed.
+    Option letters in explanations are never used as a fallback.
     """
-    if not text:
+    parts = []
+    start = 0
+    thinking = False
+    for tag in _THINK_TAG.finditer(text):
+        closing = tag.group().startswith("</")
+        if closing != thinking:
+            return None
+        if not thinking:
+            parts.append(text[start:tag.start()])
+        thinking = not closing
+        start = tag.end()
+    if thinking:
         return None
-    stripped = text.strip()
-    for pattern in _CHOICE_PATTERNS:
-        match = pattern.search(stripped)
+    parts.append(text[start:])
+    answer = "\n".join(parts).strip()
+    answer = _BOXED_DISPLAY.sub(
+        lambda match: match.group(1) or match.group(2), answer
+    )
+    if re.fullmatch(r"[A-D]", answer, re.IGNORECASE):
+        return answer.upper()
+    candidates = set()
+    for line in answer.splitlines():
+        line = line.strip()
+        if len(line) >= 4 and line.startswith("**") and line.endswith("**"):
+            line = line[2:-2].strip()
+        match = _CHOICE_LINE.fullmatch(line) or re.fullmatch(
+            r"([A-D])", line, re.IGNORECASE
+        )
         if match:
-            return match.group(1).upper()
-    return None
+            candidates.add(match.group(1).upper())
+        else:
+            boxed = _extract_boxed_choice(line)
+            if boxed:
+                candidates.add(boxed)
+    return candidates.pop() if len(candidates) == 1 else None
 
 
 def extract_number(text: str) -> float | None:

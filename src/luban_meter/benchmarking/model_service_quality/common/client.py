@@ -94,6 +94,7 @@ class OpenAIClient:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         stop: list[str] | None = None,
+        enable_thinking: bool | None = None,
     ) -> dict[str, Any]:
         """Call /v1/chat/completions; the service applies the chat
         template.
@@ -108,6 +109,10 @@ class OpenAIClient:
             payload["max_tokens"] = max_tokens
         if stop:
             payload["stop"] = stop
+        if enable_thinking is not None:
+            payload["chat_template_kwargs"] = {
+                "enable_thinking": enable_thinking
+            }
         body, elapsed_ms = self._post("/v1/chat/completions", payload)
         choices = body.get("choices") or []
         if not choices or not isinstance(choices[0], dict):

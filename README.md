@@ -159,6 +159,32 @@ luban-meter run --scenario ceval --model served-model \
 ```
 
 选择题支持`gen`和`ppl`；`ppl`要求completions接口支持echo/logprobs。
+CMMLU与C-Eval的默认`gen`模板采用`cmmlu-v3`/`ceval-v3`，要求只输出一行
+`答案：D`，不输出思考、分析或解释；few-shot示例使用相同格式。
+v2模板保留“最终答案单独写在最后一行”的原有指令，便于复现历史Prompt。
+`ppl`保留v1提示词及原有logprob评分方式。原始事实中的`prompt_version`
+记录实际模板版本，新旧模板的效果分数应分别比较。
+
+选择题生成解析先排除完整的`<think>...</think>`块，再匹配独立的A/B/C/D
+或完整答案行，例如`答案：D`、`答案是D`、`最终答案：D`、`Answer: D`。
+完整答案行允许使用成对的Markdown粗体标记，例如`**答案：D**`。
+支持独立的`\boxed{A}`、`答案：\boxed{A}`及其`$...$`、`$$...$$`、
+`\(...\)`、`\[...\]`数学包装；显示数学包装支持换行。boxed内容仅限单个
+A/B/C/D，与普通答案一起检查冲突，不从解释或一般数学表达式中猜选项。
+不会从解释或选项列表中搜索任意字母。思考标签未闭合或结构异常、没有明确答案、
+出现冲突的答案行时，记录`parse_failed`；原始输出不被改写。
+解析失败按错误进入准确率分母，服务失败及未完成样本沿用既有规则。
+选择题默认`stop=[]`，避免思考标签后的换行截断；显式配置的停止符仍生效。
+这不会关闭模型思考或增加输出预算，思考模式需预留足够的输出和上下文长度。
+
+选择题`gen`使用chat接口时，可在任务JSON设置`"enable_thinking": false`，
+或使用CLI的`--no-enable-thinking`，通过请求体
+`chat_template_kwargs.enable_thinking=false`关闭Qwen3思考。默认`null`不发送
+此扩展字段，沿用服务行为；显式`true`请求开启。该扩展要求服务和模型模板支持，
+并非所有OpenAI兼容接口的通用能力；不适用于PPL或completions接口。
+此开关不需要重启vLLM，也不会修改服务的全局默认值。
+用法依据见[Qwen官方vLLM文档](https://qwen.readthedocs.io/en/stable/deployment/vllm.html)。
+
 WikiText使用滑动窗口与Token logprobs。HumanEval只支持每题生成一次和pass@1。
 LCSTS保留中文分词ROUGE，GSM8K保留数值答案抽取，SQuAD保留答案规范化与EM/F1。
 这些处理位于场景的共享模板或领域函数中，数据引擎不会把参考答案和测试代码丢弃。

@@ -188,7 +188,8 @@ class ChoiceBenchmark(QualityBenchmark):
         **FEW_SHOT,
         "max_samples": Parameter(int, 200, minimum=1),
         "output_tokens": Parameter(int, 8, minimum=1, matrix=True),
-        "stop": Parameter(list, ["\n"], item_type=str),
+        "stop": Parameter(list, [], item_type=str),
+        "enable_thinking": Parameter(bool, None),
         "eval_mode": Parameter(str, "gen", choices=("gen", "ppl")),
     }
     domain_module = choice

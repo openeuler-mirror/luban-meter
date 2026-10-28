@@ -12,8 +12,8 @@ from typing import Any
 CHOICE_LETTERS = ("A", "B", "C", "D")
 SUPPORTED_PROMPT_VERSIONS = {
     "squad": ("squad2-gen-v1",),
-    "ceval": ("ceval-v1",),
-    "cmmlu": ("cmmlu-v1",),
+    "ceval": ("ceval-v1", "ceval-v2", "ceval-v3"),
+    "cmmlu": ("cmmlu-v1", "cmmlu-v2", "cmmlu-v3"),
     "gsm8k": ("gsm8k-v1",),
     "humaneval": ("humaneval-completion-v1",),
     "lcsts": ("lcsts-v1",),
@@ -48,12 +48,26 @@ def render_choice_prompt(
     few_shot_samples: Sequence[Mapping[str, Any]] = (),
     instruction_prefix: str = "以下是中国关于",
     instruction_suffix: str = "的单项选择题，请选出其中的正确答案。",
+    strict_final_answer: bool = True,
+    answer_only: bool = True,
 ) -> str:
     """Render instruction + few-shot examples + question, ending with
     答案：.
     """
     subject = str(sample.get("subject") or "综合知识")
     header = f"{instruction_prefix}{subject}{instruction_suffix}\n"
+    if strict_final_answer:
+        if answer_only:
+            header += (
+                "请只输出一行答案，格式为“答案：X”，"
+                "其中X只能是A、B、C、D之一。"
+                "不要输出思考过程、分析、解释或其他文字。\n"
+            )
+        else:
+            header += (
+                "请将最终答案单独写在最后一行，格式为“答案：X”，"
+                "其中X只能是A、B、C、D之一。\n"
+            )
     blocks: list[str] = []
     for example in few_shot_samples:
         blocks.append(
