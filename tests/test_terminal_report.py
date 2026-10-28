@@ -304,8 +304,9 @@ def test_run_default_prints_summary(result, tmp_path, monkeypatch, capsys):
 
 @pytest.mark.parametrize("no_summary", [False, True])
 @pytest.mark.parametrize("mode", ["ok", "malformed"])
+@pytest.mark.parametrize("no_progress", [False, True])
 def test_real_cli_pipeline_preserves_saved_results(
-    tmp_path, monkeypatch, capsys, no_summary, mode,
+    tmp_path, monkeypatch, capsys, no_summary, mode, no_progress,
 ):
     # Real sockets and worker process, synthetic responses (no GPU/model).
     from tests.test_http_connection_pool import PoolServer
@@ -330,6 +331,8 @@ def test_real_cli_pipeline_preserves_saved_results(
         ]
         if no_summary:
             arguments.append("--no-summary")
+        if no_progress:
+            arguments.append("--no-progress")
         assert cli.main(arguments) == (0 if mode == "ok" else 1)
     finally:
         server.release.set()
@@ -337,7 +340,10 @@ def test_real_cli_pipeline_preserves_saved_results(
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out
+    assert ("进度 |" in captured.err) is not no_progress
+    assert "\x1b" not in captured.err
     assert ("终端结果摘要" in output) is not no_summary
     path, = (tmp_path / "runs").glob("*/result.json")
     before = path.read_bytes()
@@ -349,6 +355,7 @@ def test_real_cli_pipeline_preserves_saved_results(
         assert "定位异常:" in output
         assert "--case task_1/case_1" in output
     assert "no_summary" not in case["parameters"]
+    assert "no_progress" not in case["parameters"]
     raw = Path(case["raw"])
     raw_before = raw.read_bytes()
     assert len(json.loads(raw_before)["requests"]) == 3

@@ -39,6 +39,15 @@ class RunCoordinator:
         self.interruptions = 0
         self.stop_file = None
         self.interrupted_at = None
+        self.progress = None
+
+    def _notify(self, kind, **facts):
+        if self.progress is not None:
+            try:
+                self.progress(kind, **facts)
+            except Exception:
+                # Display failures never change execution or result status.
+                self.progress = None
 
     def interrupt(self, signum, frame):
         self.interruptions += 1
@@ -48,9 +57,12 @@ class RunCoordinator:
         if self.interruptions >= 2:
             kill_worker(self.process)
 
-    def run(self, plan, output, *, fail_fast=False, observation=None):
+    def run(
+        self, plan, output, *, fail_fast=False, observation=None, progress=None
+    ):
         self.interruptions = 0
         self.interrupted_at = None
+        self.progress = progress
         run_id = create_run_id("run")
         directory = Path(output).resolve() / run_id
         directory.mkdir(parents=True, exist_ok=False)
@@ -68,6 +80,7 @@ class RunCoordinator:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 handlers[sig] = signal.signal(sig, self.interrupt)
         failed = False
+        self._notify("run_started")
         try:
             for task in plan["tasks"]:
                 if self.interruptions or (failed and fail_fast):
@@ -81,10 +94,14 @@ class RunCoordinator:
                     }
                 else:
                     task_result = self._run_task(task, directory, observation)
+                self._notify("task_finished", task=task, result=task_result)
                 result["tasks"].append(task_result)
                 failed |= task_result["status"] != "success"
                 result["status"] = aggregate_status(result["tasks"])
                 write_json_atomic(directory / "result.json", result)
+        except BaseException:
+            self._notify("aborted")
+            raise
         finally:
             kill_worker(self.process)
             self.process = None
@@ -97,12 +114,14 @@ class RunCoordinator:
         )
         result["finished_at"] = time.time()
         write_json_atomic(directory / "result.json", result)
+        self._notify("run_finished", result=result)
         return result, directory
 
     def _run_task(self, task, run_directory, observation):
         directory = run_directory / "tasks" / task["name"]
         for name in ("raw", "logs", "artifacts"):
             (directory / name).mkdir(parents=True, exist_ok=True)
+        self._notify("task_started", task=task, directory=directory)
         implementation = benchmarks.get(task["scenario"])
         handles = []
         source = directory / ".worker-input.json"
@@ -157,6 +176,7 @@ class RunCoordinator:
                             (directory / "raw").glob("*.prepared.json")
                         ):
                             if prepared not in shown:
+                                self._notify("log")
                                 print(
                                     f"准备完成 {task['name']}/"
                                     f"{prepared.stem}: "
@@ -177,6 +197,7 @@ class RunCoordinator:
                             errors.append("task timeout")
                             kill_worker(self.process)
                             break
+                        self._notify("poll")
                         time.sleep(0.05)
                     if self.process.returncode:
                         errors.append(

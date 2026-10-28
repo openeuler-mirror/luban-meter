@@ -7,32 +7,154 @@
 body.dark{color-scheme:dark;--bg:#111b2b;--panel:#1a293e;--ink:#e6edf7;--muted:#a7b7cc;--line:#35455a;--accent:#6ed6cc}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,sans-serif}main{max-width:1440px;margin:auto;padding:32px}
 header{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}h1{font-size:32px;letter-spacing:-1px;margin:2px 0}h2{font-size:20px;margin:0 0 12px}p{margin:8px 0}.muted{color:var(--muted)}.eyebrow{font-size:12px;letter-spacing:2px;color:var(--accent)}
-.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.card,section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px}.number{font-size:30px;font-weight:650}.toolbar{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:20px}.toolbar{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
 input,select,button{font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}input{min-width:240px;flex:1}button{cursor:pointer}button:hover{border-color:var(--accent)}select{max-width:100%}
 .table-wrap{overflow:auto;max-height:540px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left}th{position:sticky;top:0;background:var(--panel);cursor:pointer}td.metric{min-width:290px;overflow-wrap:anywhere}td.num{font-variant-numeric:tabular-nums}svg{width:100%;min-height:230px;color:var(--muted)}.chart{overflow:auto}.badge{display:inline-block;padding:2px 9px;border-radius:20px;background:var(--bg);border:1px solid var(--line)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}details{border-top:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:600}.empty{padding:36px;color:var(--muted);text-align:center}footer{color:var(--muted);font-size:12px;margin-bottom:20px}
-@media(max-width:700px){main{padding:16px}.cards{grid-template-columns:repeat(2,1fr)}header{align-items:flex-start}h1{font-size:25px}}
+@media(max-width:700px){main{padding:16px}header{align-items:flex-start}h1{font-size:25px}}
 a{color:var(--accent);text-underline-offset:3px}
 a:focus-visible,details:focus-visible{outline:3px solid var(--accent)}
-[id]{scroll-margin-top:16px}.case-summary{padding:14px 0;border-top:1px solid var(--line)}
-h3{margin:4px 0}.metric-links{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
-.metric-links a{padding:6px 10px;border:1px solid var(--line);border-radius:8px}
-</style></head><body><main>
-<header id="overview" tabindex="-1"><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
-<div class="cards" id="cards"></div>
-<section id="summary-section"><h2>结果摘要</h2><p class="muted">每个 Case 单独展示；点击摘要查看详情。缺失值不代表零，失败和丢弃结果需结合诊断阅读。</p><div id="run-context"></div><div id="case-summaries"></div></section>
-<section><h2>任务与指标</h2><p class="muted">客户端、Engine内部与服务端观测分别展示。缺失值不代表零；准确率应结合覆盖率阅读。</p><div class="toolbar"><select id="task"><option value="">全部任务</option></select><select id="case"><option value="">全部Case</option></select><input id="search" placeholder="搜索指标、任务或Case" aria-label="搜索指标"></div><div class="table-wrap"><table><thead><tr><th data-sort="task">任务</th><th data-sort="case">Case</th><th data-sort="metric">指标 ↕</th><th data-sort="value">数值 ↕</th><th>单位</th><th>样本数</th></tr></thead><tbody id="rows"></tbody></table></div><p id="rowCount" class="muted"></p></section>
-<section><h2>同类Case指标比较</h2><select id="metric" aria-label="比较指标"></select><div id="comparison" class="chart"></div><p class="muted">只比较同一类别、同一指标路径和单位；横轴为任务/Case。</p></section>
-<section><h2>附加观测时间线</h2><select id="series" aria-label="观测序列"></select><div id="observation" class="chart"></div><p class="muted">按实际采样时间展示。每Case图表最多使用500个采样点；完整原始记录单独保存。任务详情最多列出20条观测错误，完整信息见原始结果。</p></section>
-<section id="diagnostics"><h2>执行条件、覆盖率与诊断</h2><div id="details"></div></section>
+[id]{scroll-margin-top:16px}.case-summary{border-top:1px solid var(--line)}
+h3{margin:4px 0}
+[hidden]{display:none!important}.summary-task{margin-top:22px}
+.analysis-toolbar{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:16px 0}
+.analysis-toolbar.quality{grid-template-columns:repeat(2,minmax(0,1fr))}
+.analysis-toolbar label{display:flex;flex-direction:column;gap:5px;min-width:0;color:var(--muted);font-size:13px}
+.analysis-toolbar select{width:100%;height:42px;min-width:0;color:var(--ink)}
+.analysis-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,2fr);gap:20px;align-items:start}
+.analysis-grid svg{min-height:200px;min-width:600px}.analysis-group .chart{max-height:540px}.analysis-group svg{min-width:650px}.analysis-group{margin:20px 0}
+.summary-table{white-space:nowrap}.summary-table td,.summary-table th{padding:9px}
+.summary-table th:last-child,.summary-table td:last-child{position:sticky;right:0;background:var(--panel)}
+.summary-table th:last-child{z-index:2}.summary-table td:first-child{font-weight:600}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+th{cursor:default}th button{border:0;padding:0;background:transparent;font-size:inherit;font-weight:600;white-space:nowrap}
+.table-wrap{border:1px solid var(--line);border-radius:8px}thead th{z-index:1}
+tbody tr:hover{background:var(--bg)}.summary-table td:last-child{white-space:nowrap}
+.metric-context{overflow-wrap:anywhere}.metric-context code{font-size:12px}
+.stat-table td:first-child{min-width:140px}.analysis-note{font-size:13px;color:var(--muted)}
+@media(max-width:700px){.analysis-toolbar,.analysis-toolbar.quality,.analysis-grid{grid-template-columns:1fr}.analysis-toolbar{gap:10px}}
+
+.report-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;max-width:1840px;margin:auto;padding:24px;--anchor-offset:24px}
+.report-header{grid-column:1 / -1;grid-row:1;margin-bottom:0}
+main{grid-column:2;grid-row:2;min-width:0;max-width:none;width:100%;padding:0}
+.sidebar{grid-column:1;grid-row:2;position:sticky;top:24px;align-self:start;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;max-height:calc(100vh - 48px);overflow:auto}
+.nav-title{font-weight:650;margin:0 8px 12px}.sidebar nav{display:grid;gap:6px}
+.sidebar a{display:block;padding:10px 12px;border-radius:8px;color:var(--muted);text-decoration:none;border-left:3px solid transparent}
+.sidebar a:hover{background:var(--bg);color:var(--ink)}
+.sidebar a[aria-current="page"]{color:var(--accent);background:var(--bg);border-left-color:var(--accent);font-weight:650}
+#nav-toggle{display:none}.summary-task+.summary-task{border-top:1px dashed var(--line);margin-top:24px;padding-top:20px}
+.summary-category+.summary-category{border-top:1px dashed var(--line);margin-top:28px;padding-top:24px}
+.summary-task-title{font-size:16px;margin:0 0 10px}.diagnostic-category>details{margin-left:20px}
+main>section{margin-bottom:28px}main>section>h2{padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:16px}
+[id]{scroll-margin-top:var(--anchor-offset,16px)}
+@media(max-width:1000px){
+  .report-layout{display:block;padding:16px;--anchor-offset:80px}.report-header{margin-bottom:20px}.sidebar{top:0;z-index:10;padding:8px;margin-bottom:20px;max-height:80vh}
+  .nav-title{display:none}#nav-toggle{display:block;width:100%;text-align:left}
+  .sidebar nav{display:none;margin-top:8px}.sidebar.open nav{display:grid}
+  :root{--anchor-offset:80px}
+}
+
+.task-heading{--task-color:var(--muted);display:flex;align-items:center;flex-wrap:wrap;gap:10px;border-left:4px solid var(--task-color);padding:3px 0 3px 12px;margin-bottom:12px}
+.task-heading.task-performance{--task-color:#177b84}
+.task-heading.task-quality{--task-color:#6653a3}
+body.dark .task-heading.task-performance{--task-color:#6ed6cc}
+body.dark .task-heading.task-quality{--task-color:#b9a7ed}
+th button{display:inline-flex;align-items:center;gap:6px;text-align:inherit}
+th.num button .sort-arrow{order:-1}.sort-arrow{font-weight:400;color:var(--muted)}
+.evaluation-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:20px}
+.evaluation-tabs [aria-selected=true]{color:var(--accent);border-color:var(--accent);background:var(--bg);font-weight:650}
+.evaluation-tabs button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.overview-context{overflow-wrap:anywhere}.overview-picker{display:flex;flex-direction:column;gap:6px;margin:16px 0;color:var(--muted)}
+.overview-picker select{width:100%;color:var(--ink)}
+.peak{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:20px;background:var(--bg)}
+.peak-value{font-size:28px;font-weight:650;line-height:1.3;color:var(--ink);overflow-wrap:anywhere}
+.peak-value small{font-size:13px;font-weight:500}.peak-heading{font-size:16px;font-weight:650}
+.overview-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:18px}
+.overview-metric{min-width:0;overflow-wrap:anywhere}.overview-value{font-size:20px;font-weight:650;line-height:1.4}
+.overview-unit{font-size:12px;color:var(--muted)}.trend-text{font-size:18px;margin:20px 0 10px}
+.trend-chart{overflow:auto}.trend-chart svg{display:block;min-width:650px;min-height:230px}.overview-quality{margin:20px 0}.overview-quality h4{margin:12px 0}
+.overview-quality .overview-metrics{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin:12px 0}
+.overview-quality details{margin-top:16px}.overview-link{margin:18px 0 0}.overview-notice{color:var(--muted);font-size:13px}
+@media(max-width:700px){.overview-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.peak{padding:16px}}
+.run-counts{font-size:13px;color:var(--muted);margin:0 0 16px}
+.overview-models{display:grid;gap:10px;margin-bottom:20px}
+.overview-model{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px;margin:0;padding:12px 16px;border:1px solid var(--line);border-radius:8px}
+.overview-model dt{font-size:12px;color:var(--muted)}.overview-model dd{margin:0;font-size:16px;font-weight:600;overflow-wrap:anywhere}
+@media(max-width:700px){.overview-model{grid-template-columns:1fr}}
+.overview-result-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:20px;align-items:start;margin-bottom:24px}
+.overview-result-column{min-width:0;border:1px solid var(--line);border-radius:10px;padding:16px}
+.overview-result-column>h3{margin:0 0 12px}.overview-result-column .overview-picker{margin:12px 0}
+#overview-quality-cards{grid-template-columns:1fr}#evaluation-summary{border-top:1px solid var(--line);margin-top:24px;padding-top:20px}
+@media(max-width:1100px){.overview-result-grid{grid-template-columns:1fr}}
+.summary-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0 24px}
+.summary-card{--card-accent:#5fd4ed;--ring-track:#2a3a50;display:flex;align-items:center;gap:16px;min-width:0;padding:18px;background:#142236;color:#e8f0fa;border:1px solid #2b3b50;border-radius:10px;text-decoration:none}
+.summary-card[data-tone=green]{--card-accent:#72dba4}.summary-card[data-tone=purple]{--card-accent:#b8a1fa}.summary-card[data-tone=yellow]{--card-accent:#e7cb7c}
+.summary-card:hover{border-color:var(--card-accent);background:#192a40;color:#fff}.summary-card:focus-visible{outline:3px solid var(--card-accent);outline-offset:3px}
+.summary-ring{width:76px;height:76px;flex:0 0 76px}.summary-ring svg{width:100%;height:100%;min-height:0;display:block}
+.summary-card-body{min-width:0;overflow-wrap:anywhere}.summary-card-title{font-size:11px;letter-spacing:.9px;line-height:1.4;text-transform:uppercase;color:#aebed1}
+.summary-card-main{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin:5px 0}
+.summary-card-value{font-size:26px;font-weight:650;line-height:1.12;font-variant-numeric:tabular-nums;letter-spacing:-.7px;color:#f3f7fc}
+.summary-cards[data-view=best] .summary-card[data-available=true] .summary-card-value{font-size:48px;font-weight:700;color:var(--card-accent)}
+.summary-card-unit{font-size:12px;color:var(--card-accent)}.summary-card-description{font-size:12px;color:#b3c4d7;line-height:1.4}
+.summary-card-source{font-size:11px;color:#8fa5bf;margin-top:4px;line-height:1.4}
+.summary-card[data-available=false]{--card-accent:#8193ab}.summary-card[data-available=false] .summary-card-value{font-size:22px;color:#aebed1}
+#overview-scope .overview-picker{margin:10px 0}.summary-scope-note{margin:0;font-size:12px;color:var(--muted)}
+@media(max-width:1200px){.summary-card{gap:12px;padding:16px}.summary-ring{width:60px;height:60px;flex-basis:60px}.summary-card-value{font-size:24px}.summary-cards[data-view=best] .summary-card[data-available=true] .summary-card-value{font-size:40px}}
+@media(max-width:560px){.summary-cards{grid-template-columns:1fr}.summary-card{gap:16px}.summary-ring{width:68px;height:68px;flex-basis:68px}.summary-card-value{font-size:26px}.summary-cards[data-view=best] .summary-card[data-available=true] .summary-card-value{font-size:36px}}
+</style></head><body class="dark"><div class="report-layout">
+<header class="report-header"><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
+<aside class="sidebar" aria-label="报告导航">
+<p class="nav-title">报告导航</p><button id="nav-toggle" aria-expanded="false" aria-controls="report-nav">报告导航 ▾</button>
+<nav id="report-nav" aria-label="报告模块">
+<a href="#overview" aria-current="page">报告总览</a>
+<a href="#summary-section">结果摘要</a>
+<a href="#case-analysis">Case 分析</a>
+<a href="#task-metrics">全部指标</a>
+<a href="#observation-section">资源观测</a>
+<a href="#diagnostics">运行诊断</a>
+</nav></aside><main>
+<section id="overview" class="report-page" tabindex="-1"><h2>报告总览</h2>
+<p id="run-counts" class="run-counts"></p>
+<div id="overview-models" class="overview-models" aria-label="本次评测模型"></div>
+<div class="overview-result-grid"><div class="overview-result-column"><h3 id="overview-performance-heading">最佳性能指标</h3>
+<div id="overview-scope"></div><div class="summary-cards" id="cards" aria-label="关键结果摘要"></div></div>
+<div id="overview-quality-best" class="overview-result-column"></div></div>
+<div id="evaluation-summary">
+<div class="evaluation-tabs" role="tablist" aria-label="评测总结类型">
+<button id="performance-summary-tab" type="button" role="tab" aria-selected="true" aria-controls="performance-summary-panel">推理性能</button>
+<button id="quality-summary-tab" type="button" role="tab" aria-selected="false" aria-controls="quality-summary-panel" tabindex="-1">模型能力</button>
+</div>
+<div id="performance-summary-panel" role="tabpanel" aria-labelledby="performance-summary-tab" tabindex="-1"><div id="performance-overview"></div></div>
+<div id="quality-summary-panel" role="tabpanel" aria-labelledby="quality-summary-tab" tabindex="-1" hidden><div id="quality-overview"></div></div>
+</div>
+<p class="overview-link"><a href="#summary-section">查看各 Case 结果摘要 →</a></p></section>
+<section id="summary-section" class="report-page" tabindex="-1" hidden><h2>结果摘要</h2><p class="muted">按任务分组，每行一个 Case。点击“分析”查看完整指标；未采集不代表零。</p><div id="run-context"></div><div id="case-summaries"></div></section>
+
+<section id="case-analysis" class="report-page" tabindex="-1" hidden><h2>Case 分析</h2>
+<div class="analysis-toolbar" id="analysis-toolbar">
+<label for="analysis-task">选择任务<select id="analysis-task"></select></label>
+<label for="analysis-case">选择 Case<select id="analysis-case"></select></label>
+<label for="analysis-metric" id="analysis-metric-field">选择性能指标<select id="analysis-metric"></select></label>
+</div><div id="analysis-context"></div><div id="analysis-content" aria-live="polite"></div></section>
+<section id="task-metrics" class="report-page" tabindex="-1" hidden><h2>全部指标</h2><p class="muted">客户端、Engine内部与服务端观测分别展示。缺失值不代表零；准确率应结合覆盖率阅读。</p><div class="toolbar"><select id="task"><option value="">全部任务</option></select><select id="case"><option value="">全部Case</option></select><input id="search" placeholder="搜索指标、任务或Case" aria-label="搜索指标"></div><div class="table-wrap"><table><thead><tr><th data-sort="task">任务</th><th data-sort="case">Case</th><th data-sort="metric">指标 ↕</th><th class="num" data-sort="value"><span aria-hidden="true">↕ </span>数值</th><th>单位</th><th class="num">样本数</th></tr></thead><tbody id="rows"></tbody></table></div><p id="rowCount" class="muted"></p></section>
+<section id="observation-section" class="report-page" tabindex="-1" hidden><h2>资源观测</h2><select id="series" aria-label="观测序列"></select><div id="observation" class="chart"></div><p class="muted">展示已采集的设备与服务端观测，按实际采样时间排列。每Case图表最多使用500个采样点；完整原始记录单独保存。任务详情最多列出20条观测错误，完整信息见原始结果。</p></section>
+<section id="diagnostics" class="report-page" tabindex="-1" hidden><h2>运行诊断</h2><p class="muted">查看各任务的测试条件、覆盖率、错误与原始结果；完整报告还可查看请求详情。</p><div id="details"></div></section>
 <footer>离线单文件报告 · 无外部脚本或网络依赖 · 可从保存的新结果重新导出</footer>
-</main><script type="application/json" id="report-data">__REPORT_DATA__</script><script>
+</main></div><script type="application/json" id="report-data">__REPORT_DATA__</script><script>
 'use strict';
 const D=JSON.parse(document.getElementById('report-data').textContent),R=D.result;
 const tasks=R.kind==='run'?R.tasks:[R];const $=id=>document.getElementById(id);
 const names={success:'成功',partial_failed:'部分失败',failed:'失败',interrupted:'已中断',skipped:'未执行',discarded:'已丢弃（采集未完成）'};
 const fmt=v=>v==null?'—':typeof v==='number'?Number(v.toPrecision(7)).toLocaleString('zh-CN',{maximumFractionDigits:7}):String(v);
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
-$('subtitle').textContent=(R.id||R.name)+' · '+(names[R.status]||R.status);
+function taskDisplayName(name) {
+  const labels={performance:'推理性能评测',knowledge_accuracy:'模型能力评测'};
+  return Object.hasOwn(labels,name)?labels[name]:name;
+}
+function scenarioDisplayName(name) {
+  const labels={online_serving:'在线服务',cmmlu:'CMMLU',ceval:'C-Eval',gsm8k:'GSM8K',humaneval:'HumanEval'};
+  return Object.hasOwn(labels,name)?labels[name]:name;
+}
+$('subtitle').textContent=(R.id||taskDisplayName(R.name))+' · '+(names[R.status]||R.status);
 const cases=tasks.flatMap(t=>t.cases||[]);
 function totalCoverage(key) {
   if (!cases.length || cases.some(c =>
@@ -40,23 +162,25 @@ function totalCoverage(key) {
   return cases.reduce((n,c) => n+c.coverage[key],0);
 }
 const complete=totalCoverage('complete');
-for(const [label,value] of [['任务数',tasks.length],['Case数',cases.length],
-  ['完成样本',complete],['失败样本',totalCoverage('failed')]]) {
-  const c=el('div',undefined,'card');
-  c.append(el('div',label,'muted'),el('div',value==null?'未采集':fmt(value),'number'));
-  c.append(link('查看详情','summary-section'));
-  $('cards').append(c);
-}
+$('run-counts').textContent=[['任务数',tasks.length],['Case数',cases.length],
+  ['成功Case数',cases.filter(c=>c.status==='success').length],
+  ['完成样本',complete],['失败样本',totalCoverage('failed')]]
+  .map(([label,value])=>label+' '+(value==null?'未采集':fmt(value))).join(' · ');
 function option(parent,value,text){const o=el('option',text);o.value=value;parent.append(o)}
-for(const t of tasks)option($('task'),t.name,t.name+' · '+(names[t.status]||t.status));
-for(const c of [...new Set(cases.map(c=>c.id))])option($('case'),c,c);
+for(const [ti,t] of tasks.entries())option($('task'),String(ti),taskDisplayName(t.name)+' · '+(names[t.status]||t.status));
+function updateRowCases(){
+  const prior=$('case').value;
+  $('case').replaceChildren();option($('case'),'','全部Case');
+  tasks.forEach((t,ti)=>{if($('task').value && $('task').value!==String(ti))return;
+    t.cases.forEach((c,ci)=>option($('case'),ti+':'+ci,taskDisplayName(t.name)+' / '+c.id));});
+  if([...$('case').options].some(o=>o.value===prior))$('case').value=prior;
+}
 let sort='metric',ascending=true;
-function visibleRows(){const q=$('search').value.toLowerCase();return D.rows.filter(r=>(!$('task').value||r.task===$('task').value)&&(!$('case').value||r.case===$('case').value)&&[r.metric,r.task,r.case].join(' ').toLowerCase().includes(q))}
-function render(){let rows=visibleRows();rows.sort((a,b)=>{const x=a[sort],y=b[sort];return(typeof x==='number'&&typeof y==='number'?x-y:String(x??'').localeCompare(String(y??'')))*(ascending?1:-1)});$('rows').replaceChildren();for(const r of rows){const tr=el('tr');for(const key of ['task','case','metric','value','unit','count'])tr.append(el('td',fmt(r[key]),key==='metric'?'metric':'num'));$('rows').append(tr)}$('rowCount').textContent=rows.length+'项指标';const prior=$('metric').value;$('metric').replaceChildren();for(const key of [...new Set(rows.map(r=>JSON.stringify([r.category,r.metric,r.unit])))])option($('metric'),key,JSON.parse(key).join(' · '));if([...$('metric').options].some(o=>o.value===prior))$('metric').value=prior;comparison()}
+function visibleRows(){const q=$('search').value.toLowerCase();return D.rows.filter(r=>(!$('task').value||String(r.task_index)===$('task').value)&&(!$('case').value||r.task_index+':'+r.case_index===$('case').value)&&[r.metric,r.task,taskDisplayName(r.task),r.case].join(' ').toLowerCase().includes(q))}
+function render(){let rows=visibleRows();rows.sort((a,b)=>{const x=a[sort],y=b[sort];return(typeof x==='number'&&typeof y==='number'?x-y:String(x??'').localeCompare(String(y??'')))*(ascending?1:-1)});$('rows').replaceChildren();for(const r of rows){const tr=el('tr');for(const key of ['task','case','metric','value','unit','count'])tr.append(el('td',fmt(key==='task'?taskDisplayName(r.task):r[key]),key==='metric'?'metric':['value','count'].includes(key)?'num':''));$('rows').append(tr)}$('rowCount').textContent=rows.length+'项指标'}
 function svgElement(tag,attrs){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);return n}
 function chart(id,points,line=false){const box=$(id);box.replaceChildren();points=points.filter(p=>typeof p.value==='number'&&Number.isFinite(p.value));if(!points.length){box.append(el('div','没有可展示的数据','empty'));return}const width=Math.max(700,line?700:points.length*80),height=300,pad=50,values=points.map(p=>p.value),lo=Math.min(0,...values),hi=Math.max(1,...values),scale=v=>height-pad-(v-lo)/(hi-lo)*(height-pad*2);const svg=svgElement('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':line?'观测时间线':'Case指标比较'});const minTime=points[0].time,maxTime=points.at(-1).time;const x=(p,i)=>line?pad+(p.time-minTime)/Math.max(1e-9,maxTime-minTime)*(width-pad*2):pad+(i+.5)*(width-pad*2)/points.length;for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=scale(v);svg.append(svgElement('line',{x1:pad,y1:y,x2:width-pad,y2:y,stroke:'var(--line)'}));const text=svgElement('text',{x:4,y:y+4,fill:'currentColor','font-size':11});text.textContent=fmt(v);svg.append(text)}if(line)svg.append(svgElement('polyline',{points:points.map((p,i)=>`${x(p,i)},${scale(p.value)}`).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':2}));points.forEach((p,i)=>{const px=x(p,i),y=scale(p.value);const mark=line?svgElement('circle',{cx:px,cy:y,r:3,fill:'var(--accent)'}):svgElement('rect',{x:px-15,y:Math.min(y,scale(0)),width:30,height:Math.max(1,Math.abs(scale(0)-y)),rx:3,fill:'var(--accent)'});const title=svgElement('title',{});title.textContent=p.label+': '+fmt(p.value);mark.append(title);svg.append(mark);if(!line||i===0||i===points.length-1){const t=svgElement('text',{x:px,y:height-12,'text-anchor':'middle',fill:'currentColor','font-size':10});t.textContent=p.label;svg.append(t)}});box.append(svg)}
-function comparison(){const key=$('metric').value;chart('comparison',visibleRows().filter(r=>JSON.stringify([r.category,r.metric,r.unit])===key).map(r=>({value:r.value,label:r.task+'/'+r.case})))}
-const series=new Map();for(const s of D.observations){const k=[s.task,s.case,s.metric,JSON.stringify(s.labels)].join(' · ');if(!series.has(k))series.set(k,[]);series.get(k).push({value:s.value,time:s.time,label:new Date(s.time*1000).toLocaleTimeString()})}for(const key of series.keys())option($('series'),key,key);function observation(){chart('observation',series.get($('series').value)||[],true)}
+const series=new Map(),seriesLabels=new Map();for(const s of D.observations){const k=[s.task,s.case,s.metric,JSON.stringify(s.labels)].join(' · ');seriesLabels.set(k,[taskDisplayName(s.task),s.case,s.metric,JSON.stringify(s.labels)].join(' · '));if(!series.has(k))series.set(k,[]);series.get(k).push({value:s.value,time:s.time,label:new Date(s.time*1000).toLocaleTimeString()})}for(const key of series.keys())option($('series'),key,seriesLabels.get(key));function observation(){chart('observation',series.get($('series').value)||[],true)}
 // Stable positional anchors do not depend on user-supplied task names.
 function link(text, target) {
   const a = el('a', text);
@@ -64,18 +188,30 @@ function link(text, target) {
   return a;
 }
 function showTarget() {
-  const target = $(ensureRequestTarget(location.hash.slice(1)));
-  if (!target) return;
+  const target = $(ensureAnalysisTarget(ensureRequestTarget(location.hash.slice(1)))) || $('overview');
+  const page = target.closest('.report-page') || $('overview');
+  document.querySelectorAll('.report-page').forEach(n => {n.hidden = n !== page;});
+  const panel = target.closest('[role="tabpanel"]');
+  if (panel) selectEvaluationTab(panel.id);
+  else if (page.id === 'overview' && history.state?.evaluationTab)
+    selectEvaluationTab(history.state.evaluationTab);
+  $('report-nav').querySelectorAll('a').forEach(a => {
+    if (a.hash === '#' + page.id) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+  document.title = page.querySelector('h2').textContent + ' · LuBan-Meter评测报告';
   for (let parent = target; parent; parent = parent.parentElement) {
     if (parent.tagName === 'DETAILS') parent.open = true;
   }
-  target.scrollIntoView({block: 'start'});
+  if (!location.hash) return;
+  (target.getAttribute('role') === 'tabpanel' ? document.querySelector('.evaluation-tabs') : target)
+    .scrollIntoView({block: 'start'});
   target.focus({preventScroll: true});
 }
 window.addEventListener('hashchange', showTarget);
 document.addEventListener('click', event => {
   const anchor = event.target.closest('a[href^="#"]');
-  if (anchor && anchor.hash === location.hash) {
+  if (anchor && anchor.getAttribute('href') === location.hash) {
     event.preventDefault();
     showTarget();
   }
@@ -87,7 +223,7 @@ function block(parent, id, title, value) {
   d.append(el('summary', title));
   d.append(el('pre', value == null ? '未采集' :
     JSON.stringify(value, null, 2)));
-  d.append(link('返回摘要', 'overview'));
+  d.append(link('返回摘要', 'summary-section'));
   parent.append(d);
   return d;
 }
@@ -99,37 +235,32 @@ const stamp = value => typeof value === 'number' ?
 $('run-context').append(el('p', '运行时间：' + stamp(R.started_at) +
   ' → ' + stamp(R.finished_at ?? R.ended_at), 'muted'));
 if (R.errors?.length) block($('run-context'), 'run-errors', '整轮诊断', R.errors);
-function metricLabel(path) {
-  const labels = {ttft:'首 Token 延迟（均值）', e2el:'完整耗时（均值）',
-    itl:'Token 间延迟（均值）', tpot:'每输出 Token 耗时（均值）',
-    input_tokens:'实际输入 Token（均值）', output_tokens:'实际输出 Token（均值）',
-    request_throughput:'请求吞吐量', output_token_throughput:'输出 Token 吞吐量',
-    accuracy:'准确率', exact_match:'精确匹配', f1:'F1', token_f1:'Token F1',
-    rouge1:'ROUGE-1', rouge2:'ROUGE-2', rougeL:'ROUGE-L',
-    pass_at_1:'Pass@1', perplexity:'困惑度',
-    internal_ttft:'Engine 首 Token 延迟（均值）',
-    engine_execution_latency:'Engine 执行耗时（均值）',
-    aggregate_decode_token_throughput:'Engine 解码吞吐量（均值）'};
-  const parts = path.split('/');
-  const key = parts.at(-1) === 'mean' ? parts.at(-2) : parts.at(-1);
-  return labels[key] || key;
-}
-const important = /\/(ttft|e2el|itl|tpot|input_tokens|output_tokens|internal_ttft|engine_execution_latency|aggregate_decode_token_throughput)\/mean$|\/service_view\/(request_throughput|output_token_throughput)$|\/(accuracy|exact_match|token_f1|f1|rouge1|rouge2|rougeL|pass_at_1|perplexity)$/;
 __REQUEST_SCRIPT__
+__CASE_SCRIPT__
+__SUMMARY_SCRIPT__
+__OVERVIEW_SCRIPT__
 if (D.request_details) $('run-context').append(el('p',
   '完整详情报告：包含已保存的原始输入输出。缺失记录将明确标注；' +
   '分页不减少文件体积。', 'muted'));
+const diagnosticParents = new Map();
+for (const category of reportTaskGroups(tasks)) {
+  const group = el('details',undefined,'diagnostic-category');
+  group.id = 'diagnostic-category-' + category.category;
+  group.tabIndex = -1;
+  group.append(el('summary',category.title));$('details').append(group);
+  category.tasks.forEach(({ti})=>diagnosticParents.set(ti,group));
+}
 tasks.forEach((task, ti) => {
   const section = el('details');
   section.id = 'task-' + ti;
   section.tabIndex = -1;
-  section.append(el('summary', task.name + ' · ' +
-    recorded(task.scenario) + ' · ' + (names[task.status] || task.status)));
+  section.append(el('summary', taskSectionTitle(task) + ' · ' +
+    (names[task.status] || task.status)));
   if (task.errors?.length || task.error) block(section, 'task-errors-' + ti,
     '任务诊断', task.errors?.length ? task.errors : task.error);
   if (!task.cases.length) {
     const notice = el('p');
-    notice.append(link(task.name + '：没有 Case，查看任务详情', section.id));
+    notice.append(link(taskDisplayName(task.name) + '：没有 Case，查看任务详情', section.id));
     $('case-summaries').append(notice);
   }
   task.cases.forEach((c, ci) => {
@@ -139,59 +270,16 @@ tasks.forEach((task, ti) => {
     detail.tabIndex = -1;
     detail.append(el('summary', c.id + ' · ' +
       (names[c.status] || c.status)));
-    const p = c.parameters || {}, coverage = c.coverage || {};
+    const p = c.parameters || {};
     const requestData = D.request_details?.[ti]?.[ci];
-    const summary = el('article', undefined, 'case-summary');
-    const title = el('h3');
-    title.append(link(task.name + ' / ' + c.id + ' · ' +
-      (names[c.status] || c.status), id));
-    summary.append(title);
-    const conditions = el('p');
-    conditions.append(link([
-      '场景：' + recorded(task.scenario),
-      '模型：' + recorded(p.model), '数据：' + recorded(p.data),
-      '策略：' + recorded(p.profile),
-      '并发上限：' + recorded(p.max_concurrency),
-      '输入长度参数/输出上限 Token：' + recorded(p.input_tokens) +
-      ' / ' + recorded(p.output_tokens)
-    ].join(' · '), id + '-conditions'));
-    summary.append(conditions);
-    const counts = el('p');
-    ['complete', 'failed', 'incomplete', 'not_started'].forEach((key, i) => {
-      if (i) counts.append(document.createTextNode(' · '));
-      counts.append(link(['完成', '失败', '未完成', '未开始'][i] +
-        '：' + recorded(coverage[key]),
-        id + (key === 'failed' ?
-          (requestData?.status === 'available' ? '-requests-failed' : '-errors') :
-          '-coverage')));
-    });
-    summary.append(counts);
-    const metrics = el('div', undefined, 'metric-links');
-    const rows = c.status === 'discarded' ? [] : D.rows.filter(r =>
-      r.task_index === ti && r.case_index === ci && important.test(r.metric));
     const caseRows = D.rows.filter(r =>
       r.task_index === ti && r.case_index === ci);
-    for (const row of rows) {
-      metrics.append(link(metricLabel(row.metric) +
-        '：' + recorded(row.value) + ' ' + row.unit,
-        id + '-metric-' + caseRows.indexOf(row)));
-    }
-    if (!rows.length) metrics.append(link(
-      c.status === 'discarded' ? '已丢弃，不展示有效指标' :
-        '查看指标详情（无可用核心摘要）', id + '-metrics'));
-    summary.append(metrics);
     const metricErrors = Object.fromEntries(Object.entries(c.metrics || {})
       .filter(([, v]) => v.error || v.status === 'failed'));
     const diagnostics = {reason: c.reason, error: c.error,
       cleanup_error: c.cleanup_error, metric_errors: metricErrors,
       observation: c.observation, device_observation: c.device_observation};
-    if (c.status !== 'success' || c.error || c.cleanup_error ||
-        c.observation?.error || c.device_observation?.error ||
-        Object.keys(metricErrors).length) {
-      summary.append(link('查看异常与诊断', id + '-errors'));
-    }
-    $('case-summaries').append(summary);
-    if (requestData) requestPanel(detail, summary, id, requestData);
+    if (requestData) requestPanel(detail, detail, id, requestData);
     block(detail, id + '-conditions', '测试条件与完整配置', p);
     block(detail, id + '-coverage', '覆盖率与执行窗口', {
       coverage: c.coverage, window: c.window,
@@ -231,8 +319,12 @@ tasks.forEach((task, ti) => {
     block(detail, id + '-raw', '原始结果位置（需在原运行环境访问）', c.raw);
     section.append(detail);
   });
-  $('details').append(section);
+  diagnosticParents.get(ti).append(section);
 });
+renderSummaries();
+initAnalysis();
+renderOverview();
+initReportNavigation();
 showTarget();
-$('theme').onclick=()=>document.body.classList.toggle('dark');for(const id of ['task','case','search'])$(id).addEventListener('input',render);$('metric').onchange=comparison;$('series').onchange=observation;document.querySelectorAll('[data-sort]').forEach(n=>n.onclick=()=>{ascending=sort===n.dataset.sort?!ascending:true;sort=n.dataset.sort;render()});render();observation();
+$('theme').onclick=()=>document.body.classList.toggle('dark');for(const id of ['task','case','search'])$(id).addEventListener('input',render);$('task').addEventListener('input',()=>{updateRowCases();render()});updateRowCases();$('series').onchange=observation;document.querySelectorAll('[data-sort]').forEach(n=>n.onclick=()=>{ascending=sort===n.dataset.sort?!ascending:true;sort=n.dataset.sort;render()});render();observation();
 </script></body></html>

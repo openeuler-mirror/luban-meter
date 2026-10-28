@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const {chromium} = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({headless: true, channel: 'msedge'});
+  const browser = await chromium.launch({headless: true,
+    channel: process.env.LUBAN_BROWSER_CHANNEL || 'msedge'});
   try {
     const page = await browser.newPage({viewport: {width: 1280, height: 900}});
     const errors = [];
@@ -14,6 +15,9 @@ const {chromium} = require('playwright');
     page.on('dialog', () => {throw Error('Untrusted content executed');});
     await page.route('**/*', route => route.abort());
     await page.setContent(fs.readFileSync(process.argv[2], 'utf8'));
+    await page.locator('#report-nav a[href="#summary-section"]').click();
+    await page.locator('#summary-0-0').getByRole('link', {name: '分析', exact: true}).click();
+    await page.locator('#analysis-context').getByRole('link', {name: '测试条件、覆盖率与诊断'}).click();
     const panel = page.locator('#case-0-0-requests');
     assert.equal(await panel.locator('tbody tr').count(), 0);
     await page.getByRole('link', {name: '查看请求列表', exact: true}).click();
@@ -34,7 +38,7 @@ const {chromium} = require('playwright');
     await panel.getByText('请求输出正文（未采集时不会补造）', {exact: true}).click();
     await panel.locator('pre').first().waitFor({state: 'visible'});
     assert.match(await panel.innerText(), /<script>alert\(1\)<\/script>/);
-    await page.getByRole('link', {name: '失败：12', exact: true}).click();
+    await page.getByRole('link', {name: '异常请求/样本', exact: true}).click();
     await page.waitForFunction(() =>
       document.activeElement.id === 'case-0-0-requests');
     assert.match(await panel.innerText(), /13 条记录/);
@@ -49,6 +53,9 @@ const {chromium} = require('playwright');
     await page.waitForFunction(() =>
       document.activeElement.id === 'case-0-0-request-119');
     assert.equal(await search.inputValue(), '');
+    await page.locator('#report-nav a[href="#summary-section"]').click();
+    await page.locator('#summary-0-1').getByRole('link', {name: '分析', exact: true}).click();
+    await page.locator('#analysis-context').getByRole('link', {name: '测试条件、覆盖率与诊断'}).click();
     await page.getByRole('link', {name: '请求详情不可用（查看原因）'}).click();
     await page.waitForFunction(() =>
       document.querySelector('#case-0-1-requests').open);

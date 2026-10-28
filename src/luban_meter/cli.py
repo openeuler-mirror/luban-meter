@@ -15,6 +15,7 @@ from luban_meter.core.planning import build_plan, cli_schema, public_plan
 from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.reporting.data import load_result
 from luban_meter.reporting.html import write_html
+from luban_meter.reporting.progress import TerminalProgress
 from luban_meter.reporting.terminal import render_text
 from luban_meter.reporting.terminal_details import (
     DEFAULT_LIMIT,
@@ -42,6 +43,10 @@ def _build_parser():
             run.add_argument(
                 "--no-summary", action="store_true",
                 help="关闭运行结束后的终端结果摘要",
+            )
+            run.add_argument(
+                "--no-progress", action="store_true",
+                help="关闭运行中的终端进度显示（不影响结束后的摘要）",
             )
         run.add_argument("--observe", choices=("prometheus",))
         run.add_argument("--observe-url")
@@ -200,6 +205,7 @@ def main(argv=None):
             args.result_dir,
             fail_fast=args.fail_fast,
             observation=observation,
+            progress=None if args.no_progress else TerminalProgress(plan),
         )
         report_path = write_html(result, directory / "report.html")
         print(f"{result['status']} | {directory / 'result.json'}")
