@@ -10,6 +10,11 @@ from typing import Any
 import httpx
 
 from luban_meter.runtime.http_client import create_http_client
+from luban_meter.runtime.thinking import (
+    reasoning_text,
+    reasoning_token_count,
+    thinking_payload,
+)
 
 
 class ServiceError(RuntimeError):
@@ -29,8 +34,13 @@ class OpenAIClient:
         *,
         max_connections: int = 100,
         keepalive_expiry: float = 5.0,
+        enable_thinking: bool | None = None,
+        thinking_protocol: str = "chat_template",
     ) -> None:
         self.service_url = service_url.rstrip("/")
+        thinking_payload(enable_thinking, thinking_protocol)
+        self.enable_thinking = enable_thinking
+        self.thinking_protocol = thinking_protocol
         self.served_model_name = served_model_name
         self.api_key = api_key
         self.timeout = timeout
@@ -95,6 +105,7 @@ class OpenAIClient:
         max_tokens: int | None = None,
         stop: list[str] | None = None,
         enable_thinking: bool | None = None,
+        thinking_protocol: str | None = None,
     ) -> dict[str, Any]:
         """Call /v1/chat/completions; the service applies the chat
         template.
@@ -109,17 +120,30 @@ class OpenAIClient:
             payload["max_tokens"] = max_tokens
         if stop:
             payload["stop"] = stop
+        enabled = self.enable_thinking
         if enable_thinking is not None:
-            payload["chat_template_kwargs"] = {
-                "enable_thinking": enable_thinking
-            }
+            enabled = enable_thinking
+        payload.update(thinking_payload(
+            enabled,
+            thinking_protocol or self.thinking_protocol,
+        ))
         body, elapsed_ms = self._post("/v1/chat/completions", payload)
         choices = body.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             raise ServiceError("chat completion returned no choices")
         message = choices[0].get("message") or {}
         usage = body.get("usage") or {}
+        try:
+            thought = reasoning_text(message)
+            thought_tokens = reasoning_token_count(usage)
+        except ValueError as exc:
+            raise ServiceError(str(exc)) from exc
         return {
+            "reasoning_text": thought,
+            "reasoning_tokens": thought_tokens,
+            "has_content": bool(message.get("content")),
+            "finish_reason": choices[0].get("finish_reason"),
+            "usage": usage,
             "text": message.get("content") or "",
             "input_tokens": usage.get("prompt_tokens"),
             "output_tokens": usage.get("completion_tokens"),

@@ -22,6 +22,12 @@ HTTP = {
     ),
     "temperature": Parameter(float, 0.0, choices=(0.0,)),
 }
+THINKING = {
+    "enable_thinking": Parameter(bool, None),
+    "thinking_protocol": Parameter(
+        str, "chat_template", choices=("chat_template", "deepseek"),
+    ),
+}
 DATA = {
     "data": Parameter(str, "jsonl"),
     "dataset_path": Parameter(str, "", path=True, required=True),

@@ -100,6 +100,42 @@ th.num button .sort-arrow{order:-1}.sort-arrow{font-weight:400;color:var(--muted
 #overview-scope .overview-picker{margin:10px 0}.summary-scope-note{margin:0;font-size:12px;color:var(--muted)}
 @media(max-width:1200px){.summary-card{gap:12px;padding:16px}.summary-ring{width:60px;height:60px;flex-basis:60px}.summary-card-value{font-size:24px}.summary-cards[data-view=best] .summary-card[data-available=true] .summary-card-value{font-size:40px}}
 @media(max-width:560px){.summary-cards{grid-template-columns:1fr}.summary-card{gap:16px}.summary-ring{width:68px;height:68px;flex-basis:68px}.summary-card-value{font-size:26px}.summary-cards[data-view=best] .summary-card[data-available=true] .summary-card-value{font-size:36px}}
+
+#observation-section{--resource-color-0:#177b84;--resource-color-1:#7952bb;--resource-color-2:#9b740b;--resource-color-3:#286cb1;--resource-color-4:#b94f72;--resource-color-5:#42852e;--resource-color-6:#bc5f28;--resource-color-7:#5659bb}
+body.dark #observation-section{--resource-color-0:#66d5cf;--resource-color-1:#b5a0f4;--resource-color-2:#e9c873;--resource-color-3:#70b6ee;--resource-color-4:#ed93ab;--resource-color-5:#93ce80;--resource-color-6:#e9a16e;--resource-color-7:#89a2f2}
+.resource-toolbar{display:flex;align-items:end;justify-content:space-between;gap:16px;margin:16px 0}
+.resource-toolbar label{flex:1;max-width:660px}.resource-toolbar label,.resource-section-heading label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
+.resource-toolbar select,.resource-section-heading select{min-width:0;width:100%;color:var(--ink)}
+.resource-toolbar .badge{font-size:12px;color:var(--accent);white-space:nowrap}
+.resource-context{border:1px solid var(--line);border-radius:10px;padding:16px;background:var(--bg)}
+.resource-context-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px}
+.resource-context-heading strong{font-size:18px}.resource-context-heading a{font-size:12px;white-space:nowrap}
+.resource-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 24px}
+.resource-meta span{display:block;font-size:11px;color:var(--muted);margin-bottom:4px}
+.resource-meta strong{display:block;font-size:13px;font-weight:550;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.resource-run-track{height:6px;background:var(--line);border-radius:4px;position:relative;overflow:hidden;margin:8px 0}
+.resource-run-track span{position:absolute;height:100%;min-width:2px;background:var(--accent);border-radius:4px}
+.resource-caption{font-size:12px;line-height:1.7;color:var(--muted);margin:8px 0}
+.resource-section-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:28px 0 12px}
+.resource-section-heading h3{font-size:16px;margin:0}.resource-section-heading p{margin:3px 0 0}
+.resource-section-heading label{min-width:175px}
+.resource-device-table{white-space:nowrap}.resource-device-table th{font-size:11px;color:var(--muted);font-weight:500}
+.resource-device-table th:not(:first-child){text-align:right}.resource-device-table td:first-child{border-left:3px solid var(--series-color)}
+.resource-device-table strong{display:block;color:var(--ink)}.resource-device-table small{display:block;color:var(--muted);font-size:11px}
+.resource-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.resource-panel{min-width:0;position:relative;border:1px solid var(--line);border-radius:10px;padding:14px;background:var(--bg);overflow:hidden}
+.resource-panel h4{font-size:13px;margin:0 0 12px;font-weight:600;padding-right:72px}
+.resource-unit{position:absolute;right:14px;top:14px;font-size:11px;color:var(--muted);max-width:50%;text-align:right}
+.resource-panel svg{display:block;width:100%;min-height:0;overflow:visible}
+.resource-panel circle:hover{r:4;stroke:var(--ink);stroke-width:1}
+.resource-legend{display:flex;flex-wrap:wrap;gap:5px 16px;font-size:11px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
+.resource-legend span{min-width:0}.resource-legend span:before{content:'';display:inline-block;width:8px;height:8px;border-radius:2px;background:var(--series-color);margin-right:6px}
+.resource-unavailable{min-height:110px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px}
+.resource-host-value{font-size:24px;font-weight:600;display:block;color:var(--muted);margin:20px 0 8px}
+.resource-host-controls,.resource-host-plots{grid-column:1 / -1;min-width:0}.resource-host-plots{margin-top:0}
+#resource-service-content details{margin-top:16px}#resource-series{width:100%;margin:12px 0;font-size:12px}
+@media(max-width:1200px){.resource-meta{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.resource-toolbar,.resource-section-heading{align-items:stretch;flex-direction:column}.resource-toolbar .badge{align-self:flex-start}.resource-chart-grid,.resource-meta{grid-template-columns:1fr}.resource-section-heading label{width:100%}.resource-context-heading{align-items:flex-start}.resource-context-heading strong{font-size:16px}.resource-panel{padding:10px}}
 </style></head><body class="dark"><div class="report-layout">
 <header class="report-header"><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
 <aside class="sidebar" aria-label="报告导航">
@@ -136,7 +172,19 @@ th.num button .sort-arrow{order:-1}.sort-arrow{font-weight:400;color:var(--muted
 <label for="analysis-metric" id="analysis-metric-field">选择性能指标<select id="analysis-metric"></select></label>
 </div><div id="analysis-context"></div><div id="analysis-content" aria-live="polite"></div></section>
 <section id="task-metrics" class="report-page" tabindex="-1" hidden><h2>全部指标</h2><p class="muted">客户端、Engine内部与服务端观测分别展示。缺失值不代表零；准确率应结合覆盖率阅读。</p><div class="toolbar"><select id="task"><option value="">全部任务</option></select><select id="case"><option value="">全部Case</option></select><input id="search" placeholder="搜索指标、任务或Case" aria-label="搜索指标"></div><div class="table-wrap"><table><thead><tr><th data-sort="task">任务</th><th data-sort="case">Case</th><th data-sort="metric">指标 ↕</th><th class="num" data-sort="value"><span aria-hidden="true">↕ </span>数值</th><th>单位</th><th class="num">样本数</th></tr></thead><tbody id="rows"></tbody></table></div><p id="rowCount" class="muted"></p></section>
-<section id="observation-section" class="report-page" tabindex="-1" hidden><h2>资源观测</h2><select id="series" aria-label="观测序列"></select><div id="observation" class="chart"></div><p class="muted">展示已采集的设备与服务端观测，按实际采样时间排列。每Case图表最多使用500个采样点；完整原始记录单独保存。任务详情最多列出20条观测错误，完整信息见原始结果。</p></section>
+<section id="observation-section" class="report-page" tabindex="-1" hidden>
+<h2>资源观测</h2>
+<div class="resource-toolbar"><label for="resource-case">选择测试Case<select id="resource-case"></select></label><span class="badge">离线采样 · 按Case查看</span></div>
+<div id="resource-context" class="resource-context" aria-live="polite"></div>
+<p class="resource-caption">各图共用时间轴，浅色区域为Case测试窗口；悬停数据点查看采样时间与数值。时间使用浏览器本地时区，较大采样缺口不连线。</p>
+<div class="resource-section-heading"><div><h3>GPU资源</h3><p class="resource-caption">均值采用已保存聚合；曲线展示采样值。设备观测可能包含其他服务使用的GPU。</p></div><label for="resource-gpu">查看设备<select id="resource-gpu"></select></label></div>
+<div id="resource-gpu-content"></div>
+<div class="resource-section-heading"><div><h3>主机资源</h3><p class="resource-caption">展示主机整机数据，包含其他业务及同机压测客户端的开销。CPU与I/O速率来自相邻有效采样差分；首个样本仅作基线，缺失不补零。历史结果沿用其保存口径。</p></div></div>
+<div id="resource-host-content" class="resource-chart-grid"></div>
+<div class="resource-section-heading"><div><h3>服务负载</h3><p class="resource-caption">同一Case的服务端观测，便于对照硬件变化。</p></div></div>
+<div id="resource-service-content"></div>
+<p class="resource-caption">每Case的硬件与服务采样各保留最多500个时间点用于绘图，完整记录仍保存在原始结果中。未采集不代表零，未保存容量时不计算显存占比。</p>
+</section>
 <section id="diagnostics" class="report-page" tabindex="-1" hidden><h2>运行诊断</h2><p class="muted">查看各任务的测试条件、覆盖率、错误与原始结果；完整报告还可查看请求详情。</p><div id="details"></div></section>
 <footer>离线单文件报告 · 无外部脚本或网络依赖 · 可从保存的新结果重新导出</footer>
 </main></div><script type="application/json" id="report-data">__REPORT_DATA__</script><script>
@@ -179,8 +227,6 @@ let sort='metric',ascending=true;
 function visibleRows(){const q=$('search').value.toLowerCase();return D.rows.filter(r=>(!$('task').value||String(r.task_index)===$('task').value)&&(!$('case').value||r.task_index+':'+r.case_index===$('case').value)&&[r.metric,r.task,taskDisplayName(r.task),r.case].join(' ').toLowerCase().includes(q))}
 function render(){let rows=visibleRows();rows.sort((a,b)=>{const x=a[sort],y=b[sort];return(typeof x==='number'&&typeof y==='number'?x-y:String(x??'').localeCompare(String(y??'')))*(ascending?1:-1)});$('rows').replaceChildren();for(const r of rows){const tr=el('tr');for(const key of ['task','case','metric','value','unit','count'])tr.append(el('td',fmt(key==='task'?taskDisplayName(r.task):r[key]),key==='metric'?'metric':['value','count'].includes(key)?'num':''));$('rows').append(tr)}$('rowCount').textContent=rows.length+'项指标'}
 function svgElement(tag,attrs){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);return n}
-function chart(id,points,line=false){const box=$(id);box.replaceChildren();points=points.filter(p=>typeof p.value==='number'&&Number.isFinite(p.value));if(!points.length){box.append(el('div','没有可展示的数据','empty'));return}const width=Math.max(700,line?700:points.length*80),height=300,pad=50,values=points.map(p=>p.value),lo=Math.min(0,...values),hi=Math.max(1,...values),scale=v=>height-pad-(v-lo)/(hi-lo)*(height-pad*2);const svg=svgElement('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':line?'观测时间线':'Case指标比较'});const minTime=points[0].time,maxTime=points.at(-1).time;const x=(p,i)=>line?pad+(p.time-minTime)/Math.max(1e-9,maxTime-minTime)*(width-pad*2):pad+(i+.5)*(width-pad*2)/points.length;for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=scale(v);svg.append(svgElement('line',{x1:pad,y1:y,x2:width-pad,y2:y,stroke:'var(--line)'}));const text=svgElement('text',{x:4,y:y+4,fill:'currentColor','font-size':11});text.textContent=fmt(v);svg.append(text)}if(line)svg.append(svgElement('polyline',{points:points.map((p,i)=>`${x(p,i)},${scale(p.value)}`).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':2}));points.forEach((p,i)=>{const px=x(p,i),y=scale(p.value);const mark=line?svgElement('circle',{cx:px,cy:y,r:3,fill:'var(--accent)'}):svgElement('rect',{x:px-15,y:Math.min(y,scale(0)),width:30,height:Math.max(1,Math.abs(scale(0)-y)),rx:3,fill:'var(--accent)'});const title=svgElement('title',{});title.textContent=p.label+': '+fmt(p.value);mark.append(title);svg.append(mark);if(!line||i===0||i===points.length-1){const t=svgElement('text',{x:px,y:height-12,'text-anchor':'middle',fill:'currentColor','font-size':10});t.textContent=p.label;svg.append(t)}});box.append(svg)}
-const series=new Map(),seriesLabels=new Map();for(const s of D.observations){const k=[s.task,s.case,s.metric,JSON.stringify(s.labels)].join(' · ');seriesLabels.set(k,[taskDisplayName(s.task),s.case,s.metric,JSON.stringify(s.labels)].join(' · '));if(!series.has(k))series.set(k,[]);series.get(k).push({value:s.value,time:s.time,label:new Date(s.time*1000).toLocaleTimeString()})}for(const key of series.keys())option($('series'),key,seriesLabels.get(key));function observation(){chart('observation',series.get($('series').value)||[],true)}
 // Stable positional anchors do not depend on user-supplied task names.
 function link(text, target) {
   const a = el('a', text);
@@ -239,6 +285,7 @@ __REQUEST_SCRIPT__
 __CASE_SCRIPT__
 __SUMMARY_SCRIPT__
 __OVERVIEW_SCRIPT__
+__RESOURCE_SCRIPT__
 if (D.request_details) $('run-context').append(el('p',
   '完整详情报告：包含已保存的原始输入输出。缺失记录将明确标注；' +
   '分页不减少文件体积。', 'muted'));
@@ -278,7 +325,8 @@ tasks.forEach((task, ti) => {
       .filter(([, v]) => v.error || v.status === 'failed'));
     const diagnostics = {reason: c.reason, error: c.error,
       cleanup_error: c.cleanup_error, metric_errors: metricErrors,
-      observation: c.observation, device_observation: c.device_observation};
+      observation: c.observation, device_observation: c.device_observation,
+      host_observation: c.host_observation};
     if (requestData) requestPanel(detail, detail, id, requestData);
     block(detail, id + '-conditions', '测试条件与完整配置', p);
     block(detail, id + '-coverage', '覆盖率与执行窗口', {
@@ -324,7 +372,8 @@ tasks.forEach((task, ti) => {
 renderSummaries();
 initAnalysis();
 renderOverview();
+initResources();
 initReportNavigation();
 showTarget();
-$('theme').onclick=()=>document.body.classList.toggle('dark');for(const id of ['task','case','search'])$(id).addEventListener('input',render);$('task').addEventListener('input',()=>{updateRowCases();render()});updateRowCases();$('series').onchange=observation;document.querySelectorAll('[data-sort]').forEach(n=>n.onclick=()=>{ascending=sort===n.dataset.sort?!ascending:true;sort=n.dataset.sort;render()});render();observation();
+$('theme').onclick=()=>document.body.classList.toggle('dark');for(const id of ['task','case','search'])$(id).addEventListener('input',render);$('task').addEventListener('input',()=>{updateRowCases();render()});updateRowCases();document.querySelectorAll('[data-sort]').forEach(n=>n.onclick=()=>{ascending=sort===n.dataset.sort?!ascending:true;sort=n.dataset.sort;render()});render();
 </script></body></html>

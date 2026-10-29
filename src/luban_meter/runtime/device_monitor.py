@@ -255,6 +255,8 @@ class DeviceMonitorDaemon:
         for snapshot in self._snapshots:
             entry: dict[str, Any] = {
                 "elapsed": snapshot.elapsed_seconds,
+                "started_at": snapshot.started_at,
+                "finished_at": snapshot.finished_at,
                 "devices": [
                     {
                         "index": device_sample.index,

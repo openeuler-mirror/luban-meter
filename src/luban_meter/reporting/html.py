@@ -35,8 +35,13 @@ def report_data(payload, *, include_requests=False, raw_root=None):
             device = case.get("device_observation", {})
             snapshots = device.get("timeseries", [])
             step = max(1, (len(snapshots) + 499) // 500)
-            origin = case.get("window", {}).get("started_at") or 0
+            origin = case.get("window", {}).get("started_at")
             for snapshot in snapshots[::step]:
+                timestamp = snapshot.get("finished_at")
+                if timestamp is None and origin is not None:
+                    timestamp = origin + snapshot["elapsed"]
+                if timestamp is None:
+                    continue
                 for sample in snapshot.get("devices", []):
                     for name, value in sample.items():
                         if name == "index" or value is None:
@@ -46,10 +51,52 @@ def report_data(payload, *, include_requests=False, raw_root=None):
                                 **label,
                                 "metric": "device/" + name,
                                 "labels": {"device": sample["index"]},
-                                "time": origin + snapshot["elapsed"],
+                                "time": timestamp,
                                 "value": value,
                             }
                         )
+                for name, value in (snapshot.get("cpu") or {}).items():
+                    if value is not None:
+                        observations.append(
+                            {
+                                **label,
+                                "metric": "cpu/" + name,
+                                "labels": {},
+                                "time": timestamp,
+                                "value": value,
+                            }
+                        )
+            host = case.get("host_observation", {})
+            for row in metric_rows(host.get("summary", {}), "/host"):
+                if row["metric"].endswith("/covered_seconds"):
+                    row["unit"] = "s"
+                rows.append({**label, "category": "host_observation", **row})
+            samples = host.get("timeseries", [])
+            step = max(1, (len(samples) + 499) // 500)
+            for sample in samples[::step]:
+                if sample.get("error"):
+                    continue
+                for group in ("cpu", "memory", "filesystems", "disks",
+                              "networks"):
+                    nodes = sample.get(group, {})
+                    nodes = nodes if isinstance(nodes, list) else [nodes]
+                    for node in nodes:
+                        labels = {k: node[k] for k in (
+                            "device", "mountpoint", "fstype"
+                        ) if k in node}
+                        for key, value in node.items():
+                            if key in labels or not (
+                                value is None or isinstance(
+                                    value, (int, float)
+                                )
+                            ):
+                                continue
+                            observations.append({
+                                **label, "metric": f"host/{group}/{key}",
+                                "labels": labels,
+                                "time": sample["finished_at"],
+                                "value": value,
+                            })
             samples = case.get("observation", {}).get("snapshots", [])
             # Sample charts only; preserve complete raw observations.
             step = max(1, (len(samples) + 499) // 500)
@@ -95,6 +142,15 @@ def report_data(payload, *, include_requests=False, raw_root=None):
                     for key, value in case["device_observation"].items()
                     if key != "timeseries"
                 }
+            if "host_observation" in case:
+                host = case["host_observation"]
+                rendered["host_observation"] = {
+                    key: value for key, value in host.items()
+                    if key != "timeseries"
+                }
+                rendered["host_observation"]["failure_examples"] = [
+                    s for s in host.get("timeseries", []) if s.get("error")
+                ][:20]
             rendered_cases.append(rendered)
         rendered_tasks.append({**task, "cases": rendered_cases})
     rendered_result = (
@@ -146,4 +202,7 @@ TEMPLATE = (
 ).replace(
     "__OVERVIEW_SCRIPT__",
     Path(__file__).with_name("report_overview.js").read_text(encoding="utf-8"),
+).replace(
+    "__RESOURCE_SCRIPT__",
+    Path(__file__).with_name("resources.js").read_text(encoding="utf-8"),
 )

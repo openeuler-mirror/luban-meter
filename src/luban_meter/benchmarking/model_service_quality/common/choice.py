@@ -33,6 +33,7 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_choice_prompt,
     validate_prompt_version,
 )
+from luban_meter.runtime.thinking import response_facts
 
 PROTOCOL = "openai_compatible_chat_and_completions"
 SCORER_VERSION = "metrics-v1"
@@ -82,6 +83,9 @@ def validate_choice_parameters(
         "max_tokens": positive_integer(parameters, "max_tokens", 8),
         "stop": string_list(parameters, "stop", []),
         "enable_thinking": enable_thinking,
+        "thinking_protocol": parameters.get(
+            "thinking_protocol", "chat_template"
+        ),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
     }
     fixed_value(parameters, "temperature", 0.0)
@@ -151,6 +155,9 @@ def generate_answer(
         thinking = {}
         if config.get("enable_thinking") is not None:
             thinking["enable_thinking"] = config["enable_thinking"]
+            protocol = config.get("thinking_protocol", "chat_template")
+            if protocol != "chat_template":
+                thinking["thinking_protocol"] = protocol
         return client.chat(
             [{"role": "user", "content": prompt}],
             max_tokens=config["max_tokens"],
@@ -218,6 +225,7 @@ def collect_sample(
             )
         else:
             response = generate_answer(client, prompt, config)
+            record.update(response_facts(response))
             raw_output = response["text"]
             prediction = template_adapters.parse_output(
                 config, sample, rendered, raw_output, extract_choice

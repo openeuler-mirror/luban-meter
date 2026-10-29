@@ -36,6 +36,8 @@ class Benchmark(ABC):
         "profile": Parameter(str, "concurrent"),
         "device_exporter_url": Parameter(str, ""),
         "device_sample_interval": Parameter(float, 1.0, minimum=0.01),
+        "host_exporter_url": Parameter(str, ""),
+        "host_sample_interval": Parameter(float, 1.0, minimum=0.1),
     }
     profile_modes = frozenset({"requests"})
     default_metrics: tuple[str, ...] = ()

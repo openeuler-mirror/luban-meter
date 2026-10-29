@@ -21,6 +21,7 @@ Provides:
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,6 +70,8 @@ class HardwareSnapshot:
     devices: list[DeviceSample] = field(default_factory=list)
     cpu: CpuSample | None = None
     error: dict[str, Any] | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +401,11 @@ def sample_exporter(
 ) -> HardwareSnapshot:
     """Take a single snapshot of all devices via Prometheus exporter."""
     snapshot = HardwareSnapshot(
-        index=snapshot_index, elapsed_seconds=round(elapsed, 6)
+        index=snapshot_index, elapsed_seconds=round(elapsed, 6),
+        started_at=time.time(),
     )
     metrics_text = _fetch_metrics(exporter_url)
+    snapshot.finished_at = time.time()
     if not metrics_text:
         snapshot.error = {
             "type": "FetchError",

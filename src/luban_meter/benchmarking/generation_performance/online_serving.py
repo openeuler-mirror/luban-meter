@@ -79,6 +79,10 @@ def _build_request_record(
         (current - previous) * 1000
         for previous, current in itertools.pairwise(event_times)
     ]
+    content_times = observation.content_event_times
+    # Completion streams have no separate reasoning channel.
+    if not content_times and not observation.reasoning_event_times:
+        content_times = event_times
     return {
         "request_index": request_index,
         "submitted_at_monotonic_s": started,
@@ -98,6 +102,27 @@ def _build_request_record(
         "input_tokens": observation.input_tokens,
         "output_tokens": observation.output_tokens,
         "stream_event_count": len(event_times),
+        "output_observation": "reasoning_and_content",
+        "generated_text": observation.generated_text,
+        "reasoning_text": observation.reasoning_text,
+        "has_content": bool(observation.generated_text),
+        "first_content_latency_ms": (
+            round((content_times[0] - started) * 1000, 3)
+            if content_times else None
+        ),
+        "output_event_offsets_ms": [
+            round((value - started) * 1000, 3) for value in event_times
+        ],
+        "reasoning_event_offsets_ms": [
+            round((value - started) * 1000, 3)
+            for value in observation.reasoning_event_times
+        ],
+        "content_event_offsets_ms": [
+            round((value - started) * 1000, 3) for value in content_times
+        ],
+        "reasoning_tokens": observation.reasoning_tokens,
+        "finish_reason": observation.finish_reason,
+        "usage": observation.usage,
     }
 
 
