@@ -29,6 +29,8 @@ luban_meter = [
   "reporting/template.html",
   "reporting/requests.js",
   "reporting/case_analysis.js",
+  "reporting/report_overview.js",
+  "reporting/summary_cards.js",
   "benchmarking/**/sandbox_runner.py",
   "benchmarking/**/Containerfile",
 ]

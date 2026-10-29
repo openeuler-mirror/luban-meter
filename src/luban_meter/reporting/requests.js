@@ -65,7 +65,7 @@ function requestPanel(parent, summary, id, data) {
   const label = el('span');
   label.setAttribute('aria-live', 'polite');
   pager.append(previous, label, next);
-  section.append(toolbar, wrap, pager, link('返回摘要', 'overview'));
+  section.append(toolbar, wrap, pager, link('返回摘要', 'summary-section'));
   let page = 0, filtered = [], activeIndex = null;
   const pageSize = 50;
   function expand(index, button, tr) {

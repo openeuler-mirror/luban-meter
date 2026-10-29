@@ -1,5 +1,5 @@
 // Browser regression for the offline Case report. No service/model is called.
-// NODE_PATH must include Playwright; uses an already installed Edge.
+// NODE_PATH must include Playwright; LUBAN_BROWSER_CHANNEL defaults to msedge.
 // node tests/report_analysis.browser.cjs REAL_HTML FIXTURE_HTML OUTPUT_DIR
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -7,7 +7,8 @@ const path = require('node:path');
 const {chromium} = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({headless:true,channel:'msedge'});
+  const browser = await chromium.launch({headless:true,
+    channel:process.env.LUBAN_BROWSER_CHANNEL||'msedge'});
   try {
     const page = await browser.newPage({viewport:{width:1440,height:1000}});
     const errors=[], network=[];
@@ -21,15 +22,25 @@ const {chromium} = require('playwright');
     await open(process.argv[2]);
     const real = JSON.parse(await page.locator('#report-data').textContent()).result;
     const analysis=page.locator('#case-analysis');
-    assert.match(await page.locator('#case-summaries').textContent(),/推理性能评测 · 在线服务/);
+    const navigate=async id=>{
+      await page.locator('#report-nav a[href="#'+id+'"]').click();
+      await page.waitForFunction(id=>!document.getElementById(id).hidden,id);
+    };
+    assert.deepEqual(await page.locator('#case-summaries .summary-category>h3').allTextContents(),
+      ['推理性能评测','模型能力评测']);
+    assert.equal(await page.locator('#summary-category-generation_performance h4').textContent(),'在线服务');
     assert.match(await page.locator('#analysis-task').innerText(),/模型能力评测 · CMMLU/);
     assert.match(await page.locator('#rows').innerText(),/推理性能评测/);
     assert.equal(real.tasks[0].name,'performance');
     assert.equal(await page.locator('#report-nav a').count(),6);
     assert.equal(await page.locator('.sidebar').evaluate(n=>getComputedStyle(n).position),'sticky');
-    assert.equal(await page.locator('.summary-task').nth(1).evaluate(n=>getComputedStyle(n).borderTopStyle),'dashed');
+    assert.equal(await page.locator('.summary-category').nth(1).evaluate(n=>getComputedStyle(n).borderTopStyle),'dashed');
+    assert.deepEqual(await page.locator('#details>.diagnostic-category>summary').allTextContents(),
+      ['推理性能评测','模型能力评测']);
+    assert.equal(await page.locator('#task-1').evaluate(n=>n.parentElement.id),
+      'diagnostic-category-model_service_quality');
     for(const id of ['overview','summary-section','case-analysis','task-metrics','observation-section','diagnostics']) {
-      await page.locator('#report-nav a[href="#'+id+'"]').click();
+      await navigate(id);
       await page.waitForFunction(id=>document.querySelector('#report-nav [aria-current]')?.hash==='#'+id,id,{timeout:5000}).catch(async error=>{
         throw Error(id+' navigation: '+JSON.stringify(await page.evaluate(()=>({active:document.querySelector('#report-nav [aria-current]')?.hash,y:scrollY,sections:[...document.querySelectorAll('main>section')].map(n=>[n.id,n.getBoundingClientRect().top])})))+' '+error.message);
       });
@@ -38,22 +49,21 @@ const {chromium} = require('playwright');
         return Math.abs(scrollY-target)<2;
       },id);
       assert.ok(await page.locator('#'+id).evaluate(n=>n.getBoundingClientRect().top>=0));
+      assert.equal(await page.locator('.report-page:visible').count(),1);
     }
-    await page.mouse.move(1000,500);
-    await page.mouse.wheel(0,-100);
-    await page.waitForTimeout(250);
-    await page.evaluate(()=>document.querySelector('#summary-section').scrollIntoView({behavior:'instant'}));
-    await page.waitForFunction(()=>document.querySelector('#report-nav [aria-current]')?.hash==='#summary-section',{},{timeout:3000}).catch(async e=>{throw Error(JSON.stringify(await page.evaluate(()=>({active:document.querySelector('#report-nav [aria-current]')?.hash,y:scrollY,top:document.querySelector('#summary-section').getBoundingClientRect().top})))+e.message);});
+    await navigate('summary-section');
     if(process.argv[4]) {
       fs.mkdirSync(process.argv[4],{recursive:true});
       await page.screenshot({path:path.join(process.argv[4],'navigation-desktop.png')});
     }
-    assert.equal(await page.locator('#cards a').count(),0);
-    assert.equal(await page.locator('#cards .number').count(),4);
+    assert.equal(await page.locator('#cards a').count(),6);
+    assert.equal(await page.locator('#cards .summary-card-value').count(),6);
+    assert.match(await page.locator('#run-counts').textContent(),/任务数 2.*Case数 13/);
     assert.equal(await page.locator('#case-summaries .summary-task').count(),2);
     assert.equal(await page.locator('#case-summaries tbody tr').count(),13);
     assert.equal(await page.locator('#analysis-task option').count(),2);
     assert.equal(await page.locator('#analysis-case option').count(),12);
+    await navigate('case-analysis');
     const boxes=await page.locator('.analysis-toolbar select').evaluateAll(nodes=>
       nodes.map(n=>({y:n.getBoundingClientRect().y,h:n.getBoundingClientRect().height})));
     assert.ok(boxes.every(b=>b.y===boxes[0].y && b.h===boxes[0].h));
@@ -92,6 +102,7 @@ const {chromium} = require('playwright');
     assert.equal(await page.locator('#analysis-metric option').count(),6);
     assert.match(await page.locator('#rows').innerText(),/offered_request_rate/);
     // Summary link must select the correct task as well as case_1.
+    await navigate('summary-section');
     await page.locator('#summary-1-0').getByRole('link',{name:'分析',exact:true}).click();
     await page.waitForFunction(()=>document.activeElement.id==='case-analysis');
     assert.equal(await page.inputValue('#analysis-task'),'1');
@@ -114,13 +125,16 @@ const {chromium} = require('playwright');
     const qualityBoxes=await page.locator('.analysis-toolbar select:visible').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().y));
     assert.equal(qualityBoxes.length,2);assert.equal(qualityBoxes[0],qualityBoxes[1]);
     // Independent legacy search must not alter Case analysis.
+    await navigate('task-metrics');
     await page.fill('#search','nonexistent');
     assert.equal(await page.inputValue('#analysis-task'),'1');
     assert.equal(await page.locator('#analysis-content tr').count()>0,true);
+    await navigate('case-analysis');
     if(process.argv[4]) {
       fs.mkdirSync(process.argv[4],{recursive:true});
       await analysis.screenshot({path:path.join(process.argv[4],'quality.png')});
     }
+    await navigate('summary-section');
     await page.locator('#summary-0-1').getByRole('link',{name:'分析',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#analysis-task').value==='0');
     assert.equal(await page.inputValue('#analysis-case'),'1');
@@ -129,6 +143,7 @@ const {chromium} = require('playwright');
     await page.selectOption('#analysis-metric','/streaming_performance/values/request_view/ttft');
     if(process.argv[4]) {
       await analysis.screenshot({path:path.join(process.argv[4],'performance.png')});
+      await navigate('summary-section');
       await page.locator('#case-summaries .table-wrap').evaluateAll(nodes=>nodes.forEach(n=>{n.scrollLeft=0;}));
       await page.locator('#summary-section').screenshot({path:path.join(process.argv[4],'summary.png')});
       await page.locator('#theme').click();
@@ -150,6 +165,7 @@ const {chromium} = require('playwright');
     if(process.argv[4])await analysis.screenshot({path:path.join(process.argv[4],'mobile.png')});
     // Sorting keeps links tied to original case identity.
     await page.setViewportSize({width:1440,height:1000});
+    await navigate('summary-section');
     const firstTable=page.locator('#case-summaries table').first();
     await firstTable.getByRole('button',{name:/TTFT.*Mean/}).click();
     const expectedFirst=real.tasks[0].cases.map((c,i)=>({i,value:c.metrics.streaming_performance.values.request_view.ttft.mean}))
@@ -160,6 +176,7 @@ const {chromium} = require('playwright');
     console.log('Real report checks passed');
     await open(process.argv[3]);
     await page.setViewportSize({width:1440,height:1000});
+    await navigate('case-analysis');
     assert.equal(await page.locator('#analysis-metric option').count(),1);
     assert.match(await page.locator('#analysis-content').innerText(),/未采集/);
     assert.match(await page.locator('#analysis-content').innerText(),/P99.9/);
@@ -174,8 +191,9 @@ const {chromium} = require('playwright');
     assert.equal(await page.locator('#analysis-metric option').count(),0);
     await page.selectOption('#analysis-case','0');
     assert.equal(await page.inputValue('#analysis-metric'),'/streaming_performance/values/request_view/ttft');
-    const separators=await page.locator('.summary-task').evaluateAll(nodes=>nodes.map(n=>getComputedStyle(n).borderTopStyle));
-    assert.equal(separators[0],'none');assert.ok(separators.slice(1).every(s=>s==='dashed'));
+    const separators=await page.locator('.summary-category').evaluateAll(nodes=>nodes.map(n=>
+      [...n.querySelectorAll('.summary-task')].map(task=>getComputedStyle(task).borderTopStyle)));
+    for(const group of separators){assert.equal(group[0],'none');assert.ok(group.slice(1).every(s=>s==='dashed'));}
     const names=['GSM8K','HumanEval','WikiText','C-Eval','Custom'];
     for(let i=1;i<=names.length;i++) {
       await page.selectOption('#analysis-task',String(i));
@@ -203,6 +221,7 @@ const {chromium} = require('playwright');
     await page.selectOption('#analysis-case','2');
     assert.match(await page.locator('#analysis-content').innerText(),/已丢弃/);
     assert.equal(await page.locator('#analysis-metric option').count(),0);
+    await navigate('summary-section');
     await page.locator('#summary-1-0').getByRole('link',{name:'分析',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#analysis-task').value==='1');
     assert.match(await page.locator('#analysis-content').innerText(),/Exact Match/);

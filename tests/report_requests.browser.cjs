@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const {chromium} = require('playwright');
 
 (async () => {
-  const browser = await chromium.launch({headless: true, channel: 'msedge'});
+  const browser = await chromium.launch({headless: true,
+    channel: process.env.LUBAN_BROWSER_CHANNEL || 'msedge'});
   try {
     const page = await browser.newPage({viewport: {width: 1280, height: 900}});
     const errors = [];
@@ -14,6 +15,7 @@ const {chromium} = require('playwright');
     page.on('dialog', () => {throw Error('Untrusted content executed');});
     await page.route('**/*', route => route.abort());
     await page.setContent(fs.readFileSync(process.argv[2], 'utf8'));
+    await page.locator('#report-nav a[href="#summary-section"]').click();
     await page.locator('#summary-0-0').getByRole('link', {name: '分析', exact: true}).click();
     await page.locator('#analysis-context').getByRole('link', {name: '测试条件、覆盖率与诊断'}).click();
     const panel = page.locator('#case-0-0-requests');
@@ -51,6 +53,7 @@ const {chromium} = require('playwright');
     await page.waitForFunction(() =>
       document.activeElement.id === 'case-0-0-request-119');
     assert.equal(await search.inputValue(), '');
+    await page.locator('#report-nav a[href="#summary-section"]').click();
     await page.locator('#summary-0-1').getByRole('link', {name: '分析', exact: true}).click();
     await page.locator('#analysis-context').getByRole('link', {name: '测试条件、覆盖率与诊断'}).click();
     await page.getByRole('link', {name: '请求详情不可用（查看原因）'}).click();

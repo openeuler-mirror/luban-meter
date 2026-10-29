@@ -7,7 +7,7 @@ const metricNames = {
   input_tokens:'实际输入 Token', output_tokens:'实际输出 Token',
   decode_token_throughput:'解码 Token 吞吐量', dispatch_delay:'调度延迟',
   scheduled_latency:'从计划时间起的耗时', stream_event_itl:'流式事件间隔',
-  accuracy:'正确率（Accuracy）', exact_match:'精确匹配（Exact Match）',
+  accuracy:'准确率', exact_match:'精确匹配（Exact Match）',
   f1:'F1', token_f1:'Token F1', rouge1:'ROUGE-1', rouge2:'ROUGE-2',
   rougeL:'ROUGE-L', perplexity:'困惑度（PPL）', mean_loss:'平均损失',
   bits_per_byte:'每字节比特数（BPB）', scored_samples:'参与评分样本',
@@ -145,7 +145,7 @@ function dataTable(parent, columns, records, className='') {
     body.replaceChildren();
     for (const record of ordered) {
       const tr = el('tr');
-      if (record.anchor) tr.id = record.anchor;
+      if (record.anchor) {tr.id = record.anchor;tr.tabIndex = -1;}
       for (const col of columns) {
         const value = col.get(record);
         const td = col.numeric ? valueCell(value,col.unit) :
@@ -187,16 +187,40 @@ function summaryMetrics(task) {
     ['ttft','tpot','output_token_throughput'].indexOf(a.key)-
     ['ttft','tpot','output_token_throughput'].indexOf(b.key)) : available.slice(0,4);
 }
+const taskCategoryNames = {generation_performance:'推理性能评测',
+  model_service_quality:'模型能力评测'};
+function reportTaskGroups(taskList) {
+  const groups = new Map();
+  taskList.forEach((task,ti) => {
+    const category = task.category || 'uncategorized';
+    if (!groups.has(category)) groups.set(category, {category,
+      title:Object.hasOwn(taskCategoryNames,category)?taskCategoryNames[category]:
+        (task.category || '其他评测'),tasks:[]});
+    groups.get(category).tasks.push({task,ti});
+  });
+  return [...groups.values()];
+}
+function taskSectionTitle(task) {
+  const scenario = scenarioDisplayName(task.scenario || task.category) || '未采集场景';
+  const name = taskDisplayName(task.name);
+  return !name || task.name === task.scenario || name === scenario ||
+    name === taskCategoryNames[task.category] ? scenario : scenario + ' · ' + name;
+}
 function renderSummaries() {
   $('case-summaries').replaceChildren();
+  const parents = new Map();
+  for (const category of reportTaskGroups(tasks)) {
+    const section = el('div',undefined,'summary-category');
+    section.id = 'summary-category-' + category.category;
+    const heading = el('h3',category.title,'task-heading');
+    if (category.category === 'generation_performance') heading.classList.add('task-performance');
+    else if (category.category === 'model_service_quality') heading.classList.add('task-quality');
+    section.append(heading);$('case-summaries').append(section);
+    category.tasks.forEach(({ti})=>parents.set(ti,section));
+  }
   tasks.forEach((task,ti) => {
     const group = el('div',undefined,'summary-task');
-    const heading=el('h3',undefined,'task-heading');
-    if(task.category==='generation_performance')heading.classList.add('task-performance');
-    else if(task.name==='knowledge_accuracy')heading.classList.add('task-quality');
-    heading.append(el('span',taskDisplayName(task.name)),
-      el('span',' · ','task-heading-separator'),
-      el('span',scenarioDisplayName(task.scenario||task.category),'task-scenario'));
+    const heading=el('h4',taskSectionTitle(task),'summary-task-title');
     group.append(heading);
     const commonKeys = ['model','data','dataset_path','profile'];
     const shared = commonKeys.filter(key=>task.cases.length &&
@@ -240,7 +264,7 @@ function renderSummaries() {
         cell.append(link('分析','analysis-'+ti+'-'+r.ci))});
     dataTable(group,columns,records,'summary-table');
     if (!task.cases.length) group.append(link('任务诊断','task-'+ti));
-    $('case-summaries').append(group);
+    parents.get(ti).append(group);
   });
   if (!tasks.length) $('case-summaries').append(el('p','没有任务结果','empty'));
 }
@@ -433,10 +457,16 @@ function updateAnalysisCases() {
   updateAnalysisMetrics();
 }
 function ensureAnalysisTarget(target) {
-  const match=/^analysis-(\d+)-(\d+)$/.exec(target);
+  const match=/^analysis-(\d+)-(\d+)(?:-(ttft|tpot|e2el|output_token_throughput))?$/.exec(target);
   if(!match||!tasks[Number(match[1])]?.cases[Number(match[2])])return target;
   $('analysis-task').value=match[1];updateAnalysisCases();
   $('analysis-case').value=match[2];updateAnalysisMetrics();
+  if(match[3]) {
+    const path=corePerformancePaths.find(p=>p.endsWith('/'+match[3]));
+    if([...$('analysis-metric').options].some(o=>o.value===path)) {
+      $('analysis-metric').value=path;renderAnalysis();
+    }
+  }
   return 'case-analysis';
 }
 function initAnalysis() {
@@ -452,30 +482,8 @@ function initAnalysis() {
 function initReportNavigation() {
   const sidebar=document.querySelector('.sidebar'),toggle=$('nav-toggle');
   const links=[...$('report-nav').querySelectorAll('a')];
-  const sections=links.map(a=>$(a.hash.slice(1)));
-  const narrow=matchMedia('(max-width:1000px)');
-  let scheduled=false,selected=null;
   function closeMenu() {
     sidebar.classList.remove('open');toggle.setAttribute('aria-expanded','false');
-  }
-  function offset() {return narrow.matches?toggle.offsetHeight+34:16;}
-  function update() {
-    scheduled=false;
-    document.documentElement.style.setProperty('--anchor-offset',offset()+'px');
-    let active=0;
-    sections.forEach((section,i)=>{
-      if(section.getBoundingClientRect().top<=offset()+24)active=i;
-    });
-    if(window.scrollY+window.innerHeight>=document.documentElement.scrollHeight-2)
-      active=sections.length-1;
-    if(selected!==null)active=selected;
-    links.forEach((link,i)=>{
-      if(i===active)link.setAttribute('aria-current','location');
-      else link.removeAttribute('aria-current');
-    });
-  }
-  function schedule() {
-    if(!scheduled){scheduled=true;requestAnimationFrame(update);}
   }
   toggle.onclick=()=>{
     const open=sidebar.classList.toggle('open');
@@ -484,29 +492,6 @@ function initReportNavigation() {
   sidebar.addEventListener('keydown',event=>{
     if(event.key==='Escape'){closeMenu();toggle.focus();}
   });
-  links.forEach((link,i)=>link.addEventListener('click',event=>{
-    event.preventDefault();event.stopPropagation();closeMenu();selected=i;
-    document.documentElement.style.setProperty('--anchor-offset',offset()+'px');
-    history.pushState(null,'',link.hash);
-    sections[i].scrollIntoView({block:'start',behavior:
-      matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
-    sections[i].focus({preventScroll:true});schedule();
-  }));
-  // A bottom-of-page target may not reach the top. Keep an explicit click
-  // selected until the user scrolls or navigates elsewhere, without filler.
-  function releaseSelection(){selected=null;schedule();}
-  window.addEventListener('wheel',releaseSelection,{passive:true});
-  window.addEventListener('touchmove',releaseSelection,{passive:true});
-  window.addEventListener('keydown',event=>{
-    if(['ArrowUp','ArrowDown','PageUp','PageDown','Home','End',' '].includes(event.key))
-      releaseSelection();
-  });
-  document.addEventListener('pointerdown',event=>{
-    if(!sidebar.contains(event.target))releaseSelection();
-  });
-  window.addEventListener('hashchange',releaseSelection);
-  window.addEventListener('scroll',schedule,{passive:true});
-  window.addEventListener('resize',schedule);
-  new ResizeObserver(schedule).observe(document.querySelector('main'));
-  update();
+  links.forEach(a=>a.addEventListener('click',closeMenu));
+  window.addEventListener('hashchange',closeMenu);
 }
