@@ -3,6 +3,18 @@
 from collections.abc import Mapping
 
 
+def thinking_defaults(supplied, *, endpoint, eval_mode="gen"):
+    """Default chat generation to non-thinking; preserve explicit null."""
+    result = dict(supplied)
+    if (
+        "enable_thinking" not in result
+        and result.get("endpoint", endpoint) == "/v1/chat/completions"
+        and result.get("eval_mode", eval_mode) == "gen"
+    ):
+        result["enable_thinking"] = False
+    return result
+
+
 def thinking_payload(enable_thinking=None, thinking_protocol="chat_template"):
     """Build an explicit protocol extension; null leaves service defaults."""
     if enable_thinking is not None and not isinstance(enable_thinking, bool):

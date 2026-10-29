@@ -193,13 +193,13 @@ def collect_sample(
             result = client.chat(
                 messages,
                 max_tokens=config["max_tokens"],
-                stop=config["stop"] or None,
+                stop=config["stop"],
             )
         else:
             result = client.complete(
                 prompt,
                 max_tokens=config["max_tokens"],
-                stop=config["stop"] or None,
+                stop=config["stop"],
             )
         record.update(
             {

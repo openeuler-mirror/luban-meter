@@ -118,8 +118,7 @@ class OpenAIClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if stop:
-            payload["stop"] = stop
+        payload["stop"] = [] if stop is None else stop
         enabled = self.enable_thinking
         if enable_thinking is not None:
             enabled = enable_thinking
@@ -167,8 +166,7 @@ class OpenAIClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if stop:
-            payload["stop"] = stop
+        payload["stop"] = [] if stop is None else stop
         body, elapsed_ms = self._post("/v1/completions", payload)
         choices = body.get("choices") or []
         if not choices or not isinstance(choices[0], dict):

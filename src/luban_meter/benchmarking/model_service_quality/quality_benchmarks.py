@@ -25,7 +25,7 @@ from luban_meter.data import DatasetLoader
 from luban_meter.data.engine import select_few_shot
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import http_settings
-from luban_meter.runtime.thinking import validate_thinking
+from luban_meter.runtime.thinking import thinking_defaults, validate_thinking
 
 from . import (
     arithmetic_qa,
@@ -56,6 +56,15 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
     default_answer_parser = ""
     record_fields = {}
     prediction_type = str
+
+    @classmethod
+    def resolve_parameters(cls, supplied):
+        schema = cls.parameter_schema()
+        return thinking_defaults(
+            supplied,
+            endpoint=schema["endpoint"].default,
+            eval_mode=schema["eval_mode"].default,
+        )
 
     @classmethod
     def pipeline(cls, parameters):

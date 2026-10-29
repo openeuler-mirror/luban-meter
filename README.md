@@ -181,13 +181,22 @@ A/B/C/D，与普通答案一起检查冲突，不从解释或一般数学表达�
 
 | 任务JSON字段 | CLI参数 | 行为 |
 |---|---|---|
-| `enable_thinking` | `--enable-thinking` / `--no-enable-thinking` | `true`开启、`false`关闭；默认`null`不发送扩展字段 |
+| `enable_thinking` | `--enable-thinking` / `--no-enable-thinking` | chat生成默认`false`关闭；`true`开启；显式`null`不发送扩展字段 |
 | `thinking_protocol` | `--thinking-protocol` | 默认`chat_template`，也可选`deepseek` |
 
 `chat_template`发送`chat_template_kwargs.enable_thinking`，保持已有配置兼容；
 `deepseek`发送`thinking.type=enabled/disabled`。服务和模型模板必须支持所选协议，
 客户端不会自动判断模型或重试其他协议，也不会修改服务全局设置。
 显式思考开关不适用于PPL或completions接口，静态预检会报错。
+默认关闭仅适用于chat生成任务；PPL、loss和completions缺省不发送思考字段，
+显式不适用的布尔开关仍报错。CLI基础值可被任务JSON覆盖，任务中显式`null`
+会覆盖CLI的开启/关闭设置并沿用服务行为。已有省略该字段的chat任务将从沿用服务
+改为请求关闭；服务不支持默认协议时，可选其他协议或显式设为`null`。
+
+在线性能保持`stream=true`以采集TTFT/ITL等指标，质量评测保持`stream=false`。
+HTTP生成请求默认显式发送`stop: []`，不注入换行停止符；显式停止列表仍生效。
+PPL/logprobs评分请求保持原有行为。空停止列表不会禁用EOS或绕过输出预算，
+也不能保证清除服务端自行配置的停止规则。
 协议依据见[Qwen文档](https://qwen.readthedocs.io/en/stable/deployment/vllm.html)
 与[DeepSeek文档](https://api-docs.deepseek.com/guides/thinking_mode/)。
 

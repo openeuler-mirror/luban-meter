@@ -200,7 +200,13 @@ def test_quality_client_request_and_response(enabled, protocol):
 
 
 @pytest.mark.parametrize("only_reasoning", [False, True])
-def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning):
+@pytest.mark.parametrize("controls", [
+    {},
+    {"enable_thinking": None, "thinking_protocol": "deepseek"},
+    {"enable_thinking": True, "thinking_protocol": "deepseek"},
+    {"enable_thinking": False, "stop": ["END", "\n"]},
+])
+def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning, controls):
     posts = []
     content = "" if only_reasoning else "答案：B"
 
@@ -252,8 +258,8 @@ def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning):
         "model": "mock", "endpoint": "/v1/chat/completions",
         "base_url": f"http://127.0.0.1:{server.server_port}",
         "dataset_path": str(dataset), "data": "jsonl",
-        "enable_thinking": False, "thinking_protocol": "deepseek",
         "num_requests": 1, "profile": "concurrent", "max_concurrency": 1,
+        **controls,
     }
     task_file = tmp_path / "tasks.json"
     task_file.write_text(json.dumps({"tasks": [
@@ -271,7 +277,18 @@ def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning):
         thread.join()
     assert result["status"] == "success", result
     assert len(posts) == 3  # One warmup, one performance and one quality.
-    assert all(p["thinking"] == {"type": "disabled"} for p in posts)
+    for payload in posts:
+        assert payload["stop"] == controls.get("stop", [])
+        if controls.get("enable_thinking", False) is None:
+            assert "thinking" not in payload
+            assert "chat_template_kwargs" not in payload
+        elif controls.get("thinking_protocol") == "deepseek":
+            assert payload["thinking"] == {"type": "enabled"}
+        else:
+            assert payload["chat_template_kwargs"] == {
+                "enable_thinking": False
+            }
+    assert [p["stream"] for p in posts] == [True, True, False]
     for task in ("perf", "quality"):
         raw = json.loads((
             directory / "tasks" / task / "raw/case_1.json"

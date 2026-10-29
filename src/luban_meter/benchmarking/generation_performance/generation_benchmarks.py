@@ -19,7 +19,11 @@ from luban_meter.core.template_contracts import (
 from luban_meter.data import DatasetLoader
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import create_http_client, http_settings
-from luban_meter.runtime.thinking import thinking_payload, validate_thinking
+from luban_meter.runtime.thinking import (
+    thinking_defaults,
+    thinking_payload,
+    validate_thinking,
+)
 
 from .common.lengths import assess_lengths
 from .common.tokenization import (
@@ -75,10 +79,17 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         "input_format": Parameter(str, ""),
         "field_mapping": Parameter(list, [], item_type=str),
         "repeat_data": Parameter(bool, False),
+        "stop": Parameter(list, [], item_type=str),
         "goodput": Parameter(list, [], item_type=str),
         "circuit_breaker": Parameter(float, None, minimum=0.001),
         "max_error_rate": Parameter(float, None, minimum=0.0, maximum=1.0),
     }
+
+    @classmethod
+    def resolve_parameters(cls, supplied):
+        return thinking_defaults(
+            supplied, endpoint=cls.parameter_schema()["endpoint"].default
+        )
 
     @classmethod
     def validate(cls, parameters):
@@ -229,6 +240,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             "seed": self.p["seed"],
             "stream": True,
             "stream_options": {"include_usage": True},
+            "stop": self.p["stop"],
         }
         payload.update(thinking_payload(
             self.p["enable_thinking"], self.p["thinking_protocol"]

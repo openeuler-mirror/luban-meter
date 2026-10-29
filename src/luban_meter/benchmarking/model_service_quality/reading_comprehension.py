@@ -190,7 +190,7 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
             parameters, "prompt_version", "squad2-gen-v1"
         ),
         "max_tokens": positive_integer(parameters, "max_tokens", 64),
-        "stop": string_list(parameters, "stop", ["\n"]),
+        "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
     }
     fixed_value(parameters, "temperature", 0.0)

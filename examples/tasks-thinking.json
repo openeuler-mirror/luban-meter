@@ -15,7 +15,8 @@
       "num_requests": 100,
       "num_warmups": 1,
       "thinking_protocol": "deepseek",
-      "enable_thinking": false
+      "enable_thinking": false,
+      "stop": []
     },
     {
       "name": "knowledge_accuracy",
@@ -33,7 +34,8 @@
       "profile": "concurrent",
       "max_concurrency": 4,
       "thinking_protocol": "deepseek",
-      "enable_thinking": false
+      "enable_thinking": false,
+      "stop": []
     }
   ]
 }
