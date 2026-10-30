@@ -15,7 +15,6 @@ from luban_meter.benchmarking.benchmark_parameters import (
     GENERATION,
     HTTP,
     SANDBOX,
-    THINKING,
 )
 from luban_meter.benchmarking.model_service_quality.common.client import (
     OpenAIClient,
@@ -25,7 +24,7 @@ from luban_meter.data import DatasetLoader
 from luban_meter.data.engine import select_few_shot
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import http_settings
-from luban_meter.runtime.thinking import thinking_defaults, validate_thinking
+from luban_meter.runtime.request_params import validate_request_params
 
 from . import (
     arithmetic_qa,
@@ -40,7 +39,6 @@ from .common import choice
 class QualityBenchmark(ModelServiceQualityBenchmark):
     parameters = {
         **HTTP,
-        **THINKING,
         **DATA,
         **GENERATION,
         "profile": Parameter(str, "concurrent"),
@@ -56,15 +54,6 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
     default_answer_parser = ""
     record_fields = {}
     prediction_type = str
-
-    @classmethod
-    def resolve_parameters(cls, supplied):
-        schema = cls.parameter_schema()
-        return thinking_defaults(
-            supplied,
-            endpoint=schema["endpoint"].default,
-            eval_mode=schema["eval_mode"].default,
-        )
 
     @classmethod
     def pipeline(cls, parameters):
@@ -114,7 +103,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
     @classmethod
     def validate(cls, parameters):
         http_settings(parameters)
-        validate_thinking(parameters)
+        validate_request_params(parameters["request_params"])
         sources.get(parameters["data"])
         cls.domain_parameters(parameters)
         cls.pipeline(parameters)
@@ -155,8 +144,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
             api_key=context.parameters["api_key"],
             timeout=context.parameters["request_timeout"],
             request_runner=context.request,
-            enable_thinking=context.parameters["enable_thinking"],
-            thinking_protocol=context.parameters["thinking_protocol"],
+            request_params=context.parameters["request_params"],
             max_connections=self.http_settings["max_connections"],
             keepalive_expiry=self.http_settings["keepalive_expiry"],
         )

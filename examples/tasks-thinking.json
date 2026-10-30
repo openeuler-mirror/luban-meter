@@ -14,9 +14,12 @@
       "output_tokens": 128,
       "num_requests": 100,
       "num_warmups": 1,
-      "thinking_protocol": "deepseek",
-      "enable_thinking": false,
-      "stop": []
+      "stop": [],
+      "request_params": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
     },
     {
       "name": "knowledge_accuracy",
@@ -33,9 +36,12 @@
       "output_tokens": 512,
       "profile": "concurrent",
       "max_concurrency": 4,
-      "thinking_protocol": "deepseek",
-      "enable_thinking": false,
-      "stop": []
+      "stop": [],
+      "request_params": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
     }
   ]
 }

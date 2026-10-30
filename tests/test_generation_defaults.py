@@ -8,7 +8,6 @@ import pytest
 from luban_meter.benchmarking.model_service_quality.common.client import (
     OpenAIClient,
 )
-from luban_meter.cli import main
 from luban_meter.core.planning import build_plan
 
 
@@ -26,10 +25,9 @@ def test_task_defaults_depend_on_endpoint(tmp_path, scenario, endpoint):
         "dataset_path": str(dataset),
     })
     params = plan["tasks"][0]["cases"][0]["parameters"]
-    assert params["enable_thinking"] is (
-        False if endpoint == "/v1/chat/completions" else None
-    )
-    assert params["thinking_protocol"] == "chat_template"
+    assert params["request_params"] == {}
+    assert "enable_thinking" not in params
+    assert "thinking_protocol" not in params
     assert params["stop"] == []
 
 
@@ -45,31 +43,7 @@ def test_non_generation_modes_do_not_inherit_thinking_default(
         **settings,
     })
     params = plan["tasks"][0]["cases"][0]["parameters"]
-    assert params["enable_thinking"] is None
-
-
-def test_cli_default_off_and_task_null_override(tmp_path, capsys):
-    config = tmp_path / "tasks.json"
-    config.write_text(json.dumps({"tasks": [
-        {"name": "default"},
-        {"name": "inherit_service", "enable_thinking": None},
-        {"name": "thinking", "enable_thinking": True},
-    ]}))
-    assert main([
-        "plan", "--scenario", "online_serving", "--model", "mock",
-        "--endpoint", "/v1/chat/completions", "--config", str(config),
-    ]) == 0
-    output = json.loads(capsys.readouterr().out)
-    assert [t["cases"][0]["parameters"]["enable_thinking"]
-            for t in output["tasks"]] == [False, None, True]
-    assert main([
-        "plan", "--scenario", "online_serving", "--model", "mock",
-        "--endpoint", "/v1/chat/completions", "--config", str(config),
-        "--enable-thinking",
-    ]) == 0
-    output = json.loads(capsys.readouterr().out)
-    assert [t["cases"][0]["parameters"]["enable_thinking"]
-            for t in output["tasks"]] == [True, None, True]
+    assert params["request_params"] == {}
 
 
 @pytest.mark.parametrize("stop", [[], ["\n", "END"]])

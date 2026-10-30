@@ -11,10 +11,6 @@ from luban_meter.benchmarking.generation_performance import online_serving
 from luban_meter.benchmarking.generation_performance.common.streaming import (
     collect_chat_stream,
 )
-from luban_meter.benchmarking.model_service_quality.common.client import (
-    OpenAIClient,
-)
-from luban_meter.cli import main
 from luban_meter.core.planning import build_plan
 from luban_meter.core.run_coordinator import RunCoordinator
 
@@ -96,115 +92,14 @@ def test_stream_invalid_and_empty_evidence(body, message):
         collect_chat_stream(io.BytesIO(body + b'data: [DONE]\n'))
 
 
-@pytest.mark.parametrize("scenario", ["online_serving", "cmmlu", "gsm8k"])
-@pytest.mark.parametrize("enabled", [None, True, False])
-@pytest.mark.parametrize("protocol", ["chat_template", "deepseek"])
-def test_public_thinking_controls(tmp_path, scenario, enabled, protocol):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text('{}\n')
-    plan = build_plan({
-        "scenario": scenario, "model": "mock", "few_shot": 0,
-        "endpoint": "/v1/chat/completions", "dataset_path": str(dataset),
-        "enable_thinking": enabled, "thinking_protocol": protocol,
-    } if scenario != "online_serving" else {
-        "scenario": scenario, "model": "mock",
-        "endpoint": "/v1/chat/completions",
-        "enable_thinking": enabled, "thinking_protocol": protocol,
-    })
-    params = plan["tasks"][0]["cases"][0]["parameters"]
-    assert params["enable_thinking"] is enabled
-    assert params["thinking_protocol"] == protocol
-
-
-@pytest.mark.parametrize("scenario, extra", [
-    ("online_serving", {}),
-    ("cmmlu", {}),
-    ("cmmlu", {"eval_mode": "ppl"}),
-    ("wikitext", {}),
-    ("humaneval", {}),
-])
-def test_completions_and_ppl_reject_thinking(tmp_path, scenario, extra):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text('{}\n')
-    with pytest.raises(ValueError, match="enable_thinking"):
-        build_plan({
-            "scenario": scenario, "model": "mock",
-            "dataset_path": str(dataset), "enable_thinking": False,
-            **extra,
-        })
-
-
-@pytest.mark.parametrize("parameters", [
-    {"thinking_protocol": "unknown"},
-    {"enable_thinking": "false"},
-])
-def test_invalid_thinking_parameters(parameters):
-    with pytest.raises(ValueError, match="thinking"):
-        build_plan({
-            "scenario": "online_serving", "model": "mock", **parameters,
-        })
-
-
-def test_cli_thinking_options(capsys):
-    assert main([
-        "plan", "--scenario", "online_serving", "--model", "mock",
-        "--endpoint", "/v1/chat/completions", "--no-enable-thinking",
-        "--thinking-protocol", "deepseek",
-    ]) == 0
-    output = json.loads(capsys.readouterr().out)
-    params = output["tasks"][0]["cases"][0]["parameters"]
-    assert params["enable_thinking"] is False
-    assert params["thinking_protocol"] == "deepseek"
-
-
-@pytest.mark.parametrize("enabled", [None, False, True])
-@pytest.mark.parametrize("protocol", ["chat_template", "deepseek"])
-def test_quality_client_request_and_response(enabled, protocol):
-    client = OpenAIClient(
-        "http://mock", enable_thinking=enabled, thinking_protocol=protocol
-    )
-    payloads = []
-
-    def post(path, payload):
-        payloads.append(payload)
-        return {"choices": [{
-            "message": {"reasoning_content": "答案：A", "content": "答案：B"},
-            "finish_reason": "stop",
-        }], "usage": {
-            "prompt_tokens": 10, "completion_tokens": 8,
-            "completion_tokens_details": {"reasoning_tokens": 6},
-        }}, 10
-
-    client._post = post
-    try:
-        result = client.chat([{"role": "user", "content": "Q"}])
-    finally:
-        client.close()
-    assert result["text"] == "答案：B"
-    assert result["reasoning_text"] == "答案：A"
-    assert result["reasoning_tokens"] == 6
-    assert result["output_tokens"] == 8
-    if enabled is None:
-        assert "thinking" not in payloads[0]
-        assert "chat_template_kwargs" not in payloads[0]
-    elif protocol == "deepseek":
-        assert payloads[0]["thinking"] == {
-            "type": "enabled" if enabled else "disabled"
-        }
-        assert "chat_template_kwargs" not in payloads[0]
-    else:
-        assert payloads[0]["chat_template_kwargs"] == {
-            "enable_thinking": enabled
-        }
-        assert "thinking" not in payloads[0]
-
-
 @pytest.mark.parametrize("only_reasoning", [False, True])
 @pytest.mark.parametrize("controls", [
     {},
-    {"enable_thinking": None, "thinking_protocol": "deepseek"},
-    {"enable_thinking": True, "thinking_protocol": "deepseek"},
-    {"enable_thinking": False, "stop": ["END", "\n"]},
+    {"request_params": {"chat_template_kwargs": {"enable_thinking": True}}},
+    {"request_params": {"chat_template_kwargs": {"enable_thinking": False}}},
+    {"request_params": {"thinking": {"type": "disabled"}}},
+    {"request_params": {"top_p": 0.9, "custom": {"items": [True, None, 1]}},
+     "stop": ["END", "\n"]},
 ])
 def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning, controls):
     posts = []
@@ -279,15 +174,11 @@ def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning, controls):
     assert len(posts) == 3  # One warmup, one performance and one quality.
     for payload in posts:
         assert payload["stop"] == controls.get("stop", [])
-        if controls.get("enable_thinking", False) is None:
-            assert "thinking" not in payload
-            assert "chat_template_kwargs" not in payload
-        elif controls.get("thinking_protocol") == "deepseek":
-            assert payload["thinking"] == {"type": "enabled"}
-        else:
-            assert payload["chat_template_kwargs"] == {
-                "enable_thinking": False
-            }
+        extra = controls.get("request_params", {})
+        for key, value in extra.items():
+            assert payload[key] == value
+        for key in ("thinking", "chat_template_kwargs"):
+            assert (key in payload) is (key in extra)
     assert [p["stream"] for p in posts] == [True, True, False]
     for task in ("perf", "quality"):
         raw = json.loads((

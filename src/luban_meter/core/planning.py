@@ -148,9 +148,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
             case_parameters = []
             for overrides in expand_cases(case_definition, schema):
                 parameters = validate_parameters(
-                    schema,
-                    scenario.resolve_parameters({**supplied, **overrides}),
-                    base_dir=directory,
+                    schema, {**supplied, **overrides}, base_dir=directory
                 )
                 scenario.validate(parameters)
                 for key, spec in schema.items():

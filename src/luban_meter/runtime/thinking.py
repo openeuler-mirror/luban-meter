@@ -1,46 +1,6 @@
-"""Thinking controls and response facts shared by HTTP benchmarks."""
+"""Thinking response facts shared by HTTP benchmarks."""
 
 from collections.abc import Mapping
-
-
-def thinking_defaults(supplied, *, endpoint, eval_mode="gen"):
-    """Default chat generation to non-thinking; preserve explicit null."""
-    result = dict(supplied)
-    if (
-        "enable_thinking" not in result
-        and result.get("endpoint", endpoint) == "/v1/chat/completions"
-        and result.get("eval_mode", eval_mode) == "gen"
-    ):
-        result["enable_thinking"] = False
-    return result
-
-
-def thinking_payload(enable_thinking=None, thinking_protocol="chat_template"):
-    """Build an explicit protocol extension; null leaves service defaults."""
-    if enable_thinking is not None and not isinstance(enable_thinking, bool):
-        raise ValueError("enable_thinking must be a boolean or null")
-    if thinking_protocol not in ("chat_template", "deepseek"):
-        raise ValueError("thinking_protocol must be chat_template or deepseek")
-    if enable_thinking is None:
-        return {}
-    if thinking_protocol == "deepseek":
-        return {
-            "thinking": {"type": "enabled" if enable_thinking else "disabled"}
-        }
-    return {"chat_template_kwargs": {"enable_thinking": enable_thinking}}
-
-
-def validate_thinking(parameters):
-    """Reject explicit controls outside chat generation before execution."""
-    enabled = parameters.get("enable_thinking")
-    thinking_payload(
-        enabled, parameters.get("thinking_protocol", "chat_template")
-    )
-    if enabled is not None and (
-        parameters["endpoint"] != "/v1/chat/completions"
-        or parameters.get("eval_mode", "gen") != "gen"
-    ):
-        raise ValueError("enable_thinking requires chat endpoint and gen mode")
 
 
 def reasoning_text(message):

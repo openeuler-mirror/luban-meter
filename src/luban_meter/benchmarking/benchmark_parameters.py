@@ -21,14 +21,8 @@ HTTP = {
         help="HTTP idle connection lifetime in seconds (must be positive)",
     ),
     "temperature": Parameter(float, 0.0, choices=(0.0,)),
-}
-THINKING = {
-    "enable_thinking": Parameter(
-        bool, None,
-        help="Chat generation defaults off; JSON null uses service defaults",
-    ),
-    "thinking_protocol": Parameter(
-        str, "chat_template", choices=("chat_template", "deepseek"),
+    "request_params": Parameter(
+        dict, {}, help="Additional request body fields as a JSON object",
     ),
 }
 DATA = {

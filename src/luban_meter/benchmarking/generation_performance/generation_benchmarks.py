@@ -10,7 +10,7 @@ from luban_meter.api import (
     Parameter,
     benchmarks,
 )
-from luban_meter.benchmarking.benchmark_parameters import DATA, HTTP, THINKING
+from luban_meter.benchmarking.benchmark_parameters import DATA, HTTP
 from luban_meter.core.template_contracts import (
     compatible,
     input_templates,
@@ -19,10 +19,9 @@ from luban_meter.core.template_contracts import (
 from luban_meter.data import DatasetLoader
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import create_http_client, http_settings
-from luban_meter.runtime.thinking import (
-    thinking_defaults,
-    thinking_payload,
-    validate_thinking,
+from luban_meter.runtime.request_params import (
+    append_request_params,
+    validate_request_params,
 )
 
 from .common.lengths import assess_lengths
@@ -65,7 +64,6 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
     default_metrics = ("streaming_performance",)
     parameters = {
         **HTTP,
-        **THINKING,
         **DATA,
         **TRACE_PARAMETERS,
         "data": Parameter(str, "random_token"),
@@ -86,15 +84,9 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
     }
 
     @classmethod
-    def resolve_parameters(cls, supplied):
-        return thinking_defaults(
-            supplied, endpoint=cls.parameter_schema()["endpoint"].default
-        )
-
-    @classmethod
     def validate(cls, parameters):
         http_settings(parameters)
-        validate_thinking(parameters)
+        validate_request_params(parameters["request_params"])
         validate_trace_parameters(parameters)
         thresholds(parameters["goodput"], ("ttft", "tpot", "e2el"))
         if parameters["profile"] == "replay":
@@ -242,15 +234,13 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             "stream_options": {"include_usage": True},
             "stop": self.p["stop"],
         }
-        payload.update(thinking_payload(
-            self.p["enable_thinking"], self.p["thinking_protocol"]
-        ))
         if self.p["ignore_eos"]:
             payload.update(min_tokens=budget, ignore_eos=True)
         if self.p["endpoint"] == "/v1/chat/completions":
             payload["messages"] = [{"role": "user", "content": text}]
         else:
             payload.update(prompt=text, add_special_tokens=False)
+        payload = append_request_params(payload, self.p["request_params"])
         if self.records is not None:
             self.check_input(text, sample)
 

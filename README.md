@@ -177,45 +177,49 @@ A/B/C/D，与普通答案一起检查冲突，不从解释或一般数学表达�
 选择题默认`stop=[]`，避免思考标签后的换行截断；显式配置的停止符仍生效。
 这不会关闭模型思考或增加输出预算，思考模式需预留足够的输出和上下文长度。
 
-在线性能`online_serving`与质量任务的`gen/chat`接口共用思考开关：
+在线性能与质量任务通过`request_params`向模型推理请求追加自定义JSON字段。
+默认`{}`，不自动发送思考开关，也不根据模型选择协议。支持嵌套对象、数组、
+字符串、布尔、有限数字及null；CLI使用`--request-params 'JSON对象'`。
 
-| 任务JSON字段 | CLI参数 | 行为 |
-|---|---|---|
-| `enable_thinking` | `--enable-thinking` / `--no-enable-thinking` | chat生成默认`false`关闭；`true`开启；显式`null`不发送扩展字段 |
-| `thinking_protocol` | `--thinking-protocol` | 默认`chat_template`，也可选`deepseek` |
-
-`chat_template`发送`chat_template_kwargs.enable_thinking`，保持已有配置兼容；
-`deepseek`发送`thinking.type=enabled/disabled`。服务和模型模板必须支持所选协议，
-客户端不会自动判断模型或重试其他协议，也不会修改服务全局设置。
-显式思考开关不适用于PPL或completions接口，静态预检会报错。
-默认关闭仅适用于chat生成任务；PPL、loss和completions缺省不发送思考字段，
-显式不适用的布尔开关仍报错。CLI基础值可被任务JSON覆盖，任务中显式`null`
-会覆盖CLI的开启/关闭设置并沿用服务行为。已有省略该字段的chat任务将从沿用服务
-改为请求关闭；服务不支持默认协议时，可选其他协议或显式设为`null`。
-
-在线性能保持`stream=true`以采集TTFT/ITL等指标，质量评测保持`stream=false`。
-HTTP生成请求默认显式发送`stop: []`，不注入换行停止符；显式停止列表仍生效。
-PPL/logprobs评分请求保持原有行为。空停止列表不会禁用EOS或绕过输出预算，
-也不能保证清除服务端自行配置的停止规则。
-协议依据见[Qwen文档](https://qwen.readthedocs.io/en/stable/deployment/vllm.html)
-与[DeepSeek文档](https://api-docs.deepseek.com/guides/thinking_mode/)。
-
-例如，在两个chat任务中分别加入以下字段即可请求关闭DeepSeek思考：
+例如，服务支持模板参数时，在任务JSON中配置：
 
 ```json
-"thinking_protocol": "deepseek",
-"enable_thinking": false
+"request_params": {
+  "chat_template_kwargs": {"enable_thinking": false}
+}
 ```
 
-完整任务JSON见[examples/tasks-thinking.json](examples/tasks-thinking.json)。
-CLI示例（服务名、地址与数据路径需按实际环境替换）：
+服务支持DeepSeek思考控制字段时，可以改为：
+
+```json
+"request_params": {
+  "thinking": {"type": "disabled"}
+}
+```
+
+自定义字段原样追加到chat、completions及logprobs推理请求的顶层；
+不会发送到健康检查、metrics或tokenize接口。参数是否生效由被测服务决定，
+客户端不转换思考协议或对未知服务字段进行自动重试。
+`model`、`messages`、`prompt`、`stream`、`stream_options`、Token预算、`stop`、
+`temperature`、`seed`、`n`、`best_of`及`echo/logprobs`等评测核心字段禁止覆盖，
+静态预检会报错；运行前构造请求时也检查同名冲突。使用已有专用参数修改这些条件。
+任务中的`request_params`整体替换CLI基础对象，不做隐式深层合并；显式`{}`可清空它。
+
+原有`thinking_protocol`和`enable_thinking`任务参数及CLI选项已移除，旧配置会报错。
+迁移时删除旧字段，将需要的请求字段写入`request_params`。
+完整示例见[examples/tasks-thinking.json](examples/tasks-thinking.json)。
 
 ```bash
 luban-meter run --scenario online_serving --model served-model \
   --base-url http://127.0.0.1:8000 --endpoint /v1/chat/completions \
   --data jsonl --dataset-path dataset/prompts.jsonl \
-  --thinking-protocol deepseek --no-enable-thinking
+  --request-params '{"chat_template_kwargs":{"enable_thinking":false}}'
 ```
+
+在线性能保持`stream=true`以采集TTFT/ITL等指标，质量评测保持`stream=false`。
+HTTP生成请求默认显式发送`stop: []`，不注入换行停止符；显式停止列表仍生效。
+PPL/logprobs评分必需字段保持原有行为，也可通过`request_params`追加服务扩展。
+空停止列表不会禁用EOS或绕过输出预算，也不能保证清除服务端自行配置的停止规则。
 
 chat性能采集同时识别`delta.reasoning`、`delta.reasoning_content`和`delta.content`。
 TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事件包含两个通道时只计时一次。

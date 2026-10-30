@@ -57,11 +57,6 @@ class Benchmark(ABC):
         return schema
 
     @classmethod
-    def resolve_parameters(cls, supplied: Mapping[str, Any]) -> dict:
-        """Resolve dependent defaults before filling absent parameters."""
-        return dict(supplied)
-
-    @classmethod
     def validate(cls, parameters: Mapping[str, Any]) -> None:
         """Check relationships not expressed by individual parameters."""
 
