@@ -19,6 +19,10 @@ from luban_meter.core.template_contracts import (
 from luban_meter.data import DatasetLoader
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import create_http_client, http_settings
+from luban_meter.runtime.request_params import (
+    append_request_params,
+    validate_request_params,
+)
 
 from .common.lengths import assess_lengths
 from .common.tokenization import (
@@ -73,6 +77,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         "input_format": Parameter(str, ""),
         "field_mapping": Parameter(list, [], item_type=str),
         "repeat_data": Parameter(bool, False),
+        "stop": Parameter(list, [], item_type=str),
         "goodput": Parameter(list, [], item_type=str),
         "circuit_breaker": Parameter(float, None, minimum=0.001),
         "max_error_rate": Parameter(float, None, minimum=0.0, maximum=1.0),
@@ -81,6 +86,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
     @classmethod
     def validate(cls, parameters):
         http_settings(parameters)
+        validate_request_params(parameters["request_params"])
         validate_trace_parameters(parameters)
         thresholds(parameters["goodput"], ("ttft", "tpot", "e2el"))
         if parameters["profile"] == "replay":
@@ -226,6 +232,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             "seed": self.p["seed"],
             "stream": True,
             "stream_options": {"include_usage": True},
+            "stop": self.p["stop"],
         }
         if self.p["ignore_eos"]:
             payload.update(min_tokens=budget, ignore_eos=True)
@@ -233,6 +240,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             payload["messages"] = [{"role": "user", "content": text}]
         else:
             payload.update(prompt=text, add_special_tokens=False)
+        payload = append_request_params(payload, self.p["request_params"])
         if self.records is not None:
             self.check_input(text, sample)
 

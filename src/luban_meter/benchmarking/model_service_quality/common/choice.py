@@ -33,6 +33,7 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_choice_prompt,
     validate_prompt_version,
 )
+from luban_meter.runtime.thinking import response_facts
 
 PROTOCOL = "openai_compatible_chat_and_completions"
 SCORER_VERSION = "metrics-v1"
@@ -51,9 +52,6 @@ def validate_choice_parameters(
     parameters: Mapping[str, Any],
     benchmark_definition: ChoiceBenchmarkDefinition,
 ) -> dict[str, Any]:
-    enable_thinking = parameters.get("enable_thinking")
-    if enable_thinking is not None and not isinstance(enable_thinking, bool):
-        raise ValueError("enable_thinking must be a boolean or null")
     config = {
         "service_url": string_value(
             parameters, "service_url", "http://127.0.0.1:8000"
@@ -81,16 +79,9 @@ def validate_choice_parameters(
         ),
         "max_tokens": positive_integer(parameters, "max_tokens", 8),
         "stop": string_list(parameters, "stop", []),
-        "enable_thinking": enable_thinking,
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
     }
     fixed_value(parameters, "temperature", 0.0)
-    if enable_thinking is not None and (
-        config["eval_mode"] != "gen" or config["prompt_format"] != "chat"
-    ):
-        raise ValueError(
-            "enable_thinking requires eval_mode=gen and prompt_format=chat"
-        )
     if config["eval_mode"] == "ppl" and config["prompt_format"] == "chat":
         raise ValueError(
             "eval_mode=ppl requires prompt_format=base: chat-template "
@@ -148,14 +139,10 @@ def generate_answer(
     client: OpenAIClient, prompt: str, config: dict[str, Any]
 ) -> dict[str, Any]:
     if config["prompt_format"] == "chat":
-        thinking = {}
-        if config.get("enable_thinking") is not None:
-            thinking["enable_thinking"] = config["enable_thinking"]
         return client.chat(
             [{"role": "user", "content": prompt}],
             max_tokens=config["max_tokens"],
             stop=config["stop"],
-            **thinking,
         )
     return client.complete(
         prompt, max_tokens=config["max_tokens"], stop=config["stop"]
@@ -218,6 +205,7 @@ def collect_sample(
             )
         else:
             response = generate_answer(client, prompt, config)
+            record.update(response_facts(response))
             raw_output = response["text"]
             prediction = template_adapters.parse_output(
                 config, sample, rendered, raw_output, extract_choice

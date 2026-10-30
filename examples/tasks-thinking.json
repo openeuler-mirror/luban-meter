@@ -1,0 +1,47 @@
+{
+  "tasks": [
+    {
+      "name": "performance",
+      "scenario": "online_serving",
+      "model": "served-model",
+      "base_url": "http://127.0.0.1:8000",
+      "endpoint": "/v1/chat/completions",
+      "data": "random_token",
+      "tokenizer": "/models/your-model",
+      "profile": "concurrent",
+      "max_concurrency": 4,
+      "input_tokens": 128,
+      "output_tokens": 128,
+      "num_requests": 100,
+      "num_warmups": 1,
+      "stop": [],
+      "request_params": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    },
+    {
+      "name": "knowledge_accuracy",
+      "scenario": "cmmlu",
+      "model": "served-model",
+      "base_url": "http://127.0.0.1:8000",
+      "endpoint": "/v1/chat/completions",
+      "data": "jsonl",
+      "dataset_path": "../dataset/cmmlu/val.jsonl",
+      "eval_mode": "gen",
+      "few_shot": 0,
+      "max_samples": 100,
+      "num_requests": 100,
+      "output_tokens": 512,
+      "profile": "concurrent",
+      "max_concurrency": 4,
+      "stop": [],
+      "request_params": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
+    }
+  ]
+}

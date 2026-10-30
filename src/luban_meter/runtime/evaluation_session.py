@@ -13,6 +13,7 @@ from luban_meter.core.metric import compute_metrics
 from luban_meter.core.parameters import public_parameters
 from luban_meter.core.planning import schema_for
 from luban_meter.runtime.device_monitor import DeviceMonitorDaemon
+from luban_meter.runtime.host_monitor import HostMonitorDaemon
 from luban_meter.runtime.load_profiles import profiles
 from luban_meter.runtime.prometheus_observer import PrometheusObserver
 from luban_meter.runtime.request_scheduler import (
@@ -189,6 +190,7 @@ def run_case(
     scenario = scenario_type()
     observer = None
     device_monitor = None
+    host_monitor = None
     result = {"id": case["id"], "status": "failed", "metrics": {}}
     public = public_parameters(p, schema_for(scenario_type, p))
     result["parameters"] = public
@@ -236,6 +238,11 @@ def run_case(
                 device_monitor.start()
             except Exception as exc:
                 result["device_observation"] = {"error": str(exc)}
+        if p.get("host_exporter_url"):
+            host_monitor = HostMonitorDaemon(
+                p["host_exporter_url"], p["host_sample_interval"]
+            )
+            host_monitor.start()
         if observation:
             url = (
                 observation.get("url")
@@ -277,6 +284,13 @@ def run_case(
                 result["device_observation"] = {"error": str(exc)}
             context.emit("device_observation", result["device_observation"])
             device_monitor = None
+        if host_monitor:
+            host_monitor.stop()
+            result["host_observation"] = host_monitor.result(
+                started_at, ended_at
+            )
+            context.emit("host_observation", result["host_observation"])
+            host_monitor = None
         counts = coverage(rows, context.total_samples)
         facts = {
             "parameters": public,
@@ -362,6 +376,8 @@ def run_case(
             )
             result.update(raw=str(raw_path), coverage=counts)
     finally:
+        if host_monitor is not None:
+            host_monitor.stop()
         if device_monitor is not None:
             device_monitor.stop()
         if observer is not None:

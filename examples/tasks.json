@@ -21,7 +21,8 @@
       "max_concurrency": 32,
       "num_requests": 1000,
       "num_warmups": 32,
-      "ignore_eos": true
+      "ignore_eos": true,
+      "stop": []
     },
     {
       "backend": "openai_http",
@@ -42,9 +43,7 @@
       "eval_mode": "gen",
       "few_shot": 0,
       "output_tokens": 8,
-      "stop": [
-        "\n"
-      ],
+      "stop": [],
       "profile": "concurrent",
       "max_concurrency": 8,
       "num_warmups": 0

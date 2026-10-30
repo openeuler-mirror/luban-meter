@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import json
-
-import httpx
 import pytest
 
 from luban_meter.benchmarking.model_service_quality.common import (
     choice,
     parsers,
     prompts,
-)
-from luban_meter.benchmarking.model_service_quality.common import (
     template_adapters,
 )
-from luban_meter.benchmarking.model_service_quality.common.client import (
-    OpenAIClient,
-)
-from luban_meter.core.planning import build_plan
 
 
 @pytest.mark.parametrize(
@@ -152,10 +143,9 @@ def test_choice_prompt_v2_remains_reproducible(name):
 
 
 @pytest.mark.parametrize("name", ["ceval", "cmmlu"])
-def test_choice_collection_forwards_thinking_switch(name):
+def test_choice_collection_preserves_generation_budget(name):
     class Client:
         def chat(self, messages, **kwargs):
-            assert kwargs["enable_thinking"] is False
             assert kwargs["max_tokens"] == 8192
             assert "只输出一行答案" in messages[0]["content"]
             return {"text": "答案：D", "output_tokens": 4}
@@ -166,7 +156,6 @@ def test_choice_collection_forwards_thinking_switch(name):
             "few_shot": 0,
             "eval_mode": "gen",
             "max_tokens": 8192,
-            "enable_thinking": False,
         },
         choice.ChoiceBenchmarkDefinition(name, name, name),
     )
@@ -177,87 +166,3 @@ def test_choice_collection_forwards_thinking_switch(name):
         "answer": "D",
     }
     assert choice.collect_sample(Client(), sample, [], config)["correct"]
-
-
-@pytest.mark.parametrize("enabled", [None, False, True])
-def test_thinking_switch_is_sent_as_chat_template_kwarg(enabled):
-    payloads = []
-
-    def handle(request):
-        payloads.append(json.loads(request.content))
-        return httpx.Response(
-            200, json={"choices": [{"message": {"content": "答案：A"}}]}
-        )
-
-    client = OpenAIClient("http://mock", "model")
-    client.http.close()
-    client.http = httpx.Client(transport=httpx.MockTransport(handle))
-    try:
-        result = client.chat(
-            [{"role": "user", "content": "题目"}],
-            enable_thinking=enabled,
-        )
-    finally:
-        client.close()
-    assert result["text"] == "答案：A"
-    if enabled is None:
-        assert "chat_template_kwargs" not in payloads[0]
-    else:
-        assert payloads[0]["chat_template_kwargs"] == {
-            "enable_thinking": enabled
-        }
-
-
-@pytest.mark.parametrize("name", ["ceval", "cmmlu"])
-@pytest.mark.parametrize("enabled", [None, False, True])
-def test_public_thinking_switch(name, enabled, tmp_path):
-    dataset = tmp_path / "data.jsonl"
-    dataset.write_text(
-        json.dumps(
-            {"question": "题目", "choices": ["甲", "乙", "丙", "丁"],
-             "answer": "A"}
-        ) + "\n"
-    )
-    plan = build_plan(
-        {
-            "scenario": name,
-            "model": "mock",
-            "dataset_path": str(dataset),
-            "endpoint": "/v1/chat/completions",
-            "few_shot": 0,
-            "enable_thinking": enabled,
-        }
-    )
-    parameters = plan["tasks"][0]["cases"][0]["parameters"]
-    assert parameters["enable_thinking"] is enabled
-
-
-@pytest.mark.parametrize("enabled", ["false", 0, 1, []])
-def test_thinking_switch_rejects_non_booleans(enabled):
-    with pytest.raises(ValueError, match="enable_thinking"):
-        choice.validate_choice_parameters(
-            {
-                "dataset_path": "unused.jsonl",
-                "few_shot": 0,
-                "eval_mode": "gen",
-                "enable_thinking": enabled,
-            },
-            choice.ChoiceBenchmarkDefinition("ceval", "ceval", "ceval"),
-        )
-
-
-@pytest.mark.parametrize(
-    ("mode", "prompt_format"), [("ppl", "base"), ("gen", "base")]
-)
-def test_thinking_switch_requires_chat_generation(mode, prompt_format):
-    with pytest.raises(ValueError, match="enable_thinking"):
-        choice.validate_choice_parameters(
-            {
-                "dataset_path": "unused.jsonl",
-                "few_shot": 0,
-                "eval_mode": mode,
-                "prompt_format": prompt_format,
-                "enable_thinking": False,
-            },
-            choice.ChoiceBenchmarkDefinition("ceval", "ceval", "ceval"),
-        )

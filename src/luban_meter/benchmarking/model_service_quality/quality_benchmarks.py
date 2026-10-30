@@ -24,6 +24,7 @@ from luban_meter.data import DatasetLoader
 from luban_meter.data.engine import select_few_shot
 from luban_meter.data.sources import sources
 from luban_meter.runtime.http_client import http_settings
+from luban_meter.runtime.request_params import validate_request_params
 
 from . import (
     arithmetic_qa,
@@ -102,6 +103,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
     @classmethod
     def validate(cls, parameters):
         http_settings(parameters)
+        validate_request_params(parameters["request_params"])
         sources.get(parameters["data"])
         cls.domain_parameters(parameters)
         cls.pipeline(parameters)
@@ -142,6 +144,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
             api_key=context.parameters["api_key"],
             timeout=context.parameters["request_timeout"],
             request_runner=context.request,
+            request_params=context.parameters["request_params"],
             max_connections=self.http_settings["max_connections"],
             keepalive_expiry=self.http_settings["keepalive_expiry"],
         )
@@ -189,7 +192,6 @@ class ChoiceBenchmark(QualityBenchmark):
         "max_samples": Parameter(int, 200, minimum=1),
         "output_tokens": Parameter(int, 8, minimum=1, matrix=True),
         "stop": Parameter(list, [], item_type=str),
-        "enable_thinking": Parameter(bool, None),
         "eval_mode": Parameter(str, "gen", choices=("gen", "ppl")),
     }
     domain_module = choice

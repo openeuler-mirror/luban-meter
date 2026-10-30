@@ -39,6 +39,7 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
 from luban_meter.data.engine import (
     resolve_data_path,
 )
+from luban_meter.runtime.thinking import response_facts
 
 
 def validate_records(records: list[dict]) -> list[dict]:
@@ -189,7 +190,7 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
             parameters, "prompt_version", "squad2-gen-v1"
         ),
         "max_tokens": positive_integer(parameters, "max_tokens", 64),
-        "stop": string_list(parameters, "stop", ["\n"]),
+        "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
     }
     fixed_value(parameters, "temperature", 0.0)
@@ -241,6 +242,7 @@ def collect_sample(
         response = generate_answer(client, prompt, config)
         record.update(
             {
+                **response_facts(response),
                 "raw_output": response["text"],
                 "input_tokens": response.get("input_tokens") or 0,
                 "output_tokens": response.get("output_tokens") or 0,

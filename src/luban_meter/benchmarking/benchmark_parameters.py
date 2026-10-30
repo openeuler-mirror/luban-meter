@@ -21,6 +21,9 @@ HTTP = {
         help="HTTP idle connection lifetime in seconds (must be positive)",
     ),
     "temperature": Parameter(float, 0.0, choices=(0.0,)),
+    "request_params": Parameter(
+        dict, {}, help="Additional request body fields as a JSON object",
+    ),
 }
 DATA = {
     "data": Parameter(str, "jsonl"),

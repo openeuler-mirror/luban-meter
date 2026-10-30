@@ -10,6 +10,14 @@ from typing import Any
 import httpx
 
 from luban_meter.runtime.http_client import create_http_client
+from luban_meter.runtime.request_params import (
+    append_request_params,
+    validate_request_params,
+)
+from luban_meter.runtime.thinking import (
+    reasoning_text,
+    reasoning_token_count,
+)
 
 
 class ServiceError(RuntimeError):
@@ -29,8 +37,12 @@ class OpenAIClient:
         *,
         max_connections: int = 100,
         keepalive_expiry: float = 5.0,
+        request_params: dict[str, Any] | None = None,
     ) -> None:
         self.service_url = service_url.rstrip("/")
+        self.request_params = validate_request_params(
+            {} if request_params is None else request_params
+        )
         self.served_model_name = served_model_name
         self.api_key = api_key
         self.timeout = timeout
@@ -47,6 +59,8 @@ class OpenAIClient:
     def _post(
         self, path: str, payload: dict[str, Any]
     ) -> tuple[dict[str, Any], float]:
+        if path in ("/v1/chat/completions", "/v1/completions"):
+            payload = append_request_params(payload, self.request_params)
         if self.request_runner is not None and "completions" in path:
             return self.request_runner(
                 lambda ticket: self._post_direct(path, payload)
@@ -94,7 +108,6 @@ class OpenAIClient:
         temperature: float = 0.0,
         max_tokens: int | None = None,
         stop: list[str] | None = None,
-        enable_thinking: bool | None = None,
     ) -> dict[str, Any]:
         """Call /v1/chat/completions; the service applies the chat
         template.
@@ -107,19 +120,24 @@ class OpenAIClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if stop:
-            payload["stop"] = stop
-        if enable_thinking is not None:
-            payload["chat_template_kwargs"] = {
-                "enable_thinking": enable_thinking
-            }
+        payload["stop"] = [] if stop is None else stop
         body, elapsed_ms = self._post("/v1/chat/completions", payload)
         choices = body.get("choices") or []
         if not choices or not isinstance(choices[0], dict):
             raise ServiceError("chat completion returned no choices")
         message = choices[0].get("message") or {}
         usage = body.get("usage") or {}
+        try:
+            thought = reasoning_text(message)
+            thought_tokens = reasoning_token_count(usage)
+        except ValueError as exc:
+            raise ServiceError(str(exc)) from exc
         return {
+            "reasoning_text": thought,
+            "reasoning_tokens": thought_tokens,
+            "has_content": bool(message.get("content")),
+            "finish_reason": choices[0].get("finish_reason"),
+            "usage": usage,
             "text": message.get("content") or "",
             "input_tokens": usage.get("prompt_tokens"),
             "output_tokens": usage.get("completion_tokens"),
@@ -143,8 +161,7 @@ class OpenAIClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if stop:
-            payload["stop"] = stop
+        payload["stop"] = [] if stop is None else stop
         body, elapsed_ms = self._post("/v1/completions", payload)
         choices = body.get("choices") or []
         if not choices or not isinstance(choices[0], dict):

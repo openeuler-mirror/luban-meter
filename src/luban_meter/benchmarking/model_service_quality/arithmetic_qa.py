@@ -35,6 +35,7 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
     scalar,
     token_count,
 )
+from luban_meter.runtime.thinking import response_facts
 
 MEASUREMENT = "gsm8k_exact_match_online_service"
 PROTOCOL = "openai_compatible_chat_and_completions"
@@ -122,6 +123,7 @@ def collect_sample(
     }
     try:
         response = generate_answer(client, prompt, config)
+        record.update(response_facts(response))
         raw_output = response["text"]
         prediction = template_adapters.parse_output(
             config, sample, rendered, raw_output, extract_number

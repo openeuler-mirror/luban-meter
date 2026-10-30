@@ -177,13 +177,67 @@ A/B/C/D，与普通答案一起检查冲突，不从解释或一般数学表达�
 选择题默认`stop=[]`，避免思考标签后的换行截断；显式配置的停止符仍生效。
 这不会关闭模型思考或增加输出预算，思考模式需预留足够的输出和上下文长度。
 
-选择题`gen`使用chat接口时，可在任务JSON设置`"enable_thinking": false`，
-或使用CLI的`--no-enable-thinking`，通过请求体
-`chat_template_kwargs.enable_thinking=false`关闭Qwen3思考。默认`null`不发送
-此扩展字段，沿用服务行为；显式`true`请求开启。该扩展要求服务和模型模板支持，
-并非所有OpenAI兼容接口的通用能力；不适用于PPL或completions接口。
-此开关不需要重启vLLM，也不会修改服务的全局默认值。
-用法依据见[Qwen官方vLLM文档](https://qwen.readthedocs.io/en/stable/deployment/vllm.html)。
+在线性能与质量任务通过`request_params`向模型推理请求追加自定义JSON字段。
+默认`{}`，不自动发送思考开关，也不根据模型选择协议。支持嵌套对象、数组、
+字符串、布尔、有限数字及null；CLI使用`--request-params 'JSON对象'`。
+
+例如，服务支持模板参数时，在任务JSON中配置：
+
+```json
+"request_params": {
+  "chat_template_kwargs": {"enable_thinking": false}
+}
+```
+
+服务支持DeepSeek思考控制字段时，可以改为：
+
+```json
+"request_params": {
+  "thinking": {"type": "disabled"}
+}
+```
+
+自定义字段原样追加到chat、completions及logprobs推理请求的顶层；
+不会发送到健康检查、metrics或tokenize接口。参数是否生效由被测服务决定，
+客户端不转换思考协议或对未知服务字段进行自动重试。
+`model`、`messages`、`prompt`、`stream`、`stream_options`、Token预算、`stop`、
+`temperature`、`seed`、`n`、`best_of`及`echo/logprobs`等评测核心字段禁止覆盖，
+静态预检会报错；运行前构造请求时也检查同名冲突。使用已有专用参数修改这些条件。
+任务中的`request_params`整体替换CLI基础对象，不做隐式深层合并；显式`{}`可清空它。
+
+原有`thinking_protocol`和`enable_thinking`任务参数及CLI选项已移除，旧配置会报错。
+迁移时删除旧字段，将需要的请求字段写入`request_params`。
+完整示例见[examples/tasks-thinking.json](examples/tasks-thinking.json)。
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --base-url http://127.0.0.1:8000 --endpoint /v1/chat/completions \
+  --data jsonl --dataset-path dataset/prompts.jsonl \
+  --request-params '{"chat_template_kwargs":{"enable_thinking":false}}'
+```
+
+在线性能保持`stream=true`以采集TTFT/ITL等指标，质量评测保持`stream=false`。
+HTTP生成请求默认显式发送`stop: []`，不注入换行停止符；显式停止列表仍生效。
+PPL/logprobs评分必需字段保持原有行为，也可通过`request_params`追加服务扩展。
+空停止列表不会禁用EOS或绕过输出预算，也不能保证清除服务端自行配置的停止规则。
+
+chat性能采集同时识别`delta.reasoning`、`delta.reasoning_content`和`delta.content`。
+TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事件包含两个通道时只计时一次。
+原始请求事实分别保存`reasoning_text`和`generated_text`，并记录：
+
+- `output_observation=reasoning_and_content`：标记本次输出观察口径；
+- `output_event_offsets_ms`、`reasoning_event_offsets_ms`、`content_event_offsets_ms`：
+  相对请求开始的事件时间，单位毫秒；
+- `first_content_latency_ms`：首个非空正文延迟，无正文时为`null`；
+- `has_content`、`finish_reason`及服务返回的`usage`；
+- `reasoning_tokens`：仅保存服务`completion_tokens_details.reasoning_tokens`，
+  未提供时为`null`。
+
+只有思考的性能响应仍视为成功，并标记`has_content=false`；完全没有有效输出仍失败。
+输出Token总数沿用服务`usage.completion_tokens`，不再额外累加思考Token，
+也不按字符或事件估算缺失计数；需确认被测服务的总数包含思考，才能按全部输出比较吞吐。
+质量任务保留独立的思考事实，但`raw_output`与评分仅采用最终正文，
+不会从思考字段提取答案。新旧版本含思考响应的TTFT口径不同，应分别比较。
 
 WikiText使用滑动窗口与Token logprobs。HumanEval只支持每题生成一次和pass@1。
 LCSTS保留中文分词ROUGE，GSM8K保留数值答案抽取，SQuAD保留答案规范化与EM/F1。
@@ -278,11 +332,28 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 luban-meter run --scenario online_serving --model served-model \
   --observe prometheus --observe-url http://127.0.0.1:8000/metrics \
   --observe-interval 1 \
-  --device-exporter-url http://127.0.0.1:9400/metrics
+  --device-exporter-url http://127.0.0.1:9400/metrics \
+  --host-exporter-url http://127.0.0.1:9100/metrics \
+  --host-sample-interval 1
 ```
 
 服务端Prometheus采样只适用于HTTP任务。硬件exporter地址单独指定；不提供时不启动硬件监控。
 观测故障独立记录，不让推理任务因为指标接口故障而失败。报告保留实际采样时间和缺失信息。
+
+`--host-exporter-url`接入被测Linux服务器的node_exporter，独立采集CPU、内存、
+文件系统、块设备I/O和网络接口；可与GPU监控同时启用，也可单独启用，不依赖GPU识别。
+两个Exporter需预先启动，配置地址不会安装或启动服务器组件。`127.0.0.1`指LuBan
+所在网络环境；远程运行时填写被测服务器可达地址。主机采样不使用环境HTTP代理。
+
+主机原始计数器、采样起止时间和派生速率保存在Case的`host_observation`，GPU继续
+使用`device_observation`。CPU忙碌率按相邻`node_cpu_seconds_total`增量计算
+`100 × (1 - Δidle / Δtotal)`，包含iowait，排除guest重复计数，并单列user、system、
+iowait。内存已用量为总量减MemAvailable；文件系统已用量为size减free，可用量
+另取avail，保留保留空间差异。磁盘和网络按原始计数器增量除以实际单调时钟间隔，
+字节单位保留bytes，HTML换算GiB/MiB/s。第一点、采集失败后的首点、计数器回退
+或设备身份变化不生成速率；不补零、不外推。速率汇总仅使用完整落在正式Case窗口
+内的有效区间，均值按区间时长加权，并保存覆盖时长；容量采用有效采样均值。
+两个数据源独立后台采样，接口故障分别记录；原始记录保留基线与收尾采样。
 
 输出目录：
 
@@ -708,6 +779,24 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
   “测试条件、覆盖率与诊断”可进入原有详情，并继续访问完整报告中的请求列表。
 
 Case 分析与“全部指标”页的搜索、筛选相互独立。无需额外服务器或外部脚本。
+
+资源观测按任务和 Case 位置分组，重名任务或 Case 不会合并采样。选择 Case 后，
+GPU、主机和服务负载一起切换；顶部显示运行 ID、模型、Case 测试窗口、采样数量与
+错误数量，并标出该 Case 在整次运行时间轴中的位置。图表共用时间范围，浅色区域
+标记测试窗口，悬停采样点可查看时间和数值，较大采样缺口不连线。
+
+- GPU 区域按卡显示保存的平均利用率、显存、功耗与温度，并用四类多序列折线图
+  展示变化，可筛选单卡。单位分别为 `%`、`MiB`、`W`、`°C`；缺少显存总量时
+  显示不可用，不推算容量或显存占比。设备观测可能包含其他服务使用的 GPU。
+- 主机区域显示CPU、内存、文件系统空间、磁盘读写速度/IOPS/忙碌率和网络收发、
+  错误/丢包速率。挂载点、块设备、网卡分别选择，不将不同层次设备直接求和；
+  保留lo回环接口以观察同机压测。整机数据包含其他业务及压测客户端的开销。
+  旧结果回退读取原有CPU/内存字段，仅有汇总时注明无时间序列；缺失指标显示不可用。
+- 服务负载展示已保存的运行 / 排队请求曲线，其他服务序列收在折叠区域中，保留
+  原始数值；原始服务序列没有保存单位时明确注明，不猜测量纲。
+- GPU、主机、服务采样各最多选取500个时间点用于绘图，原始记录保持完整。均值使用
+  已保存聚合，不以图表抽样重算；缺失值不补零，无 Case 起始时间时不为相对
+  硬件采样补造时间戳。所有资源图表由内嵌 SVG 本地渲染，无 Grafana 在线依赖。
 
 左侧导航覆盖六个页面，高亮当前页；桌面端位于报告标题下方，与当前页面内容区
 顶部对齐，滚动时保持可见；窄屏折叠为顶部菜单，

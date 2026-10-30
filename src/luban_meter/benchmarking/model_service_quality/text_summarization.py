@@ -29,6 +29,7 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
     object_list,
     scalar,
 )
+from luban_meter.runtime.thinking import response_facts
 
 MEASUREMENT = "lcsts_rouge_online_service"
 PROTOCOL = "openai_compatible_chat_and_completions"
@@ -192,16 +193,18 @@ def collect_sample(
             result = client.chat(
                 messages,
                 max_tokens=config["max_tokens"],
-                stop=config["stop"] or None,
+                stop=config["stop"],
             )
         else:
             result = client.complete(
                 prompt,
                 max_tokens=config["max_tokens"],
-                stop=config["stop"] or None,
+                stop=config["stop"],
             )
         record.update(
             {
+                **response_facts(result),
+                "raw_output": result["text"],
                 "prediction": template_adapters.parse_output(
                     config, sample, rendered, result["text"], lambda text: text
                 ),

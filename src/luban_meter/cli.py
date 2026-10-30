@@ -55,6 +55,8 @@ def _build_parser():
             kwargs = {"default": argparse.SUPPRESS, "help": spec.help or name}
             if spec.type is bool:
                 kwargs["action"] = argparse.BooleanOptionalAction
+            elif spec.type is dict:
+                kwargs["type"] = json.loads
             elif spec.type is list:
                 kwargs.update(nargs="+", type=spec.item_type or str)
             else:
