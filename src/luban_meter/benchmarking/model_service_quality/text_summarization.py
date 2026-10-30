@@ -21,6 +21,9 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
     string_list,
     string_value,
 )
+from luban_meter.benchmarking.model_service_quality.common.parsers import (
+    extract_final_output,
+)
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_lcsts_prompt,
     validate_prompt_version,
@@ -173,6 +176,8 @@ def collect_sample(
     record: dict[str, Any] = {
         "content": sample["content"],
         "reference": sample["abst"],
+        "raw_output": None,
+        "final_output": None,
     }
     try:
         rendered = template_adapters.render_input(
@@ -205,9 +210,6 @@ def collect_sample(
             {
                 **response_facts(result),
                 "raw_output": result["text"],
-                "prediction": template_adapters.parse_output(
-                    config, sample, rendered, result["text"], lambda text: text
-                ),
                 "input_tokens": result.get(
                     "input_tokens",
                 ),
@@ -215,9 +217,18 @@ def collect_sample(
                     "output_tokens",
                 ),
                 "latency_ms": result["latency_ms"],
-                "status": "success",
             }
         )
+        try:
+            record["final_output"] = extract_final_output(result["text"])
+            record["prediction"] = template_adapters.parse_output(
+                config, sample, rendered, record["final_output"],
+                lambda text: text,
+            )
+        except ValueError as exc:
+            record.update(prediction="", status="parse_failed", error=str(exc))
+            return record
+        record["status"] = "success"
     except ServiceError as exc:
         record.update(
             {
@@ -229,7 +240,7 @@ def collect_sample(
     return record
 
 
-SAMPLE_STATUSES = ("success", "service_failed")
+SAMPLE_STATUSES = ("success", "parse_failed", "service_failed")
 
 
 def process_sample(
@@ -314,8 +325,11 @@ def process(
     scored = [
         sample_record
         for sample_record in samples
-        if sample_record.get("status") == "success"
+        if sample_record.get("status") in ("success", "parse_failed")
     ]
+    parse_failed = sum(
+        sample["status"] == "parse_failed" for sample in samples
+    )
     service_failed = sum(
         1
         for sample_record in samples
@@ -330,6 +344,8 @@ def process(
         "rougeL": 0.0,
     }
     for sample in scored:
+        if sample["status"] == "parse_failed":
+            continue
         scores = score_one(
             sample["prediction"],
             sample["reference"],
@@ -348,6 +364,7 @@ def process(
     result_meta.update(
         {
             "service_failed_samples": service_failed,
+            "parse_failed_samples": parse_failed,
         }
     )
     return {
@@ -373,6 +390,7 @@ def process(
                     "total_samples": scalar(len(samples), "sample"),
                     "scored_samples": scalar(scored_sample_count, "sample"),
                     "service_failed": scalar(service_failed, "sample"),
+                    "parse_failed": scalar(parse_failed, "sample"),
                 }
             }
         },

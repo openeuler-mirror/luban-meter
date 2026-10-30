@@ -46,27 +46,69 @@ def _extract_boxed_choice(line: str) -> str | None:
     return match.group(1).upper() if match else None
 
 
-def extract_choice(text: str) -> str | None:
-    """Parse an unambiguous final answer outside complete think blocks.
+def extract_final_output(text: str, *, code: bool = False) -> str:
+    """Remove thinking before grading while retaining answer whitespace.
 
-    Unclosed/malformed thinking and conflicting answer lines fail closed.
-    Option letters in explanations are never used as a fallback.
+    Code responses only lose complete leading thinking blocks, so tags in
+    Python strings and comments are preserved. Empty or malformed answers
+    fail closed rather than allowing reasoning to become a prediction.
     """
+    if not isinstance(text, str):
+        raise ValueError("model output must be text")
+    if code:
+        answer = _code_after_thinking(text)
+    else:
+        answer = _text_outside_thinking(text)
+    if not answer.strip():
+        raise ValueError("no final answer outside thinking blocks")
+    return answer
+
+
+def _code_after_thinking(text: str) -> str:
+    start = 0
+    while True:
+        position = start + len(text[start:]) - len(text[start:].lstrip())
+        opening = _THINK_TAG.match(text, position)
+        if opening is None:
+            return text[start:]
+        closing = _THINK_TAG.search(text, opening.end())
+        if (
+            opening.group().startswith("</")
+            or closing is None
+            or not closing.group().startswith("</")
+        ):
+            raise ValueError("unclosed or malformed <think> tags")
+        start = closing.end()
+
+
+def _text_outside_thinking(text: str) -> str:
     parts = []
     start = 0
     thinking = False
     for tag in _THINK_TAG.finditer(text):
         closing = tag.group().startswith("</")
         if closing != thinking:
-            return None
+            raise ValueError("malformed <think> tags")
         if not thinking:
             parts.append(text[start:tag.start()])
         thinking = not closing
         start = tag.end()
     if thinking:
-        return None
+        raise ValueError("unclosed <think> block")
     parts.append(text[start:])
-    answer = "\n".join(parts).strip()
+    return "\n".join(parts)
+
+
+def extract_choice(text: str) -> str | None:
+    """Parse an unambiguous final answer outside complete think blocks.
+
+    Unclosed/malformed thinking and conflicting answer lines fail closed.
+    Option letters in explanations are never used as a fallback.
+    """
+    try:
+        answer = extract_final_output(text).strip()
+    except ValueError:
+        return None
     answer = _BOXED_DISPLAY.sub(
         lambda match: match.group(1) or match.group(2), answer
     )

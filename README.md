@@ -236,8 +236,23 @@ TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事�
 只有思考的性能响应仍视为成功，并标记`has_content=false`；完全没有有效输出仍失败。
 输出Token总数沿用服务`usage.completion_tokens`，不再额外累加思考Token，
 也不按字符或事件估算缺失计数；需确认被测服务的总数包含思考，才能按全部输出比较吞吐。
-质量任务保留独立的思考事实，但`raw_output`与评分仅采用最终正文，
-不会从思考字段提取答案。新旧版本含思考响应的TTFT口径不同，应分别比较。
+质量任务保留独立的`reasoning_text`，不从该字段提取答案。生成式能力评测
+（CMMLU/C-Eval、GSM8K、SQuAD、LCSTS、HumanEval）在解析/评分前统一过滤
+回答中内嵌的`<think>...</think>`，不区分标签大小写：
+
+- `raw_output`保留服务返回的正文原文，包括其中的思考标签；
+- `final_output`保存去除思考后的文本，保留答案所需空白；只用该文本进入内建或
+  自定义答案解析器；
+- 只有思考、无最终答案、标签未闭合/结构异常时记`parse_failed`，安全提取失败时
+  `final_output=null`；原文、Token计数和请求延迟仍保留；
+- HumanEval只剥离代码开始前的完整思考块前缀，支持连续多块；代码字符串、注释、
+  缩进及既有代码围栏处理保持原样，解析失败不进入沙箱执行；
+- LCSTS解析失败按零分计入ROUGE分母，不把空预测改写为“空”再评分；
+  服务失败仍沿用原有处理规则。SQuAD复算校验原文与`final_output`一致，
+  缺少该字段的旧结果保持原有回放行为。
+
+质量请求固定`stream=false`，过滤发生在完整响应返回后；PPL/logprobs不做上述
+生成文本过滤。新旧版本含思考响应的性能TTFT口径不同，应分别比较。
 
 WikiText使用滑动窗口与Token logprobs。HumanEval只支持每题生成一次和pass@1。
 LCSTS保留中文分词ROUGE，GSM8K保留数值答案抽取，SQuAD保留答案规范化与EM/F1。

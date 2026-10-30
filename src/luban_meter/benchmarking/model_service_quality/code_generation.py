@@ -26,6 +26,7 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
     string_value,
 )
 from luban_meter.benchmarking.model_service_quality.common.parsers import (
+    extract_final_output,
     extract_humaneval_completion,
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
@@ -193,6 +194,7 @@ def collect_sample(
         "prompt_format": "base",
         "prompt": prompt,
         "raw_output": None,
+        "final_output": None,
         "parsed_output": None,
         "program_sha256": None,
         "passed": False,
@@ -215,16 +217,21 @@ def collect_sample(
         return record
 
     raw_output = str(response.get("text") or "")
-    completion = extract_humaneval_completion(raw_output, prompt)
     record.update(
         {
             "raw_output": raw_output,
-            "parsed_output": completion,
             "input_tokens": response.get("input_tokens") or 0,
             "output_tokens": response.get("output_tokens") or 0,
             "latency_ms": response.get("latency_ms") or 0.0,
         }
     )
+    try:
+        record["final_output"] = extract_final_output(raw_output, code=True)
+    except ValueError as exc:
+        record.update(status="parse_failed", error=str(exc))
+        return record
+    completion = extract_humaneval_completion(record["final_output"], prompt)
+    record["parsed_output"] = completion
     if not completion:
         record["status"] = "parse_failed"
         record["error"] = "model returned no executable completion"

@@ -23,6 +23,7 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
     string_value,
 )
 from luban_meter.benchmarking.model_service_quality.common.parsers import (
+    extract_final_output,
     extract_number,
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
@@ -111,6 +112,7 @@ def collect_sample(
         "prompt_format": config["prompt_format"],
         "prompt": prompt,
         "raw_output": None,
+        "final_output": None,
         "parsed_output": None,
         "prediction": None,
         "reference": reference,
@@ -125,19 +127,22 @@ def collect_sample(
         response = generate_answer(client, prompt, config)
         record.update(response_facts(response))
         raw_output = response["text"]
-        prediction = template_adapters.parse_output(
-            config, sample, rendered, raw_output, extract_number
-        )
-        record.update(
-            {
-                "raw_output": raw_output,
-                "parsed_output": prediction,
-                "prediction": prediction,
-                "input_tokens": response.get("input_tokens") or 0,
-                "output_tokens": response.get("output_tokens") or 0,
-                "latency_ms": response.get("latency_ms") or 0.0,
-            }
-        )
+        record.update({
+            "raw_output": raw_output,
+            "input_tokens": response.get("input_tokens") or 0,
+            "output_tokens": response.get("output_tokens") or 0,
+            "latency_ms": response.get("latency_ms") or 0.0,
+        })
+        try:
+            record["final_output"] = extract_final_output(raw_output)
+            prediction = template_adapters.parse_output(
+                config, sample, rendered, record["final_output"],
+                extract_number,
+            )
+        except ValueError as exc:
+            record.update(status="parse_failed", error=str(exc))
+            return record
+        record.update(parsed_output=prediction, prediction=prediction)
         if prediction is None:
             record["status"] = "parse_failed"
             record["error"] = "no numeric answer found in output"

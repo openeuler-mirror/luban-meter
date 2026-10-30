@@ -29,6 +29,9 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
     string_list,
     string_value,
 )
+from luban_meter.benchmarking.model_service_quality.common.parsers import (
+    extract_final_output,
+)
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_squad_prompt,
     validate_prompt_version,
@@ -230,6 +233,7 @@ def collect_sample(
         "is_impossible": sample["is_impossible"],
         "prompt": prompt,
         "raw_output": None,
+        "final_output": None,
         "prediction": None,
         "reference": sample["answers"],
         "latency_ms": 0.0,
@@ -250,8 +254,9 @@ def collect_sample(
             }
         )
         try:
+            record["final_output"] = extract_final_output(response["text"])
             record["prediction"] = template_adapters.parse_output(
-                config, sample, rendered, response["text"], parse_answer
+                config, sample, rendered, record["final_output"], parse_answer
             )
             record["answer_parser"] = config.get("answer_parser") or "reading"
             record["parser_context"] = {**sample, **rendered}
@@ -324,8 +329,13 @@ def process(raw_result: Mapping) -> dict:
         counts[status] += 1
         exact_match_score, token_f1_score = 0.0, 0.0
         if status == "success":
+            text = row.get("raw_output")
+            if "final_output" in row:
+                text = extract_final_output(text)
+                if text != row["final_output"]:
+                    raise ValueError("final_output does not match raw output")
             if row.get("answer_parser", "reading") == "reading":
-                prediction = parse_answer(row.get("raw_output"))
+                prediction = parse_answer(text)
             else:
                 from luban_meter.core.template_contracts import (
                     answer_parsers,
@@ -334,7 +344,7 @@ def process(raw_result: Mapping) -> dict:
 
                 parser = answer_parsers.get(row["answer_parser"])()
                 fields = {
-                    **row["parser_context"], "raw_output": row["raw_output"]
+                    **row["parser_context"], "raw_output": text
                 }
                 validate_fields(fields, parser.requires, "parser input")
                 parsed = parser.parse(fields)
