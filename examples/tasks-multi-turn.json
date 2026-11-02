@@ -1,0 +1,63 @@
+{
+  "tasks": [
+    {
+      "name": "multi_turn",
+      "scenario": "multi_turn_serving",
+      "backend": "openai_http",
+      "base_url": "http://127.0.0.1:8000",
+      "endpoint": "/v1/chat/completions",
+      "model": "served-model",
+      "request_timeout": 120,
+      "task_timeout": 3600,
+      "seed": 42,
+      "temperature": 0.0,
+      "data": "sharegpt",
+      "dataset_path": "../dataset/sharegpt/ShareGPT_V3_sample.json",
+      "shuffle": true,
+      "data_seed": 42,
+      "repeat_data": false,
+      "multi_num_sessions": 100,
+      "multi_max_turns": 8,
+      "multi_think_time": 0.0,
+      "multi_save_response_text": false,
+      "output_tokens": 128,
+      "ignore_eos": true,
+      "length_policy": "observe",
+      "stop": [],
+      "profile": "concurrent",
+      "max_concurrency": 4,
+      "num_warmups": 0
+    },
+    {
+      "name": "multi_turn_depth",
+      "scenario": "multi_turn_serving",
+      "backend": "openai_http",
+      "base_url": "http://127.0.0.1:8000",
+      "endpoint": "/v1/chat/completions",
+      "model": "served-model",
+      "request_timeout": 120,
+      "task_timeout": 3600,
+      "seed": 42,
+      "temperature": 0.0,
+      "data": "sharegpt",
+      "dataset_path": "../dataset/sharegpt/ShareGPT_V3_sample.json",
+      "shuffle": true,
+      "data_seed": 42,
+      "repeat_data": false,
+      "multi_num_sessions": 20,
+      "multi_think_time": 1.5,
+      "multi_think_time_std": 0.5,
+      "output_tokens": 128,
+      "ignore_eos": true,
+      "stop": [],
+      "profile": "concurrent",
+      "max_concurrency": 4,
+      "num_warmups": 0,
+      "cases": {
+        "matrix": {
+          "multi_max_turns": [2, 4, 8]
+        }
+      }
+    }
+  ]
+}

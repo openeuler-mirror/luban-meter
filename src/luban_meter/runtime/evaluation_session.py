@@ -78,17 +78,22 @@ class RunContext:
             warmup=not formal,
         )
 
-    def request(self, operation, *, cost=1):
+    def request(self, operation, *, cost=1, metadata=None):
         def admitted(ticket):
             self.local.admitted = getattr(self.local, "admitted", 0) + cost
             return operation(ticket)
 
+        # Per-call metadata lets one sample describe each of its several
+        # requests, which a multi-turn sample needs to record which turn
+        # a call belongs to.  Sample-level metadata still applies.
+        scheduling = dict(getattr(self.local, "scheduling", {}) or {})
+        scheduling.update(metadata or {})
         try:
             return self.scheduler.run(
                 admitted,
                 sample_id=getattr(self.local, "sample_id", "setup"),
                 cost=cost,
-                metadata=getattr(self.local, "scheduling", {}),
+                metadata=scheduling,
             )
         except AdmissionStopped:
             self.local.incomplete = True

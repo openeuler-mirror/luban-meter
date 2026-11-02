@@ -6,7 +6,7 @@ function stableConfig(value) {
   return value;
 }
 function usablePerformanceResult(c) {
-  const metric=c.metrics?.streaming_performance;
+  const metric=servingMetric(c);
   return c.status==='success' && c.collection_complete===true &&
     (!c.metrics_status || c.metrics_status==='complete') &&
     (!metric?.status || metric.status==='success') && !metric?.error &&
@@ -20,7 +20,7 @@ function performanceSummary(taskList) {
     if(task.category!=='generation_performance')return;
     task.cases.forEach((c,ci)=>{
       total++;
-      const p=c.parameters||{},metric=c.metrics?.streaming_performance;
+      const p=c.parameters||{},metric=servingMetric(c);
       const service=metric?.values?.service_view;
       const throughput=service?.output_token_throughput;
       if(!usablePerformanceResult(c) ||
@@ -159,7 +159,7 @@ function summaryGroupRecords(group) {
       .filter(([key])=>key!=='max_concurrency'))))===fixed);
 }
 function savedRequestCounts(c) {
-  const service=c.metrics?.streaming_performance?.values?.service_view;
+  const metric=servingMetric(c),service=metric?.values?.service_view;
   const count=key=>{
     const m=service?.[key];
     return m?.unit==='request' && Number.isSafeInteger(m.value) && m.value>=0?m.value:null;
@@ -168,8 +168,7 @@ function savedRequestCounts(c) {
   const failed=count('failed_requests');
   const hasFailed=Object.hasOwn(service||{},'failed_requests');
   const valid=success!==null && total!==null && success<=total &&
-    (!hasFailed || (failed!==null && success+failed===total)) &&
-    !c.metrics?.streaming_performance?.error;
+    (!hasFailed || (failed!==null && success+failed===total)) && !metric?.error;
   return {success,total,valid};
 }
 function performanceOverviewCards(records,bestMode=true) {
@@ -196,7 +195,7 @@ function performanceOverviewCards(records,bestMode=true) {
   const completed=records.filter(({c})=>c.collection_complete===true &&
     c.status!=='discarded' && (!c.metrics_status || c.metrics_status==='complete'));
   const usable=bestMode?records.filter(({c})=>usablePerformanceResult(c)):
-    completed.filter(({c})=>!c.metrics?.streaming_performance?.error);
+    completed.filter(({c})=>!servingMetric(c)?.error);
   function extreme(index,points,minimum=false) {
     if(!points.length)return;
     const best=points.reduce((a,b)=>(minimum?b.value<a.value:b.value>a.value)?b:a);
@@ -212,14 +211,14 @@ function performanceOverviewCards(records,bestMode=true) {
     }
   }
   extreme(0,usable.flatMap(record=>{
-    const m=record.c.metrics?.streaming_performance?.values?.service_view?.output_token_throughput;
+    const m=servingMetric(record.c)?.values?.service_view?.output_token_throughput;
     return m?.unit==='token/s' && numeric(m.value) && m.value>=0?
       [{...record,value:m.value}]:[];
   }));
   for(const [index,key] of [[1,'ttft'],[2,'tpot'],[5,'e2el']]) {
     const units=key==='tpot'?{'ms/token':1,'s/token':1000}:{ms:1,s:1000};
     extreme(index,usable.flatMap(record=>{
-      const m=record.c.metrics?.streaming_performance?.values?.request_view?.[key];
+      const m=servingMetric(record.c)?.values?.request_view?.[key];
       const value=m?.p99*units[m?.unit];
       return numeric(m?.p99) && m.p99>=0 && numeric(value) &&
         (m.count==null || (Number.isSafeInteger(m.count) && m.count>0)) &&
@@ -232,11 +231,11 @@ function performanceOverviewCards(records,bestMode=true) {
     return counts.valid && counts.total>0?[{...record,value:counts.success/counts.total}]:[];
   }));
   extreme(4,completed.flatMap(record=>{
-    const p=record.c.parameters?.max_concurrency;
-    const service=record.c.metrics?.streaming_performance?.values?.service_view;
+    const p=record.c.parameters?.max_concurrency,metric=servingMetric(record.c);
+    const service=metric?.values?.service_view;
     return Number.isSafeInteger(p) && p>0 && service?.total_requests?.unit==='request' &&
       Number.isSafeInteger(service.total_requests.value) && service.total_requests.value>0 &&
-      !record.c.metrics?.streaming_performance?.error?[{...record,value:p}]:[];
+      !metric?.error?[{...record,value:p}]:[];
   }));
   if(!bestMode) {
     const record=records[0],concurrency=record.c.parameters?.max_concurrency;
@@ -303,7 +302,7 @@ function renderPerformanceOverview() {
     peak.append(where);
     peak.append(el('p',performanceGroupLabel(group,Number(select.value)),
       'overview-context muted'));
-    const values=point.c.metrics.streaming_performance.values;
+    const values=servingMetric(point.c).values;
     const metrics=el('div',undefined,'overview-metrics');
     const throughput=values.service_view.request_throughput;
     overviewMetric(metrics,'请求吞吐量',throughput?.value,throughput?.unit||'');

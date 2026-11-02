@@ -137,6 +137,34 @@ class StreamingPerformance(Metric):
         }
 
 
+@metrics.register("multi_turn_performance")
+class MultiTurnPerformance(Metric):
+    """Session views over pooled per-turn streaming records.
+
+    Turns are read from the request stream, so an interrupted session
+    still contributes its completed turns instead of disappearing.
+    """
+
+    requires = frozenset({"client_stream_timing", "multi_turn_timing"})
+
+    def compute(self, facts):
+        from .generation_performance.common.session_metrics import (
+            process_case,
+            turn_rows,
+        )
+
+        if not turn_rows(facts["requests"]):
+            return {"status": "unavailable", "reason": "no turn records"}
+        values, success, failed = process_case(facts)
+        return {
+            "status": "partial_failed"
+            if failed and success
+            else ("failed" if failed else "success"),
+            "values": values,
+            "observation_boundary": "client",
+        }
+
+
 @metrics.register("engine_performance")
 class EnginePerformance(Metric):
     requires = frozenset({"engine_timing"})

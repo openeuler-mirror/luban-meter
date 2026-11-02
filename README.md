@@ -3,9 +3,10 @@
 统一执行生成式推理性能与模型服务质量评测，保存原始事实、计算指标，
 提供终端结果摘要与离线HTML报告。
 
-- 生成性能：在线OpenAI兼容流式服务、离线vLLM Engine。
+- 生成性能：在线OpenAI兼容流式服务、多轮会话在线服务、离线vLLM Engine。
 - 模型服务质量：C-Eval、CMMLU、GSM8K、HumanEval、LCSTS、SQuAD、WikiText。
 - 同一份JSON编排一个或多个任务，每个任务可以展开多个Case。
+
 - 场景、指标和负载Profile通过类与装饰器注册，内置实现由`__init__.py`显式导入。
 - 性能和质量共用本地数据加载与实际请求调度；Prometheus及硬件监控按需开启。
 
@@ -323,10 +324,85 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 原始请求结构和指标公式保持兼容；底层网络错误的`error.type`可能改为HTTPX异常类型。
 连接复用会改变真实客户端开销，新旧结果数值不要求相同，比较时应注明客户端与连接条件。
 
+## 多轮会话性能
+
+`multi_turn_serving`按会话评测在线Chat服务：一个样本是一整个会话，会话内
+轮次严格顺序执行，每轮请求携带此前轮次的**实际模型回答**作为历史。
+不同会话并行，同一会话同时最多一个在途请求。
+
+```bash
+luban-meter run --scenario multi_turn_serving \
+  --model served-model --base-url http://127.0.0.1:8000 \
+  --data sharegpt --dataset-path /data/sharegpt.json \
+  --multi-num-sessions 100 --multi-max-turns 8 \
+  --profile concurrent --max-concurrency 4 \
+  --shuffle --data-seed 42
+```
+
+统一任务JSON示例见[examples/tasks-multi-turn.json](examples/tasks-multi-turn.json)；
+其中第二个任务用`cases.matrix`按`multi_max_turns`展开3个Case，并开启轮间等待。
+
+多轮专用参数统一使用`multi_`前缀，CLI对应`--multi-`前缀：
+
+| CLI参数 | 任务JSON字段 | 默认值与含义 |
+|---|---|---|
+| `--multi-num-sessions` | `multi_num_sessions` | 100；要执行的会话数量，不是模型请求次数 |
+| `--multi-max-turns` | `multi_max_turns` | 8；每个会话最多执行的轮数**上限**，不是最低入选轮数 |
+| `--multi-think-time` | `multi_think_time` | 0；轮间平均空闲秒数，0表示背靠背发送 |
+| `--multi-think-time-std` | `multi_think_time_std` | 0；轮间空闲的标准差，需要正的`multi_think_time` |
+| `--multi-system-prompt` | `multi_system_prompt` | 空；仅在记录没有system消息时前置 |
+| `--multi-session-timeout` | `multi_session_timeout` | 空；单会话墙钟上限，超时提前结束 |
+| `--multi-save-response-text` | `multi_save_response_text` | false；额外保存整段`messages`数组 |
+
+数据只支持`--data sharegpt`，端点只支持`/v1/chat/completions`。轮次按参考
+assistant消息切分：参考回答只作分隔符，**从不回放**，历史一律使用被测模型的
+实际输出；每轮之前出现的system等消息保留在该轮内。因此数据集自带的system
+指令不会被静默改写，`--multi-system-prompt`只在记录没有system时生效，
+两种来源的实际使用数量记录在Case元数据的`system_prompt_source`中。
+
+`multi_max_turns`是上限而不是筛选条件：原始轮数少于上限的会话正常参与并
+自然结束，超过上限的会话只执行前`multi_max_turns`轮。每个会话的
+`planned_turns=min(有效轮数, multi_max_turns)`；准备阶段记录源轮次分布、
+计划轮次分布、被截断会话数和`planned_requests_total`（一次完整遍历所需的
+模型请求数），使固定深度筛选与轮数上限不会被混淆。
+
+会话选择、轮次截断与请求准入是三个独立环节：
+
+1. **会话选择**由`DatasetLoader`完成，`--max-samples`限制的是候选记录数量，
+   在轮次处理**之前**应用；`--shuffle`与`--data-seed`以整个会话为单位打乱，
+   会话内部轮次保持原顺序。可用会话不足`multi_num_sessions`且未开启
+   `--repeat-data`时，准备阶段直接报错并给出可用数量，不静默重复补足。
+2. **轮次截断**对每条已选会话独立应用，不为凑齐统一深度拼接其他记录。
+3. **请求准入**沿用现有Profile和`RequestScheduler`。`--num-requests`按
+   **模型调用**计数，一个会话不算一次请求；不要求预算覆盖全部会话的所有轮次。
+
+多轮只接受请求级Profile（`constant`、`poisson`、`concurrent`、`throughput`、
+`synchronous`），`batch`和`replay`会在预检阶段被拒绝，无需任何专有并发字段。
+会话样本工作线程数取有效请求容量，因此`--profile concurrent
+--max-concurrency 4`表示同时最多4个会话、4个在途请求；会话结束或失败后再
+领取下一个。请求准备、轮间等待和数据尾部可能使实际并发低于上限。
+
+输出预算逐轮独立采样，沿用`--output-tokens`及`-std/-min/-max`；
+`--ignore-eos`、`--length-policy`、`--stop`、`--request-params`、
+`--goodput`与在线服务含义相同。指定`--max-model-len`时，每轮在**发送前**
+用本地聊天模板计算已组装历史的实际长度，`输入Token数＋本轮输出预算`超限即
+停止该会话并记录`abort_reason=context_overflow`与实测长度，不作为请求失败，
+也不在请求完成后用连续user消息重新估算。
+
 ## 停止与失败
 
 - 任务顺序执行，失败默认继续；`--fail-fast`跳过后续任务。
 - `--num-requests`统计实际模型请求。一个C-Eval PPL样本可能产生多个请求，不能当作一个请求限速。
+- 多轮会话中，请求预算或时长到限后不再准入下一轮，排空已准入请求；已结束的轮次
+  保留，会话记为部分完成，不为凑完整会话继续发送。某轮HTTP失败或超时即结束该会话，
+  该轮计入请求失败，后续轮记为未开始，其他会话继续执行，不做轮级重试；
+  `abort_reason`取值`turn_failed`、`context_overflow`、`session_timeout`、
+  `reasoning_only`、`no_output`；其中`turn_failed`、`reasoning_only`、
+  `no_output`发生在请求发出后，该轮计入`sent_failed_turns`，`session_view`的
+  未开始轮次不再包含它。
+  `--max-error-rate`的分母是本Case已结束的全部请求（失败计入），未准入的轮次不算
+  服务失败；`--circuit-breaker`只用各会话首轮成功请求的P99 E2EL，因为后续轮prefill
+  更长，同一阈值含义不同。
 - 数据耗尽、请求数或`--max-duration`任一条件达到即停止新请求，等待在途请求结束。
 - `--num-warmups`按样本预热，不纳入正式请求预算和指标。
 - 首次Ctrl+C停止整个运行的新请求，等待在途工作；第二次取消工作进程并清理本次资源。
@@ -418,6 +494,22 @@ TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包
 因此Stream Event ITL单独统计。`--goodput tpot:50`沿用已有SLO含义，
 约束的是排除首Token等待的ITL，不是报告中的TPOT；多个SLO条件需同时满足。
 迁移保留这些公式，不将CLI风格与其他工具的指标含义混同。
+
+多轮性能（`multi_turn_performance`）同样从客户端观察，每一轮就是一次普通流式
+请求，请求级与服务级视图直接复用在线公式，不另写一套。分母是本Case已保存的
+轮次请求，不是会话数或计划轮次数。此外保存：
+
+| 视图 | 内容 | 口径 |
+|---|---|---|
+| `request_view`/`service_view` | TTFT、TPOT、ITL、E2EL、吞吐量 | 与在线服务完全相同 |
+| `turn_view` | 各轮TTFT、E2EL、输入与输出Token分布 | 按`turn_index`分组，每组带自己的样本数 |
+| `session_view` | 会话耗时、轮间等待合计、计划/完成/未开始/发送失败轮次、已结束会话数、会话吞吐量、中止原因、会话覆盖率 | 样本是会话；`sessions_per_second`分母是Case窗口 |
+| `caching_view` | 首轮与后续轮TTFT均值及比值、每轮和每千Token的TTFT增长 | 只描述延迟随上下文的增长，不作为前缀缓存命中的证据 |
+| `caching_view.prefix_cache` | 客户端可复用前缀Token与占比、服务端上报的命中Token、命中率及上报轮次数 | 客户端估算与服务端实测分开；服务未上报时留空并给出`reason`，不补0，也不推断缓存关闭或驱逐原因 |
+| `pressure_view` | 单轮上下文Token分布、Prefill Token合计与速率、单轮上下文峰值 | 只统计成功轮次，需结合设备观测判断瓶颈 |
+
+后续轮次只包含延续到该轮的会话，各轮样本数必须与指标一起阅读：样本减少本身
+不是性能变化。会话耗时包含轮间等待，不能与单请求延迟混用。
 
 质量指标包括选择题Accuracy、GSM8K数值Exact Match、SQuAD规范化EM/F1、
 HumanEval单次候选pass@1、LCSTS中文ROUGE-1/2/L、WikiText困惑度与Bits-per-Byte。
@@ -520,6 +612,8 @@ luban-meter run --config tasks.json --no-progress --no-summary
 - 样本总量取 `case_ready.total_samples`，请求总量取配置的请求数量上限。
   无已知总量时显示“未知”及累计数、已用时间，不推算百分比或 ETA；达到
   时间限制、数据耗尽或中断时，不强行将当前 Case 的计数补满。
+  多轮场景的样本是会话、请求是轮次，样本总量为 `multi_num_sessions`，
+  两个计数分别显示，不把一个会话当作一次请求。
 - 读取已有事件和 Case 提交结果，约每 0.25 秒刷新，每次最多读取 1 MiB
   事件；最终 Case 状态以保存结果为准。高吞吐或大记录下实时计数可能滞后，
   不截断原始文件。无法解析的记录不补造计数，最终样本数以覆盖率校准。
@@ -717,9 +811,11 @@ COLUMNS=80 luban-meter report \
   输入输出长度、负载策略等条件不同的 Case 不混成一条曲线。默认选中本次
   已测最高输出吞吐量所在组，可切换查看其他条件组。
 - 峰值取在线性能指标
-  `streaming_performance.values.service_view.output_token_throughput`
+  `service_view.output_token_throughput`
   （`token/s`），同时展示同一峰值 Case 的请求吞吐量及 TTFT、TPOT、ITL Mean。
   直接读取原有均值、单位和权重口径，缺失值显示“未采集”，不改写指标结果。
+  在线服务与多轮会话保存的是同一套视图，两者按各自任务与条件分别成组，
+  不混成一条曲线；并发轴仍是配置并发上限。
 - 并发—吞吐图的横轴是配置并发上限，不是实际平均并发。所有峰值和趋势仅
   针对已测点；最高已测并发处取得最大值时明确标注，不能据此推断服务极限。
   并列最大值全部保留；只有一个有效并发点时不判断趋势；同一并发多次测量
@@ -784,6 +880,10 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
   请求吞吐量、输出 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
   已保存统计量、单位及 count；有分位数时显示分位数图，标量只显示聚合值。
   Median 和 P50 分别保留，不根据数值相等推定统计定义相同。
+  多轮 Case 在核心指标下方额外展示“按轮次统计”：逐轮列出 TTFT、E2EL、输入与
+  输出 Token 的 Mean 和 P99、各轮已保存样本数、各轮 TTFT Mean 柱状图，以及
+  已结束会话、计划与完成轮次、未开始与发送失败轮次和会话中止原因。Case 选择框同时显示
+  会话数与轮数上限。
 - 质量任务：任务 → Case，隐藏第三个选择框。自动展示全部已保存指标，按
   所属维度和单位分表。CMMLU 主分析区隐藏各学科正确率，保留总体指标；
   学科原始数据仍可在“全部指标”和原始详情查看，其他数据集分类不受影响。GSM8K 的
@@ -817,11 +917,14 @@ GPU、主机和服务负载一起切换；顶部显示运行 ID、模型、Case 
 顶部对齐，滚动时保持可见；窄屏折叠为顶部菜单，
 明暗主题共用样式。相邻任务摘要之间自动使用虚线分隔。页面将 `performance`
 显示为“推理性能评测”、`knowledge_accuracy` 显示为“模型能力评测”，
-`online_serving` 显示为“在线服务”；JSON 标识及未知任务名保持原样。
+`online_serving` 显示为“在线服务”，`multi_turn_serving` 显示为“多轮在线服务”；
+JSON 标识及未知任务名保持原样。
 
-核心性能菜单严格匹配 `streaming_performance.values.request_view` 下的
-`ttft/tpot/itl/e2el`，及 `streaming_performance.values.service_view` 下的
-`request_throughput/output_token_throughput`。不替代为其他来源的同名指标。
+核心性能菜单严格匹配在线服务计算器保存的 `values.request_view` 下的
+`ttft/tpot/itl/e2el`，及 `values.service_view` 下的
+`request_throughput/output_token_throughput`；指标名不参与匹配，因此
+`streaming_performance` 与复用同一套视图的 `multi_turn_performance` 都能命中，
+但不会替代为 Engine 或其他来源的同名指标。
 默认 TTFT，缺失时选择第一个可用项；切换 Case 保留仍存在的选择，否则回退。
 其他性能诊断数据继续保留在“全部指标”及原始详情中。
 
