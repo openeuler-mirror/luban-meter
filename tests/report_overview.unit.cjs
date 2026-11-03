@@ -218,7 +218,48 @@ assert.equal(call('qualityComparisonGroups',[qualityTask('wikitext',[p1,p2])]).l
 const custom=qualityCase('unknown','custom_score',900,'points');
 assert.equal(call('bestQualityRecord',call('qualityComparisonGroups',[
   qualityTask('custom',[custom])])[0],call('qualityScoreMetrics',custom)[0]),null);
+
+// Session metrics reuse the serving views under their own provider name, and
+// carry per-turn rows whose shrinking sample counts must stay visible.
+function sessionPoint(id,concurrency,value,turns) {
+  const c=point(id,concurrency,value);
+  const values=c.metrics.streaming_performance.values;
+  delete c.metrics.streaming_performance;
+  values.request_view.e2el={mean:40,unit:'ms'};
+  const series=(pick,unit)=>turns.map((turn,index)=>
+    ({turn_index:index,unit,count:turn.count,mean:pick(turn),p99:pick(turn)+10}));
+  values.turn_view={turns_observed:turns.length,
+    ttft_ms_by_turn:series(turn=>turn.ttft,'ms'),
+    e2el_ms_by_turn:series(turn=>turn.e2el,'ms'),
+    input_tokens_by_turn:series(turn=>turn.input,'token'),
+    output_tokens_by_turn:series(turn=>turn.output,'token')};
+  values.session_view={sessions_finished:{value:turns[0].count,unit:'session'},
+    planned_turns:{unit:'turn',count:turns[0].count,mean:turns.length},
+    completed_turns:{unit:'turn',count:turns[0].count,mean:turns.length-1},
+    not_started_turns:{value:turns[0].count,unit:'turn'},
+    abort_reasons:{turn_failed:1}};
+  c.metrics.multi_turn_performance={status:'success',values};
+  return c;
+}
+const sessionCase=sessionPoint('session',4,120,[
+  {count:4,ttft:10,e2el:40,input:100,output:50},
+  {count:3,ttft:14,e2el:52,input:180,output:50},
+  {count:1,ttft:20,e2el:70,input:260,output:50}]);
+assert.equal(call('servingMetric',sessionCase).status,'success');
+assert.equal(call('sessionValues',sessionCase).turn_view.turns_observed,3);
+assert.deepEqual(call('sessionValues',{...sessionCase,status:'discarded'}),null);
+assert.deepEqual(call('corePerformanceMetrics',sessionCase).map(m=>m.path),
+  ['ttft','tpot','itl','e2el'].map(k=>'/multi_turn_performance/values/request_view/'+k)
+    .concat(['request_throughput','output_token_throughput']
+      .map(k=>'/multi_turn_performance/values/service_view/'+k)));
+const sessionSummary=call('performanceSummary',[task([sessionCase])]);
+assert.equal(sessionSummary.included,1);
+assert.equal(sessionSummary.groups[0].maximum,120);
+assert.equal(call('savedRequestCounts',sessionCase).valid,false);
+// A metric without per-turn facts is not treated as a session metric.
+assert.equal(call('sessionValues',qualityCase('q','accuracy',.5)),null);
 console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '+
   'zero/missing data, observed trends, subject scores and scoring denominators; '+
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+
-  'quality optimization directions, comparable datasets and summary-row links');
+  'quality optimization directions, comparable datasets and summary-row links; '+
+  'session metrics resolved by view, per-turn sample counts preserved');

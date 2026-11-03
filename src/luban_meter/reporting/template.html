@@ -199,7 +199,7 @@ function taskDisplayName(name) {
   return Object.hasOwn(labels,name)?labels[name]:name;
 }
 function scenarioDisplayName(name) {
-  const labels={online_serving:'在线服务',cmmlu:'CMMLU',ceval:'C-Eval',gsm8k:'GSM8K',humaneval:'HumanEval'};
+  const labels={online_serving:'在线服务',multi_turn_serving:'多轮在线服务',cmmlu:'CMMLU',ceval:'C-Eval',gsm8k:'GSM8K',humaneval:'HumanEval'};
   return Object.hasOwn(labels,name)?labels[name]:name;
 }
 $('subtitle').textContent=(R.id||taskDisplayName(R.name))+' · '+(names[R.status]||R.status);

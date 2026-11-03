@@ -31,7 +31,24 @@ const metricNames = {
   input_delta:'输入长度偏差', output_delta:'输出长度偏差',
   conformance_rate:'长度符合率', counts:'长度符合数量', conforming:'符合',
   nonconforming:'不符合', unknown:'未知', cmmlu:'CMMLU', ceval:'C-Eval',
-  gsm8k:'GSM8K', humaneval:'HumanEval', wikitext:'WikiText'
+  gsm8k:'GSM8K', humaneval:'HumanEval', wikitext:'WikiText',
+  turn_view:'按轮次', session_view:'会话', caching_view:'上下文增长',
+  pressure_view:'Prefill 压力', prefix_cache:'前缀缓存',
+  turns_observed:'已观测轮次数', session_latency:'会话耗时',
+  think_time_total:'轮间等待合计', completed_turns:'完成轮次',
+  planned_turns:'计划轮次', not_started_turns:'未开始轮次',
+  sent_failed_turns:'发送失败轮次',
+  sessions_finished:'已结束会话', sessions_per_second:'会话吞吐量',
+  abort_reasons:'会话中止原因', session_coverage:'会话覆盖率',
+  first_turn_ttft_mean:'首轮 TTFT 均值', rest_turn_ttft_mean:'后续轮 TTFT 均值',
+  first_to_rest_ttft_ratio:'首轮 / 后续轮 TTFT 比',
+  ttft_growth_per_turn:'每轮 TTFT 增长', ttft_growth_per_ktok:'每千 Token TTFT 增长',
+  measured_turns:'已测轮次', prompt_tokens_total:'输入 Token 合计',
+  eligible_prefix_tokens:'可复用前缀 Token', eligible_prefix_ratio:'可复用前缀占比',
+  server_cached_tokens:'服务端命中 Token', server_cache_hit_rate:'服务端缓存命中率',
+  server_cache_eligible_rate:'服务端命中 / 可复用前缀', reporting_turns:'上报轮次',
+  turn_context_tokens:'单轮上下文 Token', total_prefill_tokens:'Prefill Token 合计',
+  prefill_token_rate:'Prefill Token 速率', peak_turn_context_tokens:'单轮上下文峰值'
 };
 const statNames = {mean:'Mean · 均值', median:'Median · 中位数',
   min:'Min · 最小值', max:'Max · 最大值', stddev:'Std · 标准差',
@@ -167,7 +184,9 @@ function dataTable(parent, columns, records, className='') {
 }
 const parameterNames = {model:'模型',data:'数据来源',dataset_path:'数据文件',
   profile:'负载策略',max_concurrency:'并发',input_tokens:'输入长度参数（token）',
-  output_tokens:'输出上限（token）',batch_size:'Batch Size',request_rate:'请求速率（req/s）'};
+  output_tokens:'输出上限（token）',batch_size:'Batch Size',request_rate:'请求速率（req/s）',
+  multi_num_sessions:'会话数',multi_max_turns:'轮数上限',
+  multi_think_time:'轮间等待（s）'};
 function isDimension(metric) {
   const taskView = metric.parts.indexOf('task_view');
   return metric.parts.slice(0,-1).some(p=>p.includes('_by_')) ||
@@ -346,18 +365,93 @@ function renderPerformance(parent,metric) {
   parent.append(grid);
   rawMetric(parent,metric);
 }
-// Exact persisted paths: never substitute similarly named request/Engine data.
-const corePerformancePaths = [
-  '/streaming_performance/values/request_view/ttft',
-  '/streaming_performance/values/request_view/tpot',
-  '/streaming_performance/values/request_view/itl',
-  '/streaming_performance/values/request_view/e2el',
-  '/streaming_performance/values/service_view/request_throughput',
-  '/streaming_performance/values/service_view/output_token_throughput'
+// Exact persisted view/metric pairs of the online serving calculator.
+// Session metrics reuse those views unchanged, so the provider name is
+// deliberately not part of the match; nothing else may be substituted.
+const corePerformanceViews = [
+  ['request_view','ttft'], ['request_view','tpot'],
+  ['request_view','itl'], ['request_view','e2el'],
+  ['service_view','request_throughput'],
+  ['service_view','output_token_throughput']
 ];
 function corePerformanceMetrics(c) {
-  const available=new Map(metricsFor(c).map(m=>[m.path,m]));
-  return corePerformancePaths.flatMap(path=>available.has(path)?[available.get(path)]:[]);
+  const available=metricsFor(c);
+  return corePerformanceViews.flatMap(([view,key])=>
+    available.filter(m=>m.key===key && m.parts.at(-2)===view));
+}
+// request_view/service_view come from the online serving calculator, which
+// session metrics reuse unchanged, so the provider name is not hardcoded.
+function servingMetric(c) {
+  for (const metric of Object.values(c?.metrics||{}))
+    if (metric?.values?.service_view) return metric;
+  return undefined;
+}
+// Per-turn facts live in turn_view; a metric carrying it is a session metric.
+function sessionValues(c) {
+  if (!c || c.status === 'discarded') return null;
+  for (const metric of Object.values(c.metrics||{}))
+    if (metric?.values?.turn_view) return metric.values;
+  return null;
+}
+const turnSeries = [['ttft_ms_by_turn','TTFT'],
+  ['e2el_ms_by_turn','E2EL'],['input_tokens_by_turn','输入 Token'],
+  ['output_tokens_by_turn','输出 Token']];
+function renderSessionTurns(parent,c) {
+  const values=sessionValues(c);
+  if (!values) return;
+  const turn=values.turn_view,session=values.session_view||{};
+  const section=el('div',undefined,'analysis-group');
+  section.append(el('h3','按轮次统计'));
+  const at=(key,index)=>(turn[key]||[]).find(row=>row.turn_index===index);
+  const indexes=[...new Set(turnSeries.flatMap(([key])=>
+    (turn[key]||[]).map(row=>row.turn_index)))].sort((a,b)=>a-b);
+  if (!indexes.length) {
+    section.append(el('p','没有已保存的成功轮次。','empty'));
+    parent.append(section);
+    return;
+  }
+  section.append(el('p','已观测轮次数：'+valueText(turn.turns_observed)+
+    '。第 N 轮只包含延续到该轮的会话，样本数减少本身不是性能变化，'+
+    '请与各轮样本数、未开始轮次和中止原因一起阅读。','analysis-note'));
+  const records=indexes.map(index=>({index}));
+  dataTable(section,[
+    {title:'轮次',numeric:true,sortable:true,get:r=>r.index},
+    {title:'各轮样本数（TTFT / E2EL / 输入 / 输出）',numeric:true,sortable:true,
+      get:r=>at('ttft_ms_by_turn',r.index)?.count,
+      render:(cell,r)=>{
+        const counts=turnSeries.map(([key])=>at(key,r.index)?.count);
+        cell.textContent=counts.map(valueText).join(' / ');
+        cell.title='依次为本轮已保存的 '+
+          turnSeries.map(([,title])=>title).join('、')+' 样本数';
+      }},
+    ...turnSeries.flatMap(([key,title])=>[
+      {title:title+' Mean',numeric:true,sortable:true,
+        unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.mean},
+      {title:title+' P99',numeric:true,sortable:true,
+        unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.p99}])],
+    records,'stat-table');
+  barChart(section,indexes.map(index=>({label:'第 '+index+' 轮',
+    value:at('ttft_ms_by_turn',index)?.mean,
+    count:at('ttft_ms_by_turn',index)?.count})),
+    at('ttft_ms_by_turn',indexes[0])?.unit||'ms','各轮 TTFT Mean');
+  const scalarValue=key=>session[key]?.value;
+  const statsValue=key=>session[key]?.mean;
+  const summary=[['已结束会话',scalarValue('sessions_finished')],
+    ['计划轮次 Mean',statsValue('planned_turns')],
+    ['完成轮次 Mean',statsValue('completed_turns')],
+    ['未开始轮次',scalarValue('not_started_turns')],
+    ['发送失败轮次',scalarValue('sent_failed_turns')],
+    ['会话耗时 Mean（ms）',statsValue('session_latency')]]
+    .filter(([,value])=>value!=null)
+    .map(([label,value])=>label+'：'+valueText(value));
+  if (summary.length)
+    section.append(el('p',summary.join(' · '),'analysis-note'));
+  const reasons=Object.entries(session.abort_reasons||{});
+  if (reasons.length)
+    section.append(el('p','会话中止原因：'+reasons
+      .map(([reason,count])=>reason+' '+valueText(count)).join(' · '),
+      'analysis-note'));
+  parent.append(section);
 }
 function isCmmluSubjectAccuracy(metric) {
   const view=metric.parts.indexOf('task_view');
@@ -420,9 +514,10 @@ function renderAnalysis() {
   const failedMetrics=Object.entries(c.metrics||{}).filter(([,m])=>m?.error||m?.status==='failed');
   if(c.status!=='success'||failedMetrics.length)
     context.append(el('p','结果存在异常或未完成状态，请结合指标状态、覆盖率与诊断阅读。','analysis-note'));
-  if(task.category==='generation_performance')
+  if(task.category==='generation_performance') {
     renderPerformance(content,metrics.find(m=>m.path===$('analysis-metric').value));
-  else {
+    renderSessionTurns(content,c);
+  } else {
     context.append(el('p','完成样本、答案解析和参与评分是不同口径；下表仅展示已保存字段。样本/计数可能按样本、Token 或字节统计，请结合原始口径阅读。','analysis-note'));
     renderQuality(content,metrics);
   }
@@ -451,6 +546,9 @@ function updateAnalysisCases() {
     if(p.max_concurrency!=null)conditions.push('并发 '+p.max_concurrency);
     if(p.input_tokens!=null)conditions.push('输入 '+p.input_tokens);
     if(p.output_tokens!=null)conditions.push('输出上限 '+p.output_tokens);
+    if(p.multi_num_sessions!=null)
+      conditions.push('会话 '+p.multi_num_sessions);
+    if(p.multi_max_turns!=null)conditions.push('轮数上限 '+p.multi_max_turns);
     option(select,String(ci),[c.id,...conditions,names[c.status]||c.status].join(' · '));
   }
   select.disabled=!task?.cases.length;
@@ -462,10 +560,9 @@ function ensureAnalysisTarget(target) {
   $('analysis-task').value=match[1];updateAnalysisCases();
   $('analysis-case').value=match[2];updateAnalysisMetrics();
   if(match[3]) {
-    const path=corePerformancePaths.find(p=>p.endsWith('/'+match[3]));
-    if([...$('analysis-metric').options].some(o=>o.value===path)) {
-      $('analysis-metric').value=path;renderAnalysis();
-    }
+    const path=[...$('analysis-metric').options].map(o=>o.value)
+      .find(value=>value.endsWith('/'+match[3]));
+    if(path) {$('analysis-metric').value=path;renderAnalysis();}
   }
   return 'case-analysis';
 }
