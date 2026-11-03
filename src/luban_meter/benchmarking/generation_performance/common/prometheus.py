@@ -182,6 +182,8 @@ def histogram_quantiles(
         return {f"p{int(quantile * 100)}": None for quantile in quantiles}
 
     buckets.sort(key=lambda bucket: bucket[0])
+    finite_bounds = [bound for bound, _ in buckets if bound < float("inf")]
+    highest_finite_bound = finite_bounds[-1] if finite_bounds else None
     if total_count is None:
         total_count = buckets[-1][1]
 
@@ -196,6 +198,11 @@ def histogram_quantiles(
         found = False
         for bucket_upper_bound, count in buckets:
             if count >= target:
+                if bucket_upper_bound == float("inf"):
+                    # The unbounded bucket cannot be interpolated.
+                    result[f"p{int(quantile * 100)}"] = highest_finite_bound
+                    found = True
+                    break
                 ratio = (
                     (target - previous_count) / (count - previous_count)
                     if count > previous_count

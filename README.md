@@ -431,6 +431,9 @@ luban-meter run --scenario online_serving --model served-model \
 服务端Prometheus采样只适用于HTTP任务。硬件exporter地址单独指定；不提供时不启动硬件监控。
 观测故障独立记录，不让推理任务因为指标接口故障而失败。报告保留实际采样时间和缺失信息。
 
+服务端经典直方图的分位数落入 `+Inf` 桶时，按 Prometheus 规则返回最高有限桶边界，
+不对无界区间插值；只有 `+Inf` 桶、没有有限桶边界时，分位数标为不可用。
+
 `--host-exporter-url`接入被测Linux服务器的node_exporter，独立采集CPU、内存、
 文件系统、块设备I/O和网络接口；可与GPU监控同时启用，也可单独启用，不依赖GPU识别。
 两个Exporter需预先启动，配置地址不会安装或启动服务器组件。`127.0.0.1`指LuBan
