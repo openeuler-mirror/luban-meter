@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class AdmissionStopped(Exception):  # noqa: N818 - normal control flow
@@ -18,6 +18,7 @@ class Ticket:
     scheduled: float
     started: float
     cost: int
+    usage: dict = field(default_factory=dict, compare=False)
 
 
 def request_capacity(workers, concurrency_limit):
@@ -131,6 +132,8 @@ class RequestScheduler:
         try:
             result = operation(ticket)
             record["status"] = "success"
+            if ticket.usage:
+                record["usage"] = ticket.usage
             if isinstance(result, dict):
                 record["response"] = result
                 submitted = result.get("submitted_at_monotonic_s")

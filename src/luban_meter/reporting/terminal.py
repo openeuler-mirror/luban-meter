@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import math
 import shlex
 import shutil
 import unicodedata
 from collections import Counter
 from pathlib import Path
 
+from .best_summary import best_summary_lines
+from .data import format_number as number
 from .data import metric_groups, validate_result
 
 CASE_LIMIT = 5
@@ -20,20 +21,6 @@ SUMMARY_PATHS = (
     "request_view/output_tokens", "service_view/request_throughput",
     "service_view/output_token_throughput",
 )
-
-
-def number(value):
-    """Do not turn missing, boolean or non-finite observations into zero."""
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return "N/A"
-    if isinstance(value, int):
-        return str(value)
-    if not math.isfinite(value):
-        return "N/A"
-    rounded = f"{value:.3f}".rstrip("0").rstrip(".")
-    if value != 0 and rounded in ("0", "-0"):
-        return f"{value:.3g}"
-    return rounded
 
 
 def safe_text(value):
@@ -105,19 +92,30 @@ def metric_entries(metric):
     return list(metric_groups(metric.get("values", metric)))
 
 
+def is_breakdown(path):
+    """Recognize explicit breakdown groups, not arbitrary nested metrics."""
+    return any(
+        part in {"by_subject", "by_category", "by_subcategory"}
+        or part.endswith(("_by_subject", "_by_category", "_by_subcategory"))
+        for part in path.split("/")[:-1]
+    )
+
+
 def summary_entries(entries):
     """Prioritize familiar performance fields, without losing extensions."""
+    breakdowns = [entry for entry in entries if is_breakdown(entry[0])]
+    entries = [entry for entry in entries if not is_breakdown(entry[0])]
     preferred = [entry for suffix in SUMMARY_PATHS for entry in entries
                  if entry[0] == suffix or entry[0].endswith("/" + suffix)]
     if not preferred:
-        return entries, []
+        return entries, breakdowns
     paths = {path for path, _ in preferred}
     other = [(path, item) for path, item in entries if path not in paths]
     extra = [entry for entry in other
              if not any(view in entry[0].split("/")
                         for view in ("request_view", "service_view"))]
     hidden = [entry for entry in other if entry not in extra]
-    return preferred + extra, hidden
+    return preferred + extra, hidden + breakdowns
 
 
 def distribution_values(item):
@@ -169,14 +167,24 @@ def metric_lines(entries, width, verbose=False):
                    and item.get("unit") in ("sample", "request", "token", "s")]
         entries = [(path, item) for path, item in entries
                    if path not in {p for p, _ in context}]
-    if width >= 76:
-        scalar_only = all("value" in item and not any(
-            key in item for key in (
-                "mean", "median", "p50", "p95", "percentiles"
-            )
-        ) for _, item in entries)
-        sizes = ((width - 40, 12, 9, 6) if scalar_only else
-                 (width - 58, 10, 7, 7, 9, 6))
+    scalar_only = all("value" in item and not any(
+        key in item for key in (
+            "mean", "median", "p50", "p95", "percentiles"
+        )
+    ) for _, item in entries)
+    value_sizes = [12, 9, 6] if scalar_only else [10, 7, 7, 9, 6]
+    for _, item in entries:
+        values = distribution_values(item)
+        if scalar_only:
+            values = (values[0], values[3], values[4])
+        value_sizes = [
+            max(size, display_width(value))
+            for size, value in zip(value_sizes, values)
+        ]
+    # Reserve complete value cells first; let metric labels wrap.
+    label_size = width - sum(value_sizes) - 3 * (len(value_sizes) + 1) - 1
+    sizes = (label_size, *value_sizes)
+    if width >= 76 and label_size >= 16:
         border = "+" + "+".join("-" * (s + 2) for s in sizes) + "+"
         labels = {
             "ttft": "TTFT 首Token延迟", "e2el": "E2EL 总耗时",
@@ -225,7 +233,7 @@ def metric_lines(entries, width, verbose=False):
         if entries:
             yield border
     else:
-        # Small SSH panes retain all fields inside a readable stacked box.
+        # Narrow panes or wide values use a readable stacked box.
         lines = []
         for path, item in entries:
             value, p50, p95, unit, count = distribution_values(item)
@@ -233,7 +241,9 @@ def metric_lines(entries, width, verbose=False):
             if "value" in item:
                 lines.append(f"value={value}")
             else:
-                lines.append(f"mean/value={value}  P50={p50}  P95={p95}")
+                lines.extend((
+                    f"mean/value={value}", f"P50={p50}", f"P95={p95}",
+                ))
         yield from boxed(lines, width)
     if context:
         by_view = {}
@@ -296,13 +306,31 @@ def context_lines(case, verbose=False):
         )
 
 
+def saved_token_view(result):
+    metric = (result.get("metrics") or {}).get("token_throughput")
+    if not isinstance(metric, dict):
+        metric = (result.get("metrics") or {}).get("streaming_performance")
+    if not isinstance(metric, dict):
+        return {}
+    values = metric.get("values") or {}
+    return values.get("service_view") or {}
+
+
 def case_lines(task, case, width, verbose=False):
     yield ""
     heading = f"[{safe_text(task['name'])}/{safe_text(case['id'])}] " + (
         f"{safe_text(case['status'])}  "
         f"scenario={safe_text(task.get('scenario'))}"
     )
-    yield from boxed([heading, *context_lines(case, verbose)], width)
+    rate = None
+    if case["status"] not in ("discarded", "skipped", "interrupted"):
+        rate = (saved_token_view(case).get("total_token_throughput")
+                or {}).get("value")
+    label = f"total_token_throughput={number(rate)} tokens/s"
+    labels = [heading, *context_lines(case, verbose)]
+    if task.get("category") == "generation_performance":
+        labels.append(label)
+    yield from boxed(labels, width)
     if case["status"] == "discarded":
         yield "指标: N/A (Case 已丢弃，残留指标不作为有效结果)"
         if case.get("reason") or case.get("error"):
@@ -312,6 +340,9 @@ def case_lines(task, case, width, verbose=False):
     if not metrics:
         yield "指标: N/A (未保存指标或指标计算未完成)"
     for name, metric in metrics.items():
+        if (name == "token_throughput"
+                and task.get("category") == "model_service_quality"):
+            continue
         if not isinstance(metric, dict):
             yield f"{safe_text(name)}: N/A (指标结构不可用)"
             continue
@@ -330,7 +361,18 @@ def case_lines(task, case, width, verbose=False):
         shown, hidden = (entries, []) if verbose else summary_entries(entries)
         yield from metric_lines(shown, width, verbose)
         if hidden:
-            yield f"另有 {len(hidden)} 项已保存指标，使用 --verbose 查看全部。"
+            breakdown_count = sum(is_breakdown(path) for path, _ in hidden)
+            if breakdown_count:
+                yield (
+                    f"已隐藏 {breakdown_count} 项学科/子类别明细，"
+                    "使用 --verbose 查看全部。"
+                )
+            other_count = len(hidden) - breakdown_count
+            if other_count:
+                yield (
+                    f"另有 {other_count} 项已保存指标，"
+                    "使用 --verbose 查看全部。"
+                )
             for path, item in hidden:
                 if item.get("reason") or item.get("condition"):
                     yield safe_text(path) + ": " + safe_text(
@@ -355,12 +397,20 @@ def case_lines(task, case, width, verbose=False):
             ))
         if service and verbose:
             yield "吞吐量范围: 正式 Case 窗口；仅成功请求及其 Token 计入分子。"
-            yield "  ".join(
-                f"{k}={number((service.get(k) or {}).get('value'))}"
-                + (" s" if k == "benchmark_duration" else "")
-                for k in ("benchmark_duration", "total_requests",
-                          "successful_requests", "failed_requests")
-            )
+            metadata = metric.get("metadata") or {}
+            details = []
+            for key in ("benchmark_duration", "total_requests",
+                        "successful_requests", "failed_requests"):
+                if key in service:
+                    value = (service[key] or {}).get("value")
+                elif key in metadata:
+                    value = metadata[key]
+                else:
+                    continue
+                unit = " s" if key == "benchmark_duration" else ""
+                details.append(f"{key}={number(value)}{unit}")
+            if details:
+                yield "  ".join(details)
         if verbose and any(
             path.startswith("request_view/") for path, _ in entries
         ):
@@ -416,6 +466,7 @@ def render_text(payload, *, tasks=(), cases=(), all_cases=False, width=None,
     # allocate all that spare space to Metric; cap the report at 120 cells.
     width = max(20, min(MAX_REPORT_WIDTH, width or
                         shutil.get_terminal_size((100, 24)).columns))
+    run = payload["kind"] == "run"
     shown = selected if all_cases else selected[:CASE_LIMIT]
     statuses = Counter(case["status"] for _, case in selected)
     lines = [
@@ -428,7 +479,32 @@ def render_text(payload, *, tasks=(), cases=(), all_cases=False, width=None,
             f"{key}={count}" for key, count in sorted(statuses.items())
         ) or "N/A (无 Case)"),
     ]
+    if run:
+        lines.append(f"整轮 duration={number(payload.get('duration_s'))} s")
+    if run and any(t.get("category") == "generation_performance"
+                   for t in all_tasks):
+        view = saved_token_view(payload)
+        total = (view.get("total_tokens") or {}).get("value")
+        formal_duration = (view.get("benchmark_duration") or {}).get("value")
+        rate = (view.get("total_token_throughput") or {}).get("value")
+        lines.extend((
+            f"性能评测正式测试时长={number(formal_duration)} s",
+            f"性能评测输入＋输出 Token 总数={number(total)} token",
+            f"性能评测总体 total_token_throughput={number(rate)} tokens/s",
+        ))
+        metric = (payload.get("metrics") or {}).get("token_throughput") or {}
+        if metric.get("reason"):
+            lines.append("整轮指标诊断: " + safe_text(metric["reason"]))
+        elif not metric:
+            lines.append("整轮指标未保存")
+        if verbose and metric.get("metadata"):
+            lines.append("整轮统计依据: " + safe_text(json.dumps(
+                metric["metadata"], ensure_ascii=False,
+            )))
     lines = list(boxed(lines, width))
+    lines.extend(boxed(
+        [safe_text(line) for line in best_summary_lines(selected)], width
+    ))
     if payload.get("errors"):
         lines.append("运行诊断: " + safe_text(payload["errors"]))
     for task in selected_tasks:

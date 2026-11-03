@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
-from luban_meter.core.execution_summary import case_summary
 from luban_meter.core.metric import metrics
 from luban_meter.core.planning import build_plan, cli_schema, public_plan
 from luban_meter.core.run_coordinator import RunCoordinator
@@ -190,13 +189,6 @@ def main(argv=None):
                 f"  {task['name']}: {task['scenario']} "
                 f"({len(task['cases'])} Cases)"
             )
-            for case in task["cases"]:
-                summary = case_summary(
-                    benchmarks.get(task["scenario"]), case["parameters"]
-                )
-                print(f"    {case['id']}: " + json.dumps(
-                    summary, ensure_ascii=False
-                ), flush=True)
         observation = (
             {"url": args.observe_url, "interval": args.observe_interval}
             if args.observe

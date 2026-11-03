@@ -263,3 +263,37 @@ console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+
   'quality optimization directions, comparable datasets and summary-row links; '+
   'session metrics resolved by view, per-turn sample counts preserved');
+
+
+// Provider selection must survive actual sorted JSON persistence.
+if(process.argv[2]) {
+  const persisted=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+  for(const task of persisted.tasks) {
+    const c=task.cases[0],record={task,c,ti:0,ci:0};
+    const cards=call('performanceOverviewCards',[record]);
+    assert.equal(cards[0].value,10);
+    assert.equal(cards[1].value,5);
+    assert.equal(cards[2].value,2);
+    assert.equal(cards[3].value,1);
+    assert.equal(cards[4].value,4);
+    assert.equal(cards[5].value,20);
+    const groups=call('performanceSummary',[task]);
+    assert.equal(groups.groups[0].maximum,10);
+    const reordered=JSON.parse(JSON.stringify(c));
+    reordered.metrics=Object.fromEntries(Object.entries(c.metrics).reverse());
+    const reversed=call('performanceOverviewCards',[
+      {...record,c:reordered}
+    ]);
+    assert.deepEqual(reversed.map(m=>m.value),cards.map(m=>m.value));
+    assert.equal(call('servingMetric',c).status,'success');
+    // An unavailable selected provider stays unavailable with its own status.
+    const provider=Object.keys(c.metrics).find(k=>k!=='token_throughput');
+    c.metrics[provider].error='provider failed';
+    assert.equal(call('performanceOverviewCards',[record])[0].value,null);
+    delete c.metrics[provider];
+    assert.ok(call('performanceOverviewCards',[record])
+      .every(card=>card.value===null));
+    assert.equal(call('performanceSummary',[task]).groups.length,0);
+  }
+  console.log('PASS: persisted common/online/session/custom provider selection');
+}

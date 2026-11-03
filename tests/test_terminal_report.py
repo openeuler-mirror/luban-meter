@@ -342,7 +342,10 @@ def test_real_cli_pipeline_preserves_saved_results(
         thread.join(timeout=5)
     captured = capsys.readouterr()
     output = captured.out
-    assert ("进度 |" in captured.err) is not no_progress
+    assert "准备完成" not in output
+    assert ".prepared:" not in output
+    assert '"backend":' not in output
+    assert ("当前任务：" in captured.err) is not no_progress
     assert "\x1b" not in captured.err
     assert ("终端结果摘要" in output) is not no_summary
     path, = (tmp_path / "runs").glob("*/result.json")
@@ -360,6 +363,24 @@ def test_real_cli_pipeline_preserves_saved_results(
     raw_before = raw.read_bytes()
     assert len(json.loads(raw_before)["requests"]) == 3
     assert (path.parent / "report.html").is_file()
+    metric = case["metrics"]["token_throughput"]
+    case_path = raw.with_name(raw.stem + ".result.json")
+    assert json.loads(case_path.read_text())["metrics"][
+        "token_throughput"
+    ] == metric
+    run_metric = result["metrics"]["token_throughput"]
+    assert run_metric["values"] == metric["values"]
+    assert run_metric["metadata"]["included_cases"][0]["case"] == case["id"]
+    assert metric["metadata"]["successful_requests"] == (
+        3 if mode == "ok" else 0
+    )
+    assert result["duration_s"] > 0
+    if mode == "ok":
+        view = metric["values"]["service_view"]
+        assert view["total_tokens"]["value"] > 0
+        assert view["benchmark_duration"]["value"] == (
+            case["window"]["duration_s"]
+        )
     assert cli.main(["report", "--input", str(path), "--format", "text",
                      "--all", "--output", str(tmp_path / "report.txt")]) == 0
     assert path.read_bytes() == before
@@ -402,9 +423,7 @@ def test_long_numeric_values_are_not_truncated(result):
     rows = text.splitlines()
     start = next(i for i, line in enumerate(rows)
                  if line.startswith("| TTFT "))
-    chunks = [rows[start + offset].split("|")[2].strip()
-              for offset in (0, 1)]
-    assert "".join(chunks) == "123456789.123"
+    assert rows[start].split("|")[2].strip() == "123456789.123"
     assert metric["streaming_performance"]["values"]["request_view"][
         "ttft"
     ]["mean"] == 123456789.123456
@@ -440,7 +459,8 @@ def test_dynamic_metrics_do_not_invent_missing_values(result):
     }}
     text = render_text(result, width=120)
     assert "novel_latency" in text and "p95_only" in text
-    assert "TTFT" not in text and "TPOT" not in text
+    assert "最低 TTFT P99: N/A" in text
+    assert "最低 TPOT P99: N/A" in text
     assert "service_view" not in text
     rows = [line for line in text.splitlines() if "| novel_latency" in line]
     assert rows[0].split("|")[2].strip() == "0"
@@ -474,8 +494,12 @@ def test_choice_processor_results_are_rendered_dynamically(result, scenario):
     }}
     text = render_text(result, width=140)
     assert "Accuracy" in text and "0.5" in text
-    assert "accuracy_by_subject" in text
-    assert "math" in text and "physics" in text
+    assert "accuracy_by_subject" not in text
+    assert "math" not in text and "physics" not in text
+    assert "已隐藏 2 项学科/子类别明细" in text
+    detailed = render_text(result, width=140, verbose=True)
+    assert "accuracy_by_subject" in detailed
+    assert "math" in detailed and "physics" in detailed
     assert "service_failed=1 sample" in " ".join(text.split())
     assert "TTFT" not in text and "service_view" not in text
     html = report_data(result)["rows"]
@@ -633,3 +657,182 @@ def test_failed_metric_in_success_case_has_navigation(result, tmp_path):
     text = render_text(result, result_path=tmp_path / "result.json")
     assert "scoring failed" in text and "定位异常:" in text
     assert "--case task_1/case_1" in text
+
+
+def test_breakdown_filter_preserves_extensions_diagnostics_and_data(result):
+    import copy
+
+    result["tasks"][0]["cases"][0]["metrics"] = {"custom": {
+        "status": "success", "values": {
+            "accuracy": {"value": 0.75, "unit": "ratio", "count": 4},
+            "accuracy_by_category": {"science": {
+                "value": 0.5, "unit": "ratio", "count": 2,
+                "reason": "category diagnostic",
+            }},
+            "extension": {"nested_score": {
+                "value": 0.123, "unit": "ratio", "count": 4,
+            }},
+        },
+    }}
+    original = copy.deepcopy(result)
+    plain = render_text(result)
+    detail = render_text(result, verbose=True)
+    assert "已隐藏 1 项学科/子类别明细" in plain
+    assert "category diagnostic" in plain
+    assert "nested_score" in plain and "0.123" in plain
+    assert "science" in detail and "0.5" in detail
+    assert result == original
+
+
+@pytest.mark.parametrize("width", [40, 76, 80, 100, 120])
+@pytest.mark.parametrize("verbose", [False, True])
+def test_e2el_percentiles_remain_whole(result, width, verbose):
+    view = result["tasks"][0]["cases"][0]["metrics"][
+        "streaming_performance"
+    ]["values"]["request_view"]
+    view["e2el"] = {
+        "mean": 1497.01, "p50": 1484.211, "p95": 1591.317,
+        "unit": "ms", "count": 20,
+    }
+    original = copy.deepcopy(result)
+    text = render_text(result, width=width, verbose=verbose)
+    assert "1484.211" in text and "1591.317" in text
+    if width >= 76:
+        row = next(line for line in text.splitlines()
+                   if line.startswith("| E2EL "))
+        assert row.split("|")[3].strip() == "1484.211"
+        assert row.split("|")[4].strip() == "1591.317"
+    frames = [line for line in text.splitlines()
+              if line.startswith(("+", "|"))]
+    assert all(display_width(line) == width for line in frames)
+    assert result == original
+
+
+def test_wide_values_fall_back_without_splitting(result):
+    view = result["tasks"][0]["cases"][0]["metrics"][
+        "streaming_performance"
+    ]["values"]["request_view"]
+    view["e2el"] = {
+        "mean": 123456789.123, "p50": 123456788.123,
+        "p95": 123456790.123, "unit": "ms", "count": 123456789,
+    }
+    text = render_text(result, width=76)
+    for value in ("123456789.123", "123456788.123", "123456790.123"):
+        assert value in text
+    assert all(display_width(line) == 76 for line in text.splitlines()
+               if line.startswith(("+", "|")))
+
+
+def test_summary_reads_saved_throughput_without_recalculating(result):
+    case = result["tasks"][0]["cases"][0]
+    case["metrics"] = {"token_throughput": {
+        "status": "success", "values": {"service_view": {
+            "total_token_throughput": {"value": 151, "unit": "token/s"},
+        }},
+    }}
+    case.update(total_tokens=300, window={"duration_s": 2})
+    result.update(started_at=100, finished_at=110, duration_s=11)
+    result["metrics"] = {"token_throughput": {
+        "status": "success", "values": {"service_view": {
+            "total_tokens": {"value": 400, "unit": "token"},
+            "benchmark_duration": {"value": 4, "unit": "s"},
+            "total_token_throughput": {"value": 101, "unit": "token/s"},
+        }},
+    }}
+    original = copy.deepcopy(result)
+    text = render_text(result, cases=(case["id"],), width=120)
+    assert "整轮 duration=11 s" in text
+    assert "正式测试时长=4 s" in text
+    assert "性能评测总体 total_token_throughput=101 tokens/s" in text
+    assert "total_token_throughput=151 tokens/s" in text
+    assert result == original
+    del result["metrics"]
+    assert "性能评测总体 total_token_throughput=N/A" in render_text(result)
+
+
+def test_request_token_totals_use_actual_usage_once():
+    from luban_meter.core.token_totals import request_total
+
+    requests = [
+        {"sample_id": "s", "status": "success",
+         "usage": {"prompt_tokens": 10, "completion_tokens": 2}},
+        {"sample_id": "s", "status": "success",
+         "usage": {"prompt_tokens": 9, "completion_tokens": 0}},
+        {"sample_id": "s", "status": "failed"},
+    ]
+    samples = [{"sample_id": "s", "facts": {"status": "parse_failed"}}]
+    assert request_total(requests, samples) == 21
+    del requests[1]["usage"]
+    assert request_total(requests, samples) is None
+
+
+def test_run_aggregation_excludes_skips_and_rejects_incomplete_cases():
+    from luban_meter.core.token_totals import run_throughput, throughput_result
+
+    cases = [
+        {"status": "success", "collection_complete": True,
+         "metrics": {"token_throughput": throughput_result(300, 2)}},
+        {"status": "partial_failed", "collection_complete": True,
+         "metrics": {"token_throughput": throughput_result(100, 1)}},
+        {"status": "skipped"},
+    ]
+    tasks = [{"status": "partial_failed", "cases": cases},
+             {"status": "skipped", "cases": []}]
+    for task in tasks:
+        task["category"] = "generation_performance"
+    aggregated = run_throughput(tasks)
+    assert aggregated["values"] == throughput_result(400, 3)["values"]
+    assert len(aggregated["metadata"]["included_cases"]) == 2
+    assert len(aggregated["metadata"]["skipped_cases"]) == 2
+    cases[0]["status"] = "discarded"
+    assert run_throughput(tasks)["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("successful,failed", [(20, 0), (0, 20)])
+def test_saved_request_metadata_in_verbose_report(result, successful, failed):
+    from luban_meter.core.token_totals import throughput_result
+
+    case = result["tasks"][0]["cases"][0]
+    case["metrics"] = {"token_throughput": throughput_result(
+        100, 2, metadata={
+            "successful_requests": successful, "failed_requests": failed,
+        },
+    )}
+    before = copy.deepcopy(result)
+    text = render_text(result, verbose=True)
+    assert f"successful_requests={successful}" in text
+    assert f"failed_requests={failed}" in text
+    assert "total_requests=N/A" not in text
+    assert result == before
+
+
+@pytest.mark.parametrize("end_wall", [90, 1000])
+def test_run_duration_ignores_wall_clock_changes(tmp_path, monkeypatch,
+                                                end_wall):
+    from types import SimpleNamespace
+    from luban_meter.core import run_coordinator
+
+    wall = iter([100, end_wall])
+    monotonic = iter([10, 35])
+    monkeypatch.setattr(run_coordinator, "time", SimpleNamespace(
+        time=lambda: next(wall),
+        perf_counter=lambda: next(monotonic),
+    ))
+    result, directory = run_coordinator.RunCoordinator().run(
+        {"tasks": []}, tmp_path,
+    )
+    assert result["duration_s"] == 25
+    assert result["started_at"] == 100
+    assert result["finished_at"] == end_wall
+    saved = json.loads((directory / "result.json").read_text())
+    assert saved["duration_s"] == 25
+
+
+def test_quality_report_has_no_throughput(result):
+    task = result["tasks"][0]
+    task["category"] = "model_service_quality"
+    task["cases"][0]["metrics"] = {}
+    text = render_text(result, verbose=True)
+    assert "total_token_throughput" not in text
+    assert "正式测试时长" not in text
+    assert "整轮 duration=" in text

@@ -62,9 +62,17 @@ class OpenAIClient:
         if path in ("/v1/chat/completions", "/v1/completions"):
             payload = append_request_params(payload, self.request_params)
         if self.request_runner is not None and "completions" in path:
-            return self.request_runner(
-                lambda ticket: self._post_direct(path, payload)
-            )
+            def send(ticket):
+                body, elapsed = self._post_direct(path, payload)
+                usage = body.get("usage")
+                if hasattr(ticket, "usage") and isinstance(usage, dict):
+                    ticket.usage.update({
+                        key: usage.get(key)
+                        for key in ("prompt_tokens", "completion_tokens")
+                    })
+                return body, elapsed
+
+            return self.request_runner(send)
         return self._post_direct(path, payload)
 
     def _post_direct(

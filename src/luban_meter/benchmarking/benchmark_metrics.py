@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from luban_meter.api import Metric, metrics
+from luban_meter.core.token_totals import request_totals, throughput_result
 
 from .model_service_quality import (
     arithmetic_qa,
@@ -13,6 +14,25 @@ from .model_service_quality import (
     reading_comprehension,
     text_summarization,
 )
+
+
+@metrics.register("token_throughput")
+class TokenThroughput(Metric):
+    """Successful formal request tokens divided by the collection window."""
+
+    def compute(self, facts):
+        counts = request_totals(facts["requests"], facts["samples"])
+        complete = facts.get("collection_complete") is True
+        total = counts["total_tokens"] if complete else None
+        reason = None
+        if not complete:
+            reason = "Case collection not complete"
+        elif counts["unavailable_requests"]:
+            reason = "missing or ambiguous successful request token usage"
+        return throughput_result(
+            total, facts["window"]["duration_s"], reason=reason,
+            metadata={"scope": "Case formal collection", **counts},
+        )
 
 
 def completed_samples(facts):

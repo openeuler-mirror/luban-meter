@@ -94,11 +94,6 @@ def _amount(done, total):
     return f"{done}/{total}" if total is not None else f"{done}/未知"
 
 
-def _elapsed(seconds):
-    seconds = max(0, int(seconds))
-    return f"{seconds // 3600:02}:{seconds // 60 % 60:02}:{seconds % 60:02}"
-
-
 class TerminalProgress:
     """Parent-side renderer; no changes to collection or metric semantics."""
 
@@ -109,10 +104,10 @@ class TerminalProgress:
         self.stream = stream if stream is not None else sys.stderr
         self.clock = clock
         self.tty = self.stream.isatty() and os.environ.get("TERM") != "dumb"
-        self.started = clock()
         self.last_poll = float("-inf")
         self.last_key = None
         self.active = False
+        self.active_lines = 0
         self.disabled = False
         self.task_index = None
         self.task = None
@@ -122,9 +117,11 @@ class TerminalProgress:
         self.current = None
         self.results = {}
         self.finished_tasks = set()
+        self.printed_cases = {}
+        self.case_results = {}
+        self.titled_tasks = set()
         self.result_stamp = None
         self.phase = "等待任务"
-        self.total = sum(len(task["cases"]) for task in plan["tasks"])
 
     def __call__(self, kind, **facts):
         if self.disabled:
@@ -153,6 +150,7 @@ class TerminalProgress:
             self.current = None
             self.result_stamp = None
             self.phase = "准备任务"
+            self._task_title(self.task_index)
         elif kind == "poll":
             if self.clock() - self.last_poll < self.refresh_interval:
                 return
@@ -162,12 +160,19 @@ class TerminalProgress:
             task = facts["task"]
             if task is self.task:
                 self._poll()
+            else:
+                self.task = task
+                self.task_index = self.plan["tasks"].index(task)
+                self.directory = None
+                self.live = {}
+                self.current = None
             index = self.plan["tasks"].index(task)
             self._record(index, facts["result"])
             present = {c["id"] for c in facts["result"].get("cases", [])}
             for case in task["cases"]:
                 if case["id"] not in present:
                     self.results[index, case["id"]] = "skipped"
+            self._print_completions()
             self.finished_tasks.add(index)
             self.phase = "任务结束：" + facts["result"]["status"]
         elif kind == "run_finished":
@@ -247,8 +252,16 @@ class TerminalProgress:
                 state["requests"][event.get("status", "unknown")] += cost
 
     def _record(self, index, result):
+        planned = {case["id"] for case in self.plan["tasks"][index]["cases"]}
+        terminal = {
+            "success", "failed", "partial_failed", "skipped",
+            "interrupted", "discarded",
+        }
         for case in result.get("cases", []):
+            if case["id"] not in planned or case["status"] not in terminal:
+                continue
             self.results[index, case["id"]] = case["status"]
+            self.case_results[index, case["id"]] = case
             if index == self.task_index and case["id"] == self.current:
                 state = self.live.get(self.current)
                 coverage = case.get("coverage")
@@ -261,60 +274,101 @@ class TerminalProgress:
                     state["sample_total"] = _count(coverage.get("selected"))
                 self.phase = "Case 结束：" + case["status"]
 
+        self._print_completions()
+
+    def _history(self, text):
+        """Append a permanent line above the replaceable progress block."""
+        self.clear()
+        self.stream.write(_safe(text) + "\n")
+        self.stream.flush()
+
+    def _task_title(self, index):
+        if index not in self.titled_tasks:
+            self._history(f"当前任务：{self.plan['tasks'][index]['name']}")
+            self.titled_tasks.add(index)
+
+    def _case_line(self, index, case_id, status=None):
+        task = self.plan["tasks"][index]
+        ids = [case["id"] for case in task["cases"]]
+        position = ids.index(case_id) + 1
+        state = self.live.get(case_id, {}) if index == self.task_index else {}
+        samples = state.get("samples", Counter())
+        requests = state.get("requests", Counter())
+        total = state.get("sample_total")
+        request_total = state.get("request_total")
+        saved = self.case_results.get((index, case_id), {})
+        coverage = saved.get("coverage")
+        if coverage:
+            samples = Counter({
+                key: value for key, value in coverage.items()
+                if _count(value) is not None
+            })
+            total = _count(coverage.get("selected"))
+        done = samples["complete"] + samples["failed"]
+        known = bool(state or coverage)
+        sample_amount = _amount(done, total) if known else "未知"
+        request_amount = (
+            _amount(sum(requests.values()), request_total) if state else "未知"
+        )
+
+        def sample_count(key):
+            return samples[key] if known else "未知"
+
+        line = (
+            f"{task['name']} case{position}/{len(ids)}："
+            f"{_bar(done, total)} 样本 {sample_amount} "
+            f"请求 {request_amount} "
+            f"请求失败 {requests['failed'] if state else '未知'} "
+            f"样本失败 {sample_count('failed')} "
+            f"未完成 {sample_count('incomplete')} "
+            f"未开始 {sample_count('not_started')}"
+        )
+        if status is not None:
+            return line + f" 状态 {status}"
+        return line + f" · {self.phase}"
+
+    def _print_completions(self):
+        for key, status in self.results.items():
+            if self.printed_cases.get(key) == status:
+                continue
+            index, case_id = key
+            self._task_title(index)
+            correction = "更正：" if key in self.printed_cases else ""
+            self._history(correction + self._case_line(index, case_id, status))
+            self.printed_cases[key] = status
+
     def lines(self):
-        counts = Counter(self.results.values())
-        failed = sum(counts[s] for s in ("failed", "partial_failed"))
-        skipped = counts["skipped"]
-        interrupted = counts["interrupted"] + counts["discarded"]
-        overall = (
-            f"Case {_bar(len(self.results), self.total)} "
-            f"{len(self.results)}/{self.total} 已结束 "
-            f"任务 {len(self.finished_tasks)}/{len(self.plan['tasks'])} "
-            f"成功 {counts['success']} 失败 {failed} "
-            f"跳过 {skipped} 中断/丢弃 {interrupted} "
-            f"已用 {_elapsed(self.clock() - self.started)}"
-        )
-        if self.task is None:
-            return overall, self.phase
-        prefix = f"{self.task['name']}/{self.current or '-'}"
-        state = self.live.get(self.current)
-        if state is None or self.phase.startswith(("任务结束", "运行")):
-            return overall, f"{prefix} · {self.phase}"
-        samples, requests = state["samples"], state["requests"]
-        sample_done = samples["complete"] + samples["failed"]
-        request_done = sum(requests.values())
-        sample_total, request_total = (
-            state["sample_total"], state["request_total"]
-        )
-        bar = (
-            _bar(sample_done, sample_total) if sample_total is not None
-            else _bar(request_done, request_total)
-        )
-        current = (
-            f"{prefix} · {self.phase} {bar} "
-            f"样本 {_amount(sample_done, sample_total)} "
-            f"请求 {_amount(request_done, request_total)} "
-            f"请求失败 {requests['failed']} 样本失败 {samples['failed']} "
-            f"未完成 {samples['incomplete']} 未开始 {samples['not_started']}"
-        )
-        return overall, current
+        if self.task is None or self.current is None:
+            return ()
+        key = self.task_index, self.current
+        if key in self.printed_cases:
+            return ()
+        return (self._case_line(*key),)
 
     def clear(self):
         if self.active:
-            self.stream.write("\r\x1b[2K\x1b[1A\r\x1b[2K")
+            self.stream.write(
+                "\r\x1b[2K"
+                + "\x1b[1A\r\x1b[2K" * (self.active_lines - 1)
+            )
             self.stream.flush()
             self.active = False
 
     def _render(self):
         lines = self.lines()
+        if not lines:
+            self.clear()
+            return
         if self.tty:
             width = max(10, shutil.get_terminal_size((100, 24)).columns - 1)
             self.clear()
             self.stream.write("\n".join(_fit(line, width) for line in lines))
             self.active = True
+            self.active_lines = len(lines)
         else:
             key = (self.task_index, self.current, self.phase,
-                   len(self.results), len(self.finished_tasks))
+                   tuple(sorted(self.results.items())),
+                   len(self.finished_tasks))
             if key == self.last_key:
                 return
             self.last_key = key
