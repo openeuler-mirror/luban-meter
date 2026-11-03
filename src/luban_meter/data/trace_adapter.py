@@ -8,7 +8,7 @@ import re
 
 def read_trace(path, *, skip_invalid=False):
     records, rejected = [], []
-    with path.open(encoding="utf-8", newline="") as stream:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         names = reader.fieldnames
         if not names or len(names) != len(set(names)):
