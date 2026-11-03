@@ -138,19 +138,23 @@ def run_stream(monkeypatch, chunks, *, collector=None, failure=None):
 
 
 @pytest.mark.parametrize("cleanup_failure", [False, True])
+@pytest.mark.parametrize("line_ending", [b"\n", b"\r", b"\r\n"])
 def test_stream_timestamps_exclude_drain_and_close(
-    monkeypatch, cleanup_failure
+    monkeypatch, cleanup_failure, line_ending
 ):
     record = run_stream(
         monkeypatch,
         [
-            (20.5, b': keepalive\n\ndata: {"choices":[{"text":""}]}\n'),
-            (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
-            (22.0, b'data: {"choices":[{"text":"BC"}]}\n'),
-            (23.0, b'data: {"choices":[],"usage":'
-             b'{"prompt_tokens":4,"completion_tokens":3}}\n'),
-            (24.0, b'data: [DONE]\n'),
-            (29.0, b'data: {"choices":[{"text":"ignored"}]}\n'),
+            (timestamp, chunk.replace(b"\n", line_ending))
+            for timestamp, chunk in [
+                (20.5, b': keepalive\n\ndata: {"choices":[{"text":""}]}\n'),
+                (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
+                (22.0, b'data: {"choices":[{"text":"BC"}]}\n'),
+                (23.0, b'data: {"choices":[],"usage":'
+                 b'{"prompt_tokens":4,"completion_tokens":3}}\n'),
+                (24.0, b'data: [DONE]\n'),
+                (29.0, b'data: {"choices":[{"text":"ignored"}]}\n'),
+            ]
         ],
         failure=httpx.ReadTimeout("cleanup") if cleanup_failure else None,
     )
@@ -179,12 +183,15 @@ def test_stream_timestamps_exclude_drain_and_close(
 
 
 @pytest.mark.parametrize("chat", [False, True])
-def test_utf8_fragmentation_and_line_boundaries(monkeypatch, chat):
+@pytest.mark.parametrize("line_ending", ["\n", "\r", "\r\n"])
+def test_utf8_fragmentation_and_line_boundaries(
+    monkeypatch, chat, line_ending
+):
     choice = {"delta": {"content": "你好"}} if chat else {"text": "你好"}
     body = (
-        ': heartbeat\r\ndata: '
+        ': heartbeat' + line_ending * 2 + 'data: '
         + json.dumps({"choices": [choice]}, ensure_ascii=False)
-        + '\r\ndata: [DONE]\n'
+        + line_ending * 2 + 'data: [DONE]' + line_ending * 2
     ).encode()
     record = run_stream(
         monkeypatch,
@@ -192,6 +199,7 @@ def test_utf8_fragmentation_and_line_boundaries(monkeypatch, chat):
         collector=collect_chat_stream if chat else collect_completion_stream,
     )
     assert record["status"] == "success"
+    assert record["generated_text"] == "你好"
     assert record["stream_event_count"] == 1
     assert record["ttft_ms"] == 1000.0
     assert record["input_tokens"] is None
@@ -244,3 +252,26 @@ def test_quality_latency_includes_json_decode(monkeypatch):
         assert stream.closed
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("separator", [b"\n", b"\r", b"\r\n"])
+def test_response_lines_preserve_bytes_across_all_split_positions(separator):
+    text = "你好\u2028世界".encode()
+    body = separator.join([text, b"", b"last", b"tail"])
+    expected = [text + b"\n", b"\n", b"last\n", b"tail"]
+    for split in range(len(body) + 1):
+        response = SimpleNamespace(
+            iter_raw=lambda: iter([body[:split], b"", body[split:]])
+        )
+        assert list(http_client.iter_response_lines(response)) == expected
+
+
+def test_response_lines_yield_at_cr_without_reading_next_chunk():
+    def chunks():
+        yield b"data: first\r"
+        pytest.fail("reader waited for the next chunk after a complete line")
+
+    response = SimpleNamespace(iter_raw=chunks)
+    lines = http_client.iter_response_lines(response)
+    assert next(lines) == b"data: first\n"
+    lines.close()
