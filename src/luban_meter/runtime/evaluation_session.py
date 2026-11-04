@@ -12,6 +12,7 @@ from luban_meter.core.execution_summary import prepared_summary
 from luban_meter.core.metric import compute_metrics
 from luban_meter.core.parameters import public_parameters
 from luban_meter.core.planning import schema_for
+from luban_meter.core.token_totals import request_total
 from luban_meter.runtime.device_monitor import DeviceMonitorDaemon
 from luban_meter.runtime.host_monitor import HostMonitorDaemon
 from luban_meter.runtime.load_profiles import profiles
@@ -328,6 +329,9 @@ def run_case(
                 else "success"
             ),
         )
+        performance = scenario.category == "generation_performance"
+        if performance:
+            result["total_tokens"] = request_total(facts["requests"], rows)
         if counts["failed"] and not counts["complete"] and collection_complete:
             result["status"] = "failed"
         if not collection_complete:
@@ -339,7 +343,11 @@ def run_case(
             directory / "raw" / f"{case['id']}.result.json", result
         )
         result["stop_reason"] = scenario.stop_after(facts)
-        for name in p["metrics"]:
+        names = [name for name in p["metrics"]
+                 if name != "token_throughput"]
+        if performance:
+            names.append("token_throughput")
+        for name in dict.fromkeys(names):
             try:
                 values = compute_metrics([name], scenario.capabilities, facts)[
                     name

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
+from html import escape
 from pathlib import Path
 
+from .data import format_number, metric_rows, validate_result
 from .data import load_result as load_result
-from .data import metric_rows, validate_result
 from .request_details import load_details
 
 
@@ -174,6 +176,53 @@ def report_data(payload, *, include_requests=False, raw_root=None):
     return data
 
 
+def run_summary_html(payload):
+    """Render saved run metrics, without deriving values or reading raw."""
+    if payload["kind"] != "run":
+        return ""
+    metric = (payload.get("metrics") or {}).get("token_throughput") or {}
+    view = (metric.get("values") or {}).get("service_view") or {}
+
+    def text(value):
+        if value is None:
+            return "N/A"
+        if type(value) in (float, int):
+            return format_number(value)
+        return escape(str(value))
+
+    nodes = [
+        ("整轮 duration", {"value": payload.get("duration_s"), "unit": "s"}),
+        ("性能评测正式测试时长", view.get("benchmark_duration") or {}),
+        ("性能评测输入＋输出 Token 总数", view.get("total_tokens") or {}),
+        ("total_token_throughput", view.get("total_token_throughput") or {}),
+    ]
+    if not any(t.get("category") == "generation_performance"
+               for t in payload.get("tasks", [])):
+        nodes = nodes[:1]
+    rows = "".join(
+        "<tr><td>" + escape(label) + "</td><td>" + text(node.get("value"))
+        + "</td><td>" + text(node.get("unit")) + "</td></tr>"
+        for label, node in nodes
+    )
+    reason = metric.get("reason")
+    if not metric and len(nodes) > 1:
+        reason = "性能评测指标未保存"
+    diagnostic = (
+        '<p class="muted">' + text(reason) + "</p>" if reason else ""
+    )
+    metadata = escape(json.dumps(metric.get("metadata") or {},
+                                 ensure_ascii=False, indent=2))
+    return (
+        '<div id="run-throughput-summary" class="overview-result-column">'
+        "<h3>运行信息与性能评测汇总</h3>"
+        '<div class="table-wrap"><table><thead><tr><th>指标</th>'
+        "<th>保存值</th><th>单位</th></tr></thead><tbody>"
+        + rows + "</tbody></table></div>" + diagnostic
+        + "<details><summary>统计范围与计算口径</summary><pre>"
+        + metadata + "</pre></details></div>"
+    )
+
+
 def write_html(payload, destination, *, include_requests=False, raw_root=None):
     data = json.dumps(
         report_data(
@@ -181,7 +230,15 @@ def write_html(payload, destination, *, include_requests=False, raw_root=None):
         ), ensure_ascii=False, allow_nan=False
     )
     data = data.replace("<", "\\u003c").replace("&", "\\u0026")
-    html = TEMPLATE.replace("__REPORT_DATA__", data)
+    replacements = {
+        "__REPORT_DATA__": data,
+        "__RUN_SUMMARY__": run_summary_html(payload),
+    }
+    html = re.sub(
+        r"__REPORT_DATA__|__RUN_SUMMARY__",
+        lambda match: replacements[match.group()],
+        TEMPLATE,
+    )
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(html, encoding="utf-8")

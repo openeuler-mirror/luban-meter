@@ -382,8 +382,12 @@ function corePerformanceMetrics(c) {
 // request_view/service_view come from the online serving calculator, which
 // session metrics reuse unchanged, so the provider name is not hardcoded.
 function servingMetric(c) {
-  for (const metric of Object.values(c?.metrics||{}))
-    if (metric?.values?.service_view) return metric;
+  for (const metric of Object.values(c?.metrics||{})) {
+    const values=metric?.values;
+    if (values?.request_view && values?.service_view &&
+        corePerformanceViews.some(([view,key])=>
+          Object.hasOwn(values[view]||{},key))) return metric;
+  }
   return undefined;
 }
 // Per-turn facts live in turn_view; a metric carrying it is a session metric.

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.planning import public_plan
+from luban_meter.core.token_totals import run_throughput
 from luban_meter.runtime.case_recovery import recover_cases
 from luban_meter.runtime.resource_manager import resources
 from luban_meter.runtime.task_worker import aggregate_status
@@ -68,6 +69,7 @@ class RunCoordinator:
         directory.mkdir(parents=True, exist_ok=False)
         self.stop_file = directory / ".stop"
         write_json_atomic(directory / "plan.json", public_plan(plan))
+        started_monotonic = time.perf_counter()
         result = {
             "kind": "run",
             "id": run_id,
@@ -113,6 +115,13 @@ class RunCoordinator:
             else aggregate_status(result["tasks"])
         )
         result["finished_at"] = time.time()
+        result["duration_s"] = time.perf_counter() - started_monotonic
+        result["metrics"] = {}
+        if any(task.get("category") == "generation_performance"
+               for task in result["tasks"]):
+            result["metrics"]["token_throughput"] = run_throughput(
+                result["tasks"]
+            )
         write_json_atomic(directory / "result.json", result)
         self._notify("run_finished", result=result)
         return result, directory
@@ -170,21 +179,14 @@ class RunCoordinator:
                         start_new_session=os.name == "posix",
                     )
                     deadline = time.monotonic() + p["task_timeout"]
-                    shown = set()
+                    acknowledged = set()
                     while self.process.poll() is None:
                         for prepared in sorted(
                             (directory / "raw").glob("*.prepared.json")
                         ):
-                            if prepared not in shown:
-                                self._notify("log")
-                                print(
-                                    f"准备完成 {task['name']}/"
-                                    f"{prepared.stem}: "
-                                    + prepared.read_text(),
-                                    flush=True,
-                                )
+                            if prepared not in acknowledged:
                                 prepared.with_suffix(".ack").touch()
-                                shown.add(prepared)
+                                acknowledged.add(prepared)
                         if (
                             self.interrupted_at is not None
                             and time.monotonic() - self.interrupted_at

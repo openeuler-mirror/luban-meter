@@ -20,6 +20,7 @@ from luban_meter.benchmarking.generation_performance.common.statistics import (
     summarize,
     summarize_weighted,
 )
+from luban_meter.core.token_totals import token_throughput_value
 from luban_meter.runtime.http_client import iter_response_lines
 
 
@@ -527,7 +528,9 @@ def process_case(
             "token/s",
         ),
         "total_token_throughput": scalar(
-            (total_input_tokens + total_output_tokens) / duration_seconds,
+            token_throughput_value(
+                total_input_tokens + total_output_tokens, duration_seconds
+            ),
             "token/s",
         ),
     }

@@ -76,97 +76,6 @@ def test_tail_bounds_reads_and_skips_oversized_lines(tmp_path):
     assert found == [{"ok": 1}]
 
 
-def test_warmup_weighted_samples_and_requests_are_distinct(tmp_path):
-    progress, output, clock = start(tmp_path)
-    append_events(tmp_path, [
-        event("case_ready", total_samples=10),
-        event("request_finished", phase="warmup", status="success"),
-        event("sample_finished", phase="warmup", state="complete"),
-        event("request_finished", status="success", logical_requests=3),
-        event("request_finished", status="failed", logical_requests=2),
-        event("sample_finished", state="complete", weight=2),
-        event("sample_finished", state="incomplete", weight=1),
-    ])
-    progress("poll")
-    assert "样本 2/10" in progress.lines()[1]
-    assert "请求 5/8" in progress.lines()[1]
-    assert "请求失败 2" in progress.lines()[1]
-    assert "未完成 1" in progress.lines()[1]
-    assert "\x1b" not in output.getvalue()
-    assert "\r" not in output.getvalue()
-    before = output.getvalue()
-    append_events(tmp_path, [event("sample_finished", state="failed")])
-    clock[0] += 1
-    progress("poll")
-    assert "样本 3/10" in progress.lines()[1]
-    assert output.getvalue() == before  # Redirected logs do not spam requests.
-
-
-def test_unknown_total_and_warmup_phase(tmp_path):
-    progress, _, clock = start(tmp_path)
-    append_events(tmp_path, [
-        event("case_ready", case_id="case_2", total_samples=None),
-        event("request_started", case_id="case_2", phase="warmup"),
-    ])
-    progress("poll")
-    assert "预热" in progress.lines()[1]
-    assert "0/未知" in progress.lines()[1]
-    append_events(tmp_path, [event(
-        "request_finished", case_id="case_2", status="success"
-    )])
-    clock[0] += 1
-    progress("poll")
-    assert "请求 1/未知" in progress.lines()[1]
-    assert "%" not in progress.lines()[1]
-
-
-def test_result_commit_wins_over_delayed_events(tmp_path):
-    progress, _, clock = start(tmp_path)
-    append_events(tmp_path, [event("case_ready", total_samples=3)])
-    result = {"cases": [{
-        "id": "case_1", "status": "partial_failed", "coverage": {
-            "selected": 3, "complete": 2, "failed": 1,
-        },
-    }]}
-    (tmp_path / "result.json").write_text(json.dumps(result))
-    progress("poll")
-    assert "1/2 已结束" in progress.lines()[0]
-    assert "失败 1" in progress.lines()[0]
-    append_events(tmp_path, [event("sample_finished", state="complete")])
-    clock[0] += 1
-    progress("poll")
-    assert "样本 3/3" in progress.lines()[1]
-
-
-def test_skips_discard_and_interruption_do_not_claim_success(tmp_path):
-    progress, output, _ = start(tmp_path)
-    task = progress.plan["tasks"][0]
-    result = {"status": "interrupted", "cases": [
-        {"id": "case_1", "status": "discarded"},
-        {"id": "case_2", "status": "skipped"},
-    ]}
-    progress("task_finished", task=task, result=result)
-    progress("run_finished", result={"status": "interrupted"})
-    text = output.getvalue()
-    assert "2/2 已结束" in text
-    assert "成功 0" in text
-    assert "跳过 1 中断/丢弃 1" in text
-    assert "运行结束：interrupted" in text
-
-
-def test_tty_clears_before_logs_and_finishes_on_newline(tmp_path, monkeypatch):
-    monkeypatch.setenv("TERM", "xterm")
-    progress, output, _ = start(tmp_path, Terminal())
-    assert progress.active
-    progress("log")
-    assert not progress.active
-    assert output.getvalue().endswith("\r\x1b[2K\x1b[1A\r\x1b[2K")
-    progress("aborted")
-    assert not progress.active
-    assert output.getvalue().endswith("\n")
-    assert "运行中断" in output.getvalue()
-
-
 def test_missing_events_and_broken_display_are_best_effort(tmp_path):
     progress, _, _ = start(tmp_path)
     progress("poll")
@@ -177,20 +86,13 @@ def test_missing_events_and_broken_display_are_best_effort(tmp_path):
             raise OSError("closed pipe")
 
     display = TerminalProgress(plan_fixture(), stream=Broken())
-    display("run_started")
+    display("task_started", task=display.plan["tasks"][0],
+            directory=tmp_path)
     assert display.disabled
     coordinator = RunCoordinator()
     coordinator.progress = lambda *a, **k: 1 / 0
     coordinator._notify("poll")
     assert coordinator.progress is None
-
-
-def test_control_characters_do_not_inject_terminal_commands(tmp_path):
-    progress, output, _ = start(tmp_path)
-    progress.task["name"] = "task\x1b[2J\nattack"
-    progress("aborted")
-    assert "\x1b" not in output.getvalue()
-    assert "task[2Jattack" in output.getvalue()
 
 
 @pytest.mark.parametrize("disabled", [False, True])
@@ -200,7 +102,6 @@ def test_cli_progress_flag_is_not_a_benchmark_parameter(
     plan = plan_fixture()
     plan["tasks"][0].update(scenario="online_serving")
     monkeypatch.setattr(cli, "build_plan", lambda *a, **k: plan)
-    monkeypatch.setattr(cli, "case_summary", lambda *a, **k: {})
     received = []
 
     def run(self, plan, output, **kwargs):
@@ -215,3 +116,100 @@ def test_cli_progress_flag_is_not_a_benchmark_parameter(
     assert (received[0] is None) is disabled
     assert "no_progress" not in plan["tasks"][0]["cases"][0]["parameters"]
     assert Path(tmp_path / "report.html").exists()
+
+
+def test_full_case_row_is_retained(tmp_path, monkeypatch):
+    monkeypatch.setenv("TERM", "xterm")
+    progress, output, clock = start(tmp_path, Terminal())
+    assert output.getvalue() == "当前任务：task\n"
+    append_events(tmp_path, [
+        event("case_ready", total_samples=20),
+        event("request_finished", phase="warmup", status="success"),
+        event("sample_finished", phase="warmup", state="complete"),
+        event("request_finished", status="success", logical_requests=3),
+        event("request_finished", status="failed"),
+        event("sample_finished", state="complete", weight=3),
+        event("sample_finished", state="failed"),
+    ])
+    progress("poll")
+    row = progress.lines()[0]
+    assert "task case1/2" in row
+    assert "样本 4/20 请求 4/8 请求失败 1 样本失败 1" in row
+    assert len(progress.lines()) == 1
+    before = len(output.getvalue())
+    progress.clear()
+    assert output.getvalue()[before:] == "\r\x1b[2K"
+    result = {"cases": [{
+        "id": "case_1", "status": "partial_failed",
+        "coverage": {"selected": 20, "complete": 3, "failed": 1,
+                     "incomplete": 2, "not_started": 14},
+    }]}
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    clock[0] += 1
+    progress("poll")
+    text = output.getvalue()
+    assert text.endswith("未完成 2 未开始 14 状态 partial_failed\n")
+    assert "样本 4/20 请求 4/8" in text
+    assert progress.lines() == ()
+    progress._record(0, result)
+    assert output.getvalue() == text
+    append_events(tmp_path, [
+        event("sample_finished", state="complete"),
+        event("case_ready", case_id="case_2", total_samples=20),
+        event("request_finished", case_id="case_2", status="success"),
+    ])
+    clock[0] += 1
+    progress("poll")
+    assert output.getvalue()[len(text):].startswith("task case2/2")
+    assert "请求 1/未知" in progress.lines()[0]
+
+
+@pytest.mark.parametrize("status", [
+    "success", "failed", "partial_failed", "skipped",
+    "interrupted", "discarded",
+])
+def test_final_rows_deduplicate_and_correct_status(tmp_path, status):
+    progress, output, _ = start(tmp_path)
+    result = {"status": status, "cases": [
+        {"id": "case_1", "status": status},
+        {"id": "case_2", "status": "skipped"},
+    ]}
+    for _ in range(2):
+        progress("task_finished", task=progress.task, result=result)
+    text = output.getvalue()
+    assert text.count("task case1/2") == 1
+    assert text.count("task case2/2") == 1
+    assert f"状态 {status}" in text
+    assert "样本 未知" in text
+    result["cases"][0]["status"] = "discarded"
+    progress("task_finished", task=progress.task, result=result)
+    if status != "discarded":
+        assert "更正：task case1/2" in output.getvalue()
+    assert len(progress.results) == 2
+
+
+def test_skipped_task_has_own_header(tmp_path):
+    progress, output, _ = start(tmp_path)
+    task = {"name": "next", "cases": [
+        {"id": "case_1", "parameters": {}},
+    ]}
+    progress.plan["tasks"].append(task)
+    progress("task_finished", task=task, result={
+        "status": "skipped", "cases": [],
+    })
+    assert "当前任务：next\nnext case1/1" in output.getvalue()
+    assert output.getvalue().endswith("状态 skipped\n")
+
+
+def test_unknown_counts_and_safe_text(tmp_path):
+    progress, output, _ = start(tmp_path)
+    progress._event(event(
+        "case_ready", case_id="case_2", total_samples=None,
+    ))
+    assert "样本 0/未知 请求 0/未知" in progress.lines()[0]
+    progress.task["name"] = "task\x1b[2J\nattack"
+    progress._record(0, {"cases": [
+        {"id": "case_2", "status": "failed"},
+    ]})
+    assert "\x1b" not in output.getvalue()
+    assert "task[2Jattack" in output.getvalue()
