@@ -643,14 +643,17 @@ Token 总数除以该 Case 的正式测试窗口，单位为 tokens/s。在线�
 started_at 和 finished_at 保留 Unix 时间戳，不用于计算 duration。
 Case 筛选和默认展示条数不改变整轮统计范围。
 指标在执行与汇总阶段计算并写入结果 JSON，终端仅展示保存值。
-Case 指标路径为 metrics.token_throughput.values.service_view，包含 total_tokens、
+Case 指标保存在原有性能指标的 values.service_view 中，例如
+metrics.streaming_performance.values.service_view，包含 total_tokens、
 benchmark_duration 和 total_token_throughput 三个带单位的统计节点。
-整轮 result.json 的同一路径保存跨 Case 汇总，顶层 duration_s 保存整轮墙钟时长。
-指标 metadata 保存正式请求成功/失败数、缺失用量的请求和统计口径。
+整轮 result.json 的 metrics.token_throughput 保存性能 Case 汇总，
+这是运行级汇总字段，不是独立注册的 Metric 类；顶层 duration_s 保存整轮耗时。
+原有性能指标保留请求成功/失败数；缺失 Token 用量时吞吐量不可用。
 整轮 metadata 逐项保存纳入、跳过、不可用的任务/Case 身份、统计依据和原因。
 不可用 Case 不会被静默排除后生成局部整轮吞吐量。
 终端与 HTML 总览均展示整轮已保存值、单位和不可用原因，详细区展示统计依据。
-在线性能与公共吞吐量 Metric 共用总 Token 吞吐量公式，原有指标路径继续保存。
+吞吐量计算在原有性能 Metric 内完成，复用公共计算函数，不新增 Metric 类，
+也不在执行阶段自动追加指标。
 Case 原始 .result.json、任务结果及整轮结果均保留 Case 指标。
 旧结果缺少字段时显示 N/A；重新导出终端报告不读取原始文件或补算指标。
 

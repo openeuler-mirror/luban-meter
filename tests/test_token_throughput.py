@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from luban_meter.benchmarking.benchmark_metrics import TokenThroughput
+from luban_meter.core.token_totals import formal_throughput
 from luban_meter.core.token_totals import (
     request_totals,
     run_throughput,
@@ -43,7 +43,7 @@ def test_multi_request_sample_counts_actual_successes_and_parse_failures():
     samples = [{"sample_id": "s", "facts": {"status": "parse_failed"}}]
     facts = formal_facts(requests, samples)
     original = copy.deepcopy(facts)
-    metric = TokenThroughput().compute(facts)
+    metric = formal_throughput(facts)
     view, metadata = metric["values"]["service_view"], metric["metadata"]
     assert view["total_tokens"]["value"] == 21
     assert view["total_token_throughput"]["value"] == 10.5
@@ -58,7 +58,7 @@ def test_multi_request_sample_counts_actual_successes_and_parse_failures():
 def test_missing_usage_keeps_identity_and_explicit_reason():
     requests = [request(0, (10, 2)), request(1)]
     facts = formal_facts(requests)
-    metric = TokenThroughput().compute(facts)
+    metric = formal_throughput(facts)
     assert metric["status"] == "unavailable"
     assert metric["values"]["service_view"]["total_tokens"]["value"] is None
     assert metric["metadata"]["missing_usage_requests"] == 1
@@ -122,7 +122,7 @@ def test_incomplete_case_invalidates_run_with_case_identity(status):
 
 @pytest.mark.parametrize("duration", [0, -1, None, float("nan")])
 def test_bad_duration_is_unavailable(duration):
-    metric = TokenThroughput().compute(
+    metric = formal_throughput(
         formal_facts([request(0, (2, 3))], duration=duration)
     )
     assert metric["status"] == "unavailable"
@@ -167,7 +167,7 @@ def test_quality_execution_does_not_save_throughput(tmp_path, monkeypatch):
         "dataset_path": str(tmp_path / "unused.jsonl"),
     })
     row = plan["tasks"][0]["cases"][0]
-    row["parameters"]["metrics"] = ["token_throughput"]
+    row["parameters"]["metrics"] = []
     scenario = benchmarks.get("gsm8k")
     monkeypatch.setattr(scenario, "prepare", lambda self, context: None)
     monkeypatch.setattr(scenario, "samples", lambda self, context: iter([]))
@@ -181,3 +181,11 @@ def test_quality_execution_does_not_save_throughput(tmp_path, monkeypatch):
     )
     assert "total_tokens" not in saved
     assert "token_throughput" not in saved["metrics"]
+
+
+
+def test_common_throughput_is_not_registered():
+    from luban_meter.core.metric import metrics
+
+    with pytest.raises((KeyError, ValueError)):
+        metrics.get("token_throughput")

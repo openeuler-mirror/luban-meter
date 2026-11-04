@@ -343,11 +343,7 @@ def run_case(
             directory / "raw" / f"{case['id']}.result.json", result
         )
         result["stop_reason"] = scenario.stop_after(facts)
-        names = [name for name in p["metrics"]
-                 if name != "token_throughput"]
-        if performance:
-            names.append("token_throughput")
-        for name in dict.fromkeys(names):
+        for name in dict.fromkeys(p["metrics"]):
             try:
                 values = compute_metrics([name], scenario.capabilities, facts)[
                     name

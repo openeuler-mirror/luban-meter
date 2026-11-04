@@ -9,6 +9,8 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 
+from luban_meter.core.token_totals import saved_throughput_metric
+
 from .best_summary import best_summary_lines
 from .data import format_number as number
 from .data import metric_groups, validate_result
@@ -307,9 +309,7 @@ def context_lines(case, verbose=False):
 
 
 def saved_token_view(result):
-    metric = (result.get("metrics") or {}).get("token_throughput")
-    if not isinstance(metric, dict):
-        metric = (result.get("metrics") or {}).get("streaming_performance")
+    metric = saved_throughput_metric(result)
     if not isinstance(metric, dict):
         return {}
     values = metric.get("values") or {}
