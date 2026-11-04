@@ -36,7 +36,11 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
     scalar,
     token_count,
 )
+from luban_meter.log import get_logger
 from luban_meter.runtime.thinking import response_facts
+
+logger = get_logger(__name__)
+
 
 MEASUREMENT = "gsm8k_exact_match_online_service"
 PROTOCOL = "openai_compatible_chat_and_completions"
@@ -140,6 +144,7 @@ def collect_sample(
                 extract_number,
             )
         except ValueError as exc:
+            logger.warning("Answer parsing failed", exc_info=True)
             record.update(status="parse_failed", error=str(exc))
             return record
         record.update(parsed_output=prediction, prediction=prediction)
@@ -150,6 +155,7 @@ def collect_sample(
         record["correct"] = prediction == reference
         record["status"] = "success"
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record["error"] = str(exc)
     return record
 

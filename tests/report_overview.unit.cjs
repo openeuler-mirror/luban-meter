@@ -5,8 +5,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const context = vm.createContext({taskDisplayName:name=>name});
 const source = path.join(__dirname,'../src/luban_meter/reporting');
-for(const file of ['case_analysis.js','summary_cards.js','report_overview.js'])
-  vm.runInContext(fs.readFileSync(path.join(source,file),'utf8'),context);
+const html=process.argv[3]?fs.readFileSync(process.argv[3],'utf8'):null;
+for(const file of ['case_analysis.js','summary_cards.js','report_overview.js']) {
+  const script=fs.readFileSync(path.join(source,file),'utf8');
+  if(html!==null)assert.ok(html.includes(script),'export contains '+file);
+  vm.runInContext(html===null?script:
+    html.slice(html.indexOf(script),html.indexOf(script)+script.length),context);
+}
 const call = (name,value,...extra) => {
   context.input=JSON.stringify(value);
   return JSON.parse(vm.runInContext('JSON.stringify('+name+'(JSON.parse(input)'+
@@ -186,6 +191,38 @@ assert.equal(call('performanceOverviewCards',recordsFor([failed]))[3].value,null
 const badCounts=cardCase('bad_counters',4,10,5,10,[1,1,1]);
 badCounts.metrics.streaming_performance.values.service_view.failed_requests.value=-1;
 assert.equal(call('performanceOverviewCards',recordsFor([badCounts]))[3].value,null);
+// Service statistics remain available when no request distributions were saved.
+for(const request of [undefined,null,{}]) {
+  const serviceOnly=cardCase('service_only',4,10,1,1,[5,2,20]);
+  const metric=serviceOnly.metrics.streaming_performance;
+  if(request===undefined)delete metric.values.request_view;
+  else metric.values.request_view=request;
+  assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .map(card=>card.value),[10,null,null,1,4,null]);
+  assert.equal(summarize([serviceOnly]).included,1);
+  // A second provider cannot fill missing distributions in the selected one.
+  serviceOnly.metrics.z_later=cardCase('later',4,999,1,1,[1,1,1])
+    .metrics.streaming_performance;
+  assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .map(card=>card.value),[10,null,null,1,4,null]);
+  metric.error='selected provider failed';
+  assert.ok(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .every(card=>card.value===null));
+  assert.equal(summarize([serviceOnly]).included,0);
+}
+const serviceFailure=cardCase('service_failure',4,10,1,4,[5,2,20]);
+delete serviceFailure.metrics.streaming_performance.values.request_view;
+serviceFailure.status='partial_failed';
+serviceFailure.metrics.streaming_performance.status='partial_failed';
+assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceFailure]))
+  .map(card=>card.value),[null,null,null,.25,4,null]);
+const engineOnly=point('engine',4,999);
+engineOnly.metrics={engine_performance:{status:'success',values:{
+  engine_view:{internal_ttft:{p99:1,unit:'ms'}},
+  service_view:{total_token_throughput:scalar(999)}}}};
+assert.ok(call('performanceOverviewCards',recordsFor([engineOnly]))
+  .every(card=>card.value===null));
+assert.equal(summarize([engineOnly]).included,0);
 const other=cardCase('different_length',16,9000,1,1,[.1,.1,.1]);
 other.parameters.input_tokens=256;
 const separated=summarize([a,b,c,other]);
@@ -268,15 +305,19 @@ console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '
 // Provider selection must survive actual sorted JSON persistence.
 if(process.argv[2]) {
   const persisted=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+  if(html!==null)assert.deepEqual(JSON.parse(html.split('id="report-data">')[1]
+    .split('</script>')[0]).result,persisted);
   for(const task of persisted.tasks) {
     const c=task.cases[0],record={task,c,ti:0,ci:0};
+    const provider=Object.keys(c.metrics).find(k=>k!=='token_throughput');
+    const hasLatency=Boolean(c.metrics[provider].values.request_view?.ttft);
     const cards=call('performanceOverviewCards',[record]);
     assert.equal(cards[0].value,10);
-    assert.equal(cards[1].value,5);
-    assert.equal(cards[2].value,2);
+    assert.equal(cards[1].value,hasLatency?5:null);
+    assert.equal(cards[2].value,hasLatency?2:null);
     assert.equal(cards[3].value,1);
     assert.equal(cards[4].value,4);
-    assert.equal(cards[5].value,20);
+    assert.equal(cards[5].value,hasLatency?20:null);
     const groups=call('performanceSummary',[task]);
     assert.equal(groups.groups[0].maximum,10);
     const reordered=JSON.parse(JSON.stringify(c));
@@ -287,7 +328,6 @@ if(process.argv[2]) {
     assert.deepEqual(reversed.map(m=>m.value),cards.map(m=>m.value));
     assert.equal(call('servingMetric',c).status,'success');
     // An unavailable selected provider stays unavailable with its own status.
-    const provider=Object.keys(c.metrics).find(k=>k!=='token_throughput');
     c.metrics[provider].error='provider failed';
     assert.equal(call('performanceOverviewCards',[record])[0].value,null);
     delete c.metrics[provider];

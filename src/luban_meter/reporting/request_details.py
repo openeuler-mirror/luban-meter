@@ -6,6 +6,10 @@ import json
 import math
 from pathlib import Path
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def finite(value):
     return (
@@ -119,4 +123,5 @@ def load_details(case, task, root, *, run, allow_partial=False):
             "warnings": warnings,
         }
     except (OSError, ValueError, TypeError) as exc:
+        logger.warning("Request details unavailable", exc_info=True)
         return {"status": "unavailable", "reason": str(exc)}

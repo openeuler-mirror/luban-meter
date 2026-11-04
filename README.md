@@ -331,6 +331,13 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 轮次严格顺序执行，每轮请求携带此前轮次的**实际模型回答**作为历史。
 不同会话并行，同一会话同时最多一个在途请求。
 
+`online_serving`和`multi_turn_serving`保留各自的执行方式，默认都使用
+`streaming_performance`计算指标。是否执行多轮由场景决定，不由Metric名称决定。
+旧任务若显式配置`"metrics": ["multi_turn_performance"]`，需改为
+`"metrics": ["streaming_performance"]`；旧名称已移除，不保留配置别名。
+未指定`metrics`时直接使用场景默认值。已保存结果中的历史
+`multi_turn_performance`指标键仍可由当前报告读取。
+
 ```bash
 luban-meter run --scenario multi_turn_serving \
   --model served-model --base-url http://127.0.0.1:8000 \
@@ -450,19 +457,59 @@ iowait。内存已用量为总量减MemAvailable；文件系统已用量为size�
 输出目录：
 
 ```text
-results/<run_id>/
+runs/<run_id>/               # 可用 --result-dir 修改根目录
   plan.json                  # 有效配置，凭据字段脱敏
   result.json                # 运行汇总
   report.html                # 可离线打开的单文件报告
+  log/
+    luban-meter-<run_id>-<YYYY-MM-DD>.log  # 主程序、任务和Case共用
   tasks/<task_name>/
     result.json
     raw/events.jsonl         # 请求、样本和观测事件
     raw/case_1.json          # Case原始事实
     raw/case_1.result.json
     raw/manifest.json
-    logs/stdout.log
-    logs/stderr.log
     artifacts/
+```
+
+日志接口和格式参考[luban-sculpt](https://gitcode.com/openeuler/luban-sculpt/blob/master/luban_sculpt/log/logging.py)，
+配置与格式统一放在`src/luban_meter/log/`，各模块通过`get_logger()`获取日志对象。
+`run`默认启用INFO级别的终端与文件日志，记录任务/Case、准备、预热、正式采集、指标、
+结果落盘、报告生成和资源清理；超时、中断、失败及捕获到的异常堆栈也会保存。
+格式为`时间 | 模块 | 函数:行号 | 级别 | 上下文 | 消息`；上下文包含PID、任务、
+Case和阶段标识，请求错误另带样本/请求编号。主程序和任务子进程共用同一个实例日志，不另建stdout/stderr文件。
+交互终端中，DEBUG为青色、INFO为绿色、WARNING为橘色、ERROR为红色。
+实例文件和重定向输出保持纯文本；设置`NO_COLOR=1`可关闭终端颜色。
+日志日期采用实例开始时的UTC日期。CLI解析、最终生效的Case参数、启动的命令
+默认以INFO记录；可恢复异常以WARNING记录，执行失败以ERROR记录并附堆栈，
+正常迭代结束等控制流使用DEBUG。默认不逐条记录成功请求、提示词或模型回答。
+密钥字段和已声明的密钥值脱敏，服务端返回的错误消息仍可能含业务数据。
+
+所有CLI子命令支持`--log-level debug|info|warn|error`及`--log-dir`。
+目录优先级为`--log-dir`、环境变量`LUBAN_LOG_DIR`、默认目录。
+`run`默认写到实例目录的`log/`；`plan`、`report`等单独执行时默认写到
+当前目录的`log/`，使用独立调用ID。参数解析失败也保留日志。自定义目录下
+每次执行使用独立文件；UTF-8追加写入，不自动轮转或清理。
+
+关键过程提示（计划摘要、阶段状态、结果和报告保存位置等）通过统一日志
+处理器写入`stderr`与实例文件，受`--log-level`控制。HTML报告的路径及
+完整报告说明也通过日志输出，不再单独写入`stdout`。
+完整计划、最终生效的Case参数和准备信息JSON以INFO仅写入实例文件，
+不在终端展开；终端保留简短阶段提示、进度及完成记录。这些详细记录
+同样受`--log-level`过滤。
+交互终端的阶段日志与动态进度分行显示；异常中的已声明敏感值及其转义形式也会脱敏，
+同时保留异常类型与堆栈。
+计划JSON、Benchmark/Metric列表和文本报告正文保留在`stdout`，不受日志
+级别过滤，可通过管道或重定向使用；指定文本报告`--output`时正文写入
+指定文件。数据准备及示例生成脚本的下载、转换、跳过文件及完成提示
+同样写入日志。
+
+```bash
+tail -f runs/<run_id>/log/luban-meter-*.log
+
+luban-meter run --config tasks.json --log-level debug
+luban-meter run --config tasks.json --log-dir /work/custom-log
+LUBAN_LOG_DIR=/work/custom-log luban-meter run --config tasks.json
 ```
 
 HTML按模块分页展示，支持报告总结、任务与Case筛选、摘要表格排序、Case指标分析、
@@ -496,9 +543,13 @@ TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包
 约束的是排除首Token等待的ITL，不是报告中的TPOT；多个SLO条件需同时满足。
 迁移保留这些公式，不将CLI风格与其他工具的指标含义混同。
 
-多轮性能（`multi_turn_performance`）同样从客户端观察，每一轮就是一次普通流式
-请求，请求级与服务级视图直接复用在线公式，不另写一套。分母是本Case已保存的
-轮次请求，不是会话数或计划轮次数。此外保存：
+`streaming_performance`从正式采集的请求事实计算一次共有请求级与服务级指标，
+单轮和多轮使用同一套在线公式。多轮中每一轮就是一次普通流式请求，分母是本Case
+已保存的正式请求，不是会话数或计划轮次数；预热不参与。失败或部分完成的会话中，
+已经结束的请求仍参与请求统计，未发送轮次不计为请求失败。失败请求进入请求分母，
+不贡献Token；缺少usage时保留可用计时与请求计数，对应Token统计留空并说明原因。
+缺少必要响应计时仍会产生可诊断的指标计算错误，不补造时间。
+正式请求带有轮次事实时，统一Metric额外保存以下多轮视图：
 
 | 视图 | 内容 | 口径 |
 |---|---|---|
@@ -884,6 +935,9 @@ Max Tested Concurrency 和 Best E2E P99。任务、Case 及样本数量缩为一
   运行的合计成功率。每个 Case 使用自身成功请求数除以总请求数，失败请求
   进入分母；计数缺失、不一致或分母为零的 Case 不参与择优。来源旁保留分子、
   分母和并列信息。手动选 Case 后仅显示其自身成功率，无效计数显示 Unavailable。
+- 服务统计可独立于请求延迟视图存在。缺少请求延迟时，相应延迟显示 Unavailable，
+  已保存的吞吐量、请求成功率与趋势仍按各自条件判断；缺失字段不从另一份指标
+  结果补齐，也不因已选结果失败而换用其他结果。
 - 最大测试并发采用已完成且有请求执行证据的 Case 的配置上限，不等同于
   实际平均或峰值并发。手动查看时改为该 Case 的已保存配置并发上限。
 - 能力得分在同一任务、数据集、划分、few-shot、评分模式和样本选择条件内
@@ -963,7 +1017,7 @@ JSON 标识及未知任务名保持原样。
 核心性能菜单严格匹配在线服务计算器保存的 `values.request_view` 下的
 `ttft/tpot/itl/e2el`，及 `values.service_view` 下的
 `request_throughput/output_token_throughput`；指标名不参与匹配，因此
-`streaming_performance` 与复用同一套视图的 `multi_turn_performance` 都能命中，
+当前 `streaming_performance` 与历史结果中的 `multi_turn_performance` 都能命中，
 但不会替代为 Engine 或其他来源的同名指标。
 默认 TTFT，缺失时选择第一个可用项；切换 Case 保留仍存在的选择，否则回退。
 其他性能诊断数据继续保留在“全部指标”及原始详情中。
@@ -1032,4 +1086,7 @@ Chrome；`NODE_PATH` 需包含 Playwright。总览回归额外检查分组峰值
 缺失 P99 不使用 P95 替代。吞吐量和延迟仅从成功、采集完整的结果择优。
 能力得分按任务、数据集与评分条件分组；准确率等取最大值，
 困惑度/损失等取最小值，不跨数据集排名，不展开学科明细。
+能力指标支持顶层字段和`values`包装两种保存方式，评分分母读取各指标的
+`sample_count`或`count`。总Token吞吐优先读取当前性能指标中的已保存字段，
+历史`token_throughput`仅作旧布局回退；当前来源缺值或失败时不从旧来源补值。
 所有择优仅读取保存值，不重新计算吞吐量、分位数或准确率。

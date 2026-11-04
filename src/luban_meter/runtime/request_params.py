@@ -2,6 +2,11 @@
 
 import json
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
+
 CORE_REQUEST_FIELDS = frozenset({
     "model", "messages", "prompt", "stream", "stream_options",
     "max_tokens", "max_completion_tokens", "max_output_tokens", "min_tokens",
@@ -23,6 +28,7 @@ def validate_request_params(value):
     try:
         decoded = json.loads(json.dumps(value, allow_nan=False))
     except (TypeError, ValueError) as exc:
+        logger.exception("Invalid request parameters")
         raise ValueError(
             "request_params must contain finite JSON values"
         ) from exc

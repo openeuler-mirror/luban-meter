@@ -8,6 +8,10 @@ import urllib.request
 from collections.abc import Mapping
 from typing import Any
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def request_headers(api_key: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
@@ -32,6 +36,7 @@ def post_json(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             value = json.load(response)
     except urllib.error.HTTPError as exc:
+        logger.exception("HTTP request rejected")
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(
             f"POST {url} failed with HTTP {exc.code}: {detail}"
@@ -50,6 +55,7 @@ def discover_served_model_name(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as exc:
+        logger.exception("HTTP request rejected")
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(
             f"model discovery failed with HTTP {exc.code}: {detail}"

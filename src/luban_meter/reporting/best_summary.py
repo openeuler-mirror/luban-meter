@@ -3,6 +3,8 @@
 import json
 import math
 
+from luban_meter.core.token_totals import saved_throughput_metric
+
 from .data import format_number, metric_groups
 
 QUALITY_DIRECTIONS = {
@@ -25,9 +27,9 @@ def numeric(value):
 def serving_metric(case):
     for metric in case.get("metrics", {}).values():
         values = metric.get("values", {}) if isinstance(metric, dict) else {}
-        request = values.get("request_view", {})
-        service = values.get("service_view", {})
-        if request and service and (
+        request = values.get("request_view") or {}
+        service = values.get("service_view") or {}
+        if (
             any(key in request for key in ("ttft", "tpot", "itl", "e2el"))
             or any(key in service for key in (
                 "request_throughput", "output_token_throughput"
@@ -82,7 +84,7 @@ def performance_lines(records):
     for task, case in records:
         metric = serving_metric(case)
         values = metric.get("values", {})
-        service = values.get("service_view", {})
+        service = values.get("service_view") or {}
         if not completed(case):
             continue
 
@@ -118,15 +120,13 @@ def performance_lines(records):
         if not usable:
             continue
         add(0, scalar(service, "output_token_throughput", "token/s"))
-        common = case.get("metrics", {}).get("token_throughput", {})
-        total_view = common.get("values", {}).get("service_view", {})
-        if common:
-            if common.get("status") == "success":
-                add(1, scalar(total_view, "total_token_throughput", "token/s"))
-        else:
-            add(1, scalar(service, "total_token_throughput", "token/s"))
+        throughput = saved_throughput_metric(case) or {}
+        total_view = throughput.get("values", {}).get("service_view", {})
+        if (throughput.get("status", "success") == "success"
+                and not throughput.get("error")):
+            add(1, scalar(total_view, "total_token_throughput", "token/s"))
         for index, key in ((2, "ttft"), (3, "tpot"), (4, "e2el")):
-            node = values.get("request_view", {}).get(key) or {}
+            node = (values.get("request_view") or {}).get(key) or {}
             units = ({"ms/token": 1, "s/token": 1000} if key == "tpot"
                      else {"ms": 1, "s": 1000})
             value, factor = node.get("p99"), units.get(node.get("unit"))
@@ -160,7 +160,7 @@ def quality_lines(records):
             if (not isinstance(metric, dict) or metric.get("error")
                     or metric.get("status", "success") != "success"):
                 continue
-            for path, node in metric_groups(metric.get("values", {})):
+            for path, node in metric_groups(metric.get("values", metric)):
                 parts = path.split("/")
                 direction = QUALITY_DIRECTIONS.get(parts[-1])
                 if direction is None or any(

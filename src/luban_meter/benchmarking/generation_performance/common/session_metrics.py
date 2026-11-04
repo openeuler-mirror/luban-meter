@@ -6,9 +6,8 @@ request stream even though ``collect_sample`` records only the
 interruption, so this survives Ctrl+C, session timeouts and transport
 failures without special cases.
 
-Request-level and service-level views are delegated to the online
-serving calculator: a turn is an ordinary streaming request, and
-duplicating those formulas here would let the two drift apart.
+These views supplement the shared streaming request and service views;
+they do not calculate those common statistics again.
 """
 
 from __future__ import annotations
@@ -483,26 +482,17 @@ def session_view(
     }
 
 
-def process_case(
+def session_views(
     facts: Mapping[str, Any],
-) -> tuple[dict[str, Any], int, int]:
-    """Aggregate one multi-turn Case into metric views."""
-    window = facts["window"]
-    duration = window["duration_s"]
+) -> dict[str, Any]:
+    """Return additional views only when formal requests contain turns."""
+    duration = facts["window"]["duration_s"]
     parameters = facts["parameters"]
     rows = turn_rows(facts["requests"])
     if not rows:
-        raise ValueError("case has no turn records")
+        return {}
     responses = [row["response"] for row in rows]
-
-    values, success, failed = process_case_requests(
-        responses,
-        request_rate=None,
-        duration_seconds=duration,
-        maximum_concurrency=window["request_capacity"],
-        peak_concurrency=window["peak_requests"],
-        slo_config=facts["metadata"].get("slo_config"),
-    )
+    values: dict[str, Any] = {}
     values["multi_max_turns"] = parameters.get("multi_max_turns")
     values["multi_num_sessions"] = parameters.get("multi_num_sessions")
     values["turn_view"] = turn_view(rows)
@@ -513,28 +503,4 @@ def process_case(
         facts["samples"], facts["coverage"], duration
     )
     values["lengths"] = length_summary(responses)
-    return values, success, failed
-
-
-def process_case_requests(
-    responses: Sequence[Mapping[str, Any]],
-    *,
-    request_rate: float | None,
-    duration_seconds: float,
-    maximum_concurrency: int,
-    peak_concurrency: int,
-    slo_config: Mapping[str, float] | None,
-) -> tuple[dict[str, Any], int, int]:
-    """Reuse the online serving calculator over pooled turn responses."""
-    from ..online_serving import process_case as process_request_case
-
-    return process_request_case(
-        {
-            "request_rate": request_rate,
-            "benchmark_duration_seconds": duration_seconds,
-            "maximum_request_concurrency": maximum_concurrency,
-            "peak_concurrent_requests": peak_concurrency,
-            "requests": list(responses),
-        },
-        slo_config,
-    )
+    return values

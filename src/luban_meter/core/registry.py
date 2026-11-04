@@ -6,6 +6,11 @@ import inspect
 import re
 from typing import Generic, TypeVar
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
+
 T = TypeVar("T")
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -37,6 +42,7 @@ class Registry(Generic[T]):
         try:
             return self._classes[name]
         except KeyError as exc:
+            logger.exception("Registry lookup failed")
             available = ", ".join(self.names())
             raise ValueError(
                 f"unknown {self.label} {name!r}; available: {available}"

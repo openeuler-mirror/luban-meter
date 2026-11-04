@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 
 from luban_meter.api import Metric, metrics
 from luban_meter.core.token_totals import formal_throughput
@@ -105,14 +106,23 @@ class SampleAccuracy(Metric):
 
 @metrics.register("streaming_performance")
 class StreamingPerformance(Metric):
+    """Shared streaming statistics, with views for recorded session turns."""
+
     requires = frozenset({"client_stream_timing"})
 
     def compute(self, facts):
         from .generation_performance.common.lengths import length_summary
+        from .generation_performance.common.session_metrics import (
+            session_views,
+        )
         from .generation_performance.online_serving import process_case
 
-        samples = completed_samples(facts)
-        if not samples:
+        responses = [
+            request["response"]
+            if isinstance(request.get("response"), Mapping) else {}
+            for request in facts["requests"]
+        ]
+        if not responses:
             return {"status": "unavailable", "reason": "no admitted requests"}
         p = facts["parameters"]
         rate = p.get("request_rate")
@@ -123,7 +133,7 @@ class StreamingPerformance(Metric):
             "benchmark_duration_seconds": facts["window"]["duration_s"],
             "maximum_request_concurrency": facts["window"]["request_capacity"],
             "peak_concurrent_requests": facts["window"]["peak_requests"],
-            "requests": samples,
+            "requests": responses,
         }
         values, success, failed = process_case(
             case, facts["metadata"].get("slo_config")
@@ -131,44 +141,14 @@ class StreamingPerformance(Metric):
         values["service_view"].update(
             formal_throughput(facts)["values"]["service_view"]
         )
+        values.update(session_views(facts))
         return {
             "status": "partial_failed"
             if failed and success
             else ("failed" if failed else "success"),
             "values": values,
             "observation_boundary": "client",
-            "lengths": length_summary(samples),
-        }
-
-
-@metrics.register("multi_turn_performance")
-class MultiTurnPerformance(Metric):
-    """Session views over pooled per-turn streaming records.
-
-    Turns are read from the request stream, so an interrupted session
-    still contributes its completed turns instead of disappearing.
-    """
-
-    requires = frozenset({"client_stream_timing", "multi_turn_timing"})
-
-    def compute(self, facts):
-        from .generation_performance.common.session_metrics import (
-            process_case,
-            turn_rows,
-        )
-
-        if not turn_rows(facts["requests"]):
-            return {"status": "unavailable", "reason": "no turn records"}
-        values, success, failed = process_case(facts)
-        values["service_view"].update(
-            formal_throughput(facts)["values"]["service_view"]
-        )
-        return {
-            "status": "partial_failed"
-            if failed and success
-            else ("failed" if failed else "success"),
-            "values": values,
-            "observation_boundary": "client",
+            "lengths": length_summary(responses),
         }
 
 

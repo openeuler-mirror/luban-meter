@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from luban_meter.log import get_logger, log_command
+
+logger = get_logger(__name__)
+
+
 SCOPE_ENV = "LUBAN_METER_SANDBOX_SCOPE"
 REGISTRY_ENV = "LUBAN_METER_SANDBOX_REGISTRY"
 SCOPE_LABEL = "io.luban-meter.sandbox-scope"
@@ -69,6 +74,8 @@ class DockerSandbox:
         return environment
 
     def _control(self, arguments: list[str], timeout: float = 15.0) -> str:
+        logger.info("Docker command: argv=%s timeout=%s",
+                    log_command([*self.client_prefix(), *arguments]), timeout)
         try:
             completed = subprocess.run(
                 [*self.client_prefix(), *arguments],
@@ -79,6 +86,7 @@ class DockerSandbox:
                 env=self.environment(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
+            logger.exception("Docker command failed")
             raise DockerSandboxUnavailableError(
                 f"Docker command failed: {exc}"
             ) from exc
@@ -95,6 +103,7 @@ class DockerSandbox:
         try:
             info = json.loads(info_text)
         except json.JSONDecodeError as exc:
+            logger.exception("Invalid Docker info response")
             raise DockerSandboxUnavailableError(
                 "Docker info returned invalid JSON"
             ) from exc
@@ -121,6 +130,7 @@ class DockerSandbox:
         try:
             image = json.loads(image_text)
         except json.JSONDecodeError as exc:
+            logger.exception("Invalid sandbox image response")
             raise DockerSandboxUnavailableError(
                 "sandbox image inspect returned invalid JSON"
             ) from exc
@@ -285,6 +295,7 @@ class DockerSandboxScope:
                     )
                 time.sleep(0.1)
         except Exception as exc:
+            logger.exception("Sandbox cleanup failed")
             (self.directory / "cleanup-error.txt").write_text(
                 str(exc), encoding="utf-8"
             )

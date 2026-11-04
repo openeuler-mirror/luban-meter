@@ -40,6 +40,10 @@ from luban_meter.benchmarking.model_service_quality.common.sandbox import (
     DockerSandboxExecutor,
     SandboxConfig,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 MEASUREMENT = "humaneval_pass_at_1_online_service"
 PROTOCOL = "humaneval-completion-v1"
@@ -213,6 +217,7 @@ def collect_sample(
     try:
         response = generate_completion(client, prompt, config)
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record["error"] = str(exc)
         return record
 
@@ -228,6 +233,7 @@ def collect_sample(
     try:
         record["final_output"] = extract_final_output(raw_output, code=True)
     except ValueError as exc:
+        logger.warning("Generated answer could not be parsed", exc_info=True)
         record.update(status="parse_failed", error=str(exc))
         return record
     completion = extract_humaneval_completion(record["final_output"], prompt)

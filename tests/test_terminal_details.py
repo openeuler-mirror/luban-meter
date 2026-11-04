@@ -334,7 +334,7 @@ def test_invalid_cli_combinations(tmp_path, extra, capsys):
     save(path, payload)
     assert cli.main(["report", "--input", str(path), "--format", "text",
                      *extra]) == 2
-    assert "error:" in capsys.readouterr().err
+    assert "CLI command failed" in capsys.readouterr().err
 
 
 def test_cli_output_redirect_and_invalid_sort(tmp_path, monkeypatch, capsys):

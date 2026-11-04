@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
+
 MISSING = object()
 
 
@@ -51,6 +56,7 @@ class Parameter:
             try:
                 value = self.type(value)
             except (ValueError, TypeError) as exc:
+                logger.exception("Numeric parameter conversion failed")
                 raise ValueError(f"{name} must be a number") from exc
             if not math.isfinite(value):
                 if self.allow_infinity and value == math.inf:

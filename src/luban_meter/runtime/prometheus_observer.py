@@ -4,10 +4,14 @@ import json
 import threading
 import time
 import urllib.request
+from contextvars import copy_context
 
 from luban_meter.benchmarking.generation_performance.common.prometheus import (
     parse_prometheus_text,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class PrometheusObserver:
@@ -32,14 +36,21 @@ class PrometheusObserver:
                 json.dumps(parsed, allow_nan=False)
                 snapshot["metrics"] = parsed
         except Exception as exc:
+            logger.warning("Prometheus sampling failed", exc_info=True)
             snapshot["error"] = str(exc)
+        if "error" not in snapshot and self.snapshots:
+            if "error" in self.snapshots[-1]:
+                logger.info("Prometheus sampling recovered")
         snapshot["finished_at"] = time.time()
         self.snapshots.append(snapshot)
         self.emit("observation", snapshot)
 
     def start(self):
+        logger.info("Prometheus observation started")
         self.sample()
-        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread = threading.Thread(
+            target=copy_context().run, args=(self._loop,), daemon=True
+        )
         self.thread.start()
 
     def _loop(self):
@@ -51,6 +62,9 @@ class PrometheusObserver:
         if self.thread is not None:
             self.thread.join()
         self.sample()
+        logger.info("Prometheus observation stopped: samples=%s failures=%s",
+                    len(self.snapshots),
+                    sum("error" in s for s in self.snapshots))
 
     def result(self):
         from luban_meter.benchmarking.generation_performance.service_observation import (  # noqa: E501

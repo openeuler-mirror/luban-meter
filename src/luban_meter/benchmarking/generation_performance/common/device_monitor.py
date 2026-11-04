@@ -25,10 +25,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-try:
-    import requests
-except ImportError:
-    requests = None  # type: ignore[assignment]
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,10 @@ class HardwareSnapshot:
 
 def _fetch_metrics(url: str, timeout: float = 5.0) -> str | None:
     """Fetch Prometheus text-format metrics from *url*/metrics."""
-    if requests is None:
+    try:
+        import requests
+    except ImportError:
+        logger.debug("Device metrics skipped: requests is unavailable")
         return None
     if not url.startswith("http"):
         url = f"http://{url}"
@@ -90,8 +92,10 @@ def _fetch_metrics(url: str, timeout: float = 5.0) -> str | None:
         resp = requests.get(metrics_url, timeout=timeout)
         if resp.status_code == 200 and resp.text.strip():
             return resp.text
+        logger.warning("Device exporter unavailable: status=%s",
+                       resp.status_code)
     except Exception:
-        pass
+        logger.warning("Device exporter request failed", exc_info=True)
     return None
 
 
@@ -131,7 +135,7 @@ def _parse_prom_value(
         try:
             results.append((label_dict, float(value_text)))
         except ValueError:
-            pass  # skip string values like "NVIDIA H20"
+            logger.debug("Skipping nonnumeric metric")
     return results
 
 
@@ -206,6 +210,7 @@ def detect_devices(
             try:
                 idx = int(gpu)
             except ValueError:
+                logger.warning("Invalid device index", exc_info=True)
                 continue
             devices.append(
                 DeviceInfo(
@@ -223,6 +228,7 @@ def detect_devices(
         try:
             idx = int(gpu)
         except ValueError:
+            logger.warning("Invalid device identifier", exc_info=True)
             continue
         devices.append(
             DeviceInfo(
@@ -238,27 +244,22 @@ def detect_devices(
 def print_hardware_info(
     devices: list[DeviceInfo] | None = None, exporter_url: str | None = None
 ) -> None:
-    """Print detected hardware info to stdout."""
+    """Log detected hardware info through the shared handlers."""
     if devices is None:
         metrics_text = _fetch_metrics(exporter_url) if exporter_url else None
         devices = detect_devices(metrics_text)
     if not devices:
-        print(
-            (
-                "[Device Monitor] No supported compute devices "
-                "detected at the exporter endpoint."
-            )
+        logger.warning(
+            "No supported compute devices detected at the exporter endpoint"
         )
         return
     vendor = devices[0].vendor
     tool = devices[0].tool
-    print(
-        f"[Device Monitor] Detected {len(devices)} x "
-        f"{devices[0].name} ({vendor}) via {tool}"
-    )
+    logger.info("Detected %s x %s (%s) via %s",
+                len(devices), devices[0].name, vendor, tool)
     for dev in devices:
-        print(f"  [{dev.vendor}] Device {dev.index}: {dev.name}")
-    print()
+        logger.info("Device: vendor=%s index=%s name=%s",
+                    dev.vendor, dev.index, dev.name)
 
 
 # ---------------------------------------------------------------------------
@@ -416,11 +417,13 @@ def sample_exporter(
     try:
         snapshot.devices = _sample_gpu_from_exporter(metrics_text, devices)
     except Exception as exc:
+        logger.warning("Device metrics parsing failed", exc_info=True)
         snapshot.error = {"type": type(exc).__name__, "message": str(exc)}
 
     try:
         snapshot.cpu = _sample_cpu_from_exporter(metrics_text)
     except Exception:
-        pass
+        logger.warning("Device exporter CPU metrics parsing failed",
+                       exc_info=True)
 
     return snapshot

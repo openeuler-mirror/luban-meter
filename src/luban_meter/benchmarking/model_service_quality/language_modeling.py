@@ -30,6 +30,10 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
     scalar,
     token_count,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 MEASUREMENT = "wikitext_logloss_online_service"
 PROTOCOL = "openai_compatible_completions_logprobs"
@@ -324,6 +328,7 @@ def collect_sample(
         record["input_tokens"] = document_input_tokens
         record["status"] = "success"
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record["error"] = str(exc)
     return record
 

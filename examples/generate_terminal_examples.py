@@ -5,10 +5,14 @@ import json
 from pathlib import Path
 
 from luban_meter.benchmarking.generation_performance import online_serving
+from luban_meter.log import get_logger, logged_script
 from luban_meter.reporting.data import load_result
 from luban_meter.reporting.terminal import render_text
 
+logger = get_logger("luban_meter.examples.generate_terminal_examples")
 
+
+@logged_script
 def main():
     repo = Path(__file__).resolve().parents[1]
     output = repo / "results/terminal-report-v1"
@@ -60,9 +64,11 @@ def main():
             (output / f"{name}-{suffix}.txt").write_text(
                 text + "\n", encoding="utf-8",
             )
-    print(f"Examples: {output}")
-    print("success/failure: synthetic; quality: historical real GSM8K result")
-    print("multi-case: synthetic composition, not a new benchmark run")
+    logger.info("Examples: %s", output)
+    logger.info(
+        "success/failure: synthetic; quality: historical real GSM8K result"
+    )
+    logger.info("multi-case: synthetic composition, not a new benchmark run")
 
 
 if __name__ == "__main__":
