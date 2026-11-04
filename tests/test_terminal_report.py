@@ -363,15 +363,19 @@ def test_real_cli_pipeline_preserves_saved_results(
     raw_before = raw.read_bytes()
     assert len(json.loads(raw_before)["requests"]) == 3
     assert (path.parent / "report.html").is_file()
-    metric = case["metrics"]["token_throughput"]
+    assert set(case["metrics"]) == {"streaming_performance"}
+    metric = case["metrics"]["streaming_performance"]
     case_path = raw.with_name(raw.stem + ".result.json")
     assert json.loads(case_path.read_text())["metrics"][
-        "token_throughput"
+        "streaming_performance"
     ] == metric
     run_metric = result["metrics"]["token_throughput"]
-    assert run_metric["values"] == metric["values"]
+    for key, node in run_metric["values"]["service_view"].items():
+        assert node == metric["values"]["service_view"][key]
     assert run_metric["metadata"]["included_cases"][0]["case"] == case["id"]
-    assert metric["metadata"]["successful_requests"] == (
+    assert metric["values"]["service_view"]["successful_requests"][
+        "value"
+    ] == (
         3 if mode == "ok" else 0
     )
     assert result["duration_s"] > 0

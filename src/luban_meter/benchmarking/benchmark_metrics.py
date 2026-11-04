@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from luban_meter.api import Metric, metrics
-from luban_meter.core.token_totals import request_totals, throughput_result
+from luban_meter.core.token_totals import formal_throughput
 
 from .model_service_quality import (
     arithmetic_qa,
@@ -14,25 +14,6 @@ from .model_service_quality import (
     reading_comprehension,
     text_summarization,
 )
-
-
-@metrics.register("token_throughput")
-class TokenThroughput(Metric):
-    """Successful formal request tokens divided by the collection window."""
-
-    def compute(self, facts):
-        counts = request_totals(facts["requests"], facts["samples"])
-        complete = facts.get("collection_complete") is True
-        total = counts["total_tokens"] if complete else None
-        reason = None
-        if not complete:
-            reason = "Case collection not complete"
-        elif counts["unavailable_requests"]:
-            reason = "missing or ambiguous successful request token usage"
-        return throughput_result(
-            total, facts["window"]["duration_s"], reason=reason,
-            metadata={"scope": "Case formal collection", **counts},
-        )
 
 
 def completed_samples(facts):
@@ -147,6 +128,9 @@ class StreamingPerformance(Metric):
         values, success, failed = process_case(
             case, facts["metadata"].get("slo_config")
         )
+        values["service_view"].update(
+            formal_throughput(facts)["values"]["service_view"]
+        )
         return {
             "status": "partial_failed"
             if failed and success
@@ -176,6 +160,9 @@ class MultiTurnPerformance(Metric):
         if not turn_rows(facts["requests"]):
             return {"status": "unavailable", "reason": "no turn records"}
         values, success, failed = process_case(facts)
+        values["service_view"].update(
+            formal_throughput(facts)["values"]["service_view"]
+        )
         return {
             "status": "partial_failed"
             if failed and success
@@ -221,6 +208,9 @@ class EnginePerformance(Metric):
                 },
             }
         )
+        result["metrics"].setdefault("service_view", {}).update(
+            formal_throughput(facts)["values"]["service_view"]
+        )
         return {
             "status": "success",
             "values": result["metrics"],
@@ -245,7 +235,7 @@ class AsyncEnginePerformance(Metric):
             if row["state"] == "complete"
         ]
         duration = facts["window"]["duration_s"]
-        return {
+        result = {
             "observation_boundary": "engine_submission",
             "condition": "completed requests; actual collection window",
             "e2el": summarize(
@@ -268,3 +258,10 @@ class AsyncEnginePerformance(Metric):
             },
             "lengths": length_summary(rows),
         }
+        result["values"] = {
+            key: result[key] for key in (
+                "e2el", "ttft", "output_throughput", "engine_internal_timing"
+            )
+        }
+        result["values"].update(formal_throughput(facts)["values"])
+        return result

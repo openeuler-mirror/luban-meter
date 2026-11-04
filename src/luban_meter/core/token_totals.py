@@ -153,7 +153,7 @@ def run_throughput(tasks):
             if case["status"] == "skipped":
                 skipped.append({**item, "reason": "Case skipped"})
                 continue
-            metric = (case.get("metrics") or {}).get("token_throughput")
+            metric = saved_throughput_metric(case)
             if (case["status"] in ("discarded", "interrupted")
                     or case.get("collection_complete") is not True):
                 unavailable.append({
@@ -161,7 +161,8 @@ def run_throughput(tasks):
                 })
                 continue
             if (not isinstance(metric, dict)
-                    or metric.get("status") != "success"):
+                    or metric.get("status", "success") not in (
+                        "success", "partial_failed", "failed")):
                 unavailable.append({
                     **item, "reason": (
                         metric.get("reason", "Case metric unavailable")
@@ -195,3 +196,36 @@ def run_throughput(tasks):
         "skipped_cases": skipped,
         "unavailable_cases": unavailable,
     })
+
+
+def formal_throughput(facts):
+    """Shared calculation used by existing performance metrics."""
+    counts = request_totals(facts["requests"], facts["samples"])
+    complete = facts.get("collection_complete") is True
+    total = counts["total_tokens"] if complete else None
+    reason = None
+    if not complete:
+        reason = "Case collection not complete"
+    elif counts["unavailable_requests"]:
+        reason = "missing or ambiguous successful request token usage"
+    result = throughput_result(
+        total, facts["window"]["duration_s"], reason=reason,
+        metadata={"scope": "Case formal collection", **counts},
+    )
+    if result.get("reason"):
+        for node in result["values"]["service_view"].values():
+            if node["value"] is None:
+                node["reason"] = result["reason"]
+    return result
+
+
+def saved_throughput_metric(result):
+    """Find a saved provider; legacy common metrics remain readable."""
+    metrics = result.get("metrics") or {}
+    for name, metric in metrics.items():
+        if name == "token_throughput" or not isinstance(metric, dict):
+            continue
+        service = (metric.get("values") or {}).get("service_view") or {}
+        if "total_token_throughput" in service:
+            return metric
+    return metrics.get("token_throughput")
