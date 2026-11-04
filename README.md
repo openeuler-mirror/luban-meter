@@ -146,6 +146,7 @@ ShareGPT发送首个有效human消息，保留原文（包括首尾空白），�
 
 默认只读取选定数据一遍；性能任务可用`--repeat-data`循环输入。
 JSON/JSONL/CSV记录的输入字段默认是`prompt`，可通过`--prompt-field`调整。
+CSV（包括BurstGPT轨迹）支持带或不带文件头BOM的UTF-8编码。
 主数据集和few-shot通过同一公共`DatasetLoader`读取，保留原始记录；
 Prompt构造、答案解析与指标计算独立执行。Python调用方式见[架构指南](ARCHITECTURE.md)。
 
