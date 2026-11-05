@@ -153,6 +153,40 @@ def counter_value(entry: dict[str, Any] | None) -> float | None:
     return gauge_value(entry)
 
 
+def histogram_series_totals(
+    metrics: dict[str, Any],
+    name: str,
+) -> dict[tuple[tuple[str, str], ...], tuple[float, float]]:
+    """Group cumulative histogram ``_sum``/``_count`` pairs by labels.
+
+    Accepts the parsed ``metrics`` mapping and a histogram metric name.
+    Returns ``{labels_key: (total_sum, total_count)}`` where ``labels_key``
+    is a sorted tuple of the sample label pairs. Bucket samples are
+    ignored; series without a complete ``_sum``/``_count`` pair are
+    skipped. The values are cumulative since server start, matching the
+    Prometheus exposition semantics.
+    """
+    entry = select_metric(metrics, name)
+    if entry is None:
+        return {}
+    series: dict[tuple[tuple[str, str], ...], dict[str, float]] = {}
+    for sample in entry.get("samples", []):
+        metric_name = str(sample.get("_metric_name", ""))
+        if metric_name.endswith("_sum"):
+            field = "sum"
+        elif metric_name.endswith("_count"):
+            field = "count"
+        else:
+            continue
+        key = tuple(sorted(sample.get("labels", {}).items()))
+        series.setdefault(key, {})[field] = float(sample["value"])
+    return {
+        key: (totals["sum"], totals["count"])
+        for key, totals in series.items()
+        if "sum" in totals and "count" in totals
+    }
+
+
 def histogram_quantiles(
     samples: list[dict[str, Any]],
     quantiles: tuple[float, ...] = (0.50, 0.90, 0.99),

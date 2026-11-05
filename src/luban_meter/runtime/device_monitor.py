@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import threading
 import time
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import Any
 
 from luban_meter.benchmarking.generation_performance.common import (
     device_monitor,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -111,15 +115,13 @@ class DeviceMonitorDaemon:
 
     def start(self) -> None:
         """Detect devices from exporter and start the sampling thread."""
+        logger.info("Device monitoring started")
         self._devices = device_monitor.detect_devices(
             exporter_url=self._exporter_url
         )
         if not self._devices:
-            print(
-                (
-                    "[Device Monitor] No compute devices detected at "
-                    "the exporter endpoint."
-                )
+            logger.warning(
+                "Device monitoring unavailable: no devices detected"
             )
             self._vendor = ""
             return
@@ -131,7 +133,9 @@ class DeviceMonitorDaemon:
         )
         self._start_time = time.monotonic()
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(
+            target=copy_context().run, args=(self._run,), daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -140,6 +144,8 @@ class DeviceMonitorDaemon:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
+        logger.info("Device monitoring stopped: samples=%s failures=%s",
+                    len(self._snapshots), self._error_count)
 
     def summary(self) -> MonitoringSummary | None:
         """Aggregate collected samples and return a summary with

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import ssl
 import sys
 from http.cookiejar import CookieJar, DefaultCookiePolicy
@@ -96,14 +97,22 @@ def iter_response_lines(response):
     Keep the iterator alive after the collector returns at [DONE], then
     exhaust it to finish the HTTP message and release the connection.
     No fixed chunk size is used: it could buffer output and distort TTFT.
+    Normalize CR, LF and CRLF terminators without decoding payload bytes.
     """
     pending = bytearray()
+    skip_lf = False
     for chunk in response.iter_raw():
-        parts = chunk.split(b"\n")
-        pending.extend(parts[0])
-        for part in parts[1:]:
+        if not chunk:
+            continue
+        if skip_lf:
+            chunk = chunk.removeprefix(b"\n")
+        skip_lf = chunk.endswith(b"\r")
+        start = 0
+        for ending in re.finditer(br"\r\n?|\n", chunk):
+            pending.extend(chunk[start:ending.start()])
             yield bytes(pending) + b"\n"
             pending.clear()
-            pending.extend(part)
+            start = ending.end()
+        pending.extend(chunk[start:])
     if pending:
         yield bytes(pending)

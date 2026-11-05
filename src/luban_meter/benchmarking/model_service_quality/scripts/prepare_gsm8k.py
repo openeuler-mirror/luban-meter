@@ -21,6 +21,8 @@ import argparse
 import json
 from pathlib import Path
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
 
 def load_jsonl(path: Path) -> list[dict]:
     records = []
@@ -50,6 +52,10 @@ def write_jsonl(records: list[dict], out_file: Path) -> None:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+logger = get_logger("luban_meter.prepare_gsm8k")
+
+
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -65,6 +71,7 @@ def main() -> None:
     parser.add_argument("--few-shot", type=int, default=8)
     parser.add_argument("--few-shot-file", type=Path, default=None)
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
 
     test_file = args.source / "test.jsonl"
     if not test_file.is_file():
@@ -73,7 +80,8 @@ def main() -> None:
     for index, record in enumerate(test_records):
         record["id"] = f"gsm8k-test-{index}"
     write_jsonl(test_records, args.out / "test.jsonl")
-    print(f"wrote {len(test_records)} records -> {args.out / 'test.jsonl'}")
+    logger.info("Wrote %s records -> %s",
+                len(test_records), args.out / "test.jsonl")
 
     if args.few_shot > 0:
         few_shot_source = args.few_shot_file or args.source / "train.jsonl"
@@ -88,11 +96,8 @@ def main() -> None:
         for index, record in enumerate(few_shot_records):
             record["id"] = f"gsm8k-fs-{index}"
         write_jsonl(few_shot_records, args.out / "few_shot.jsonl")
-        print(
-            f"wrote {len(few_shot_records)} records -> {
-                args.out / ('few_shot.jsonl')
-            }"
-        )
+        logger.info("Wrote %s records -> %s",
+                    len(few_shot_records), args.out / "few_shot.jsonl")
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ from luban_meter.data.projections import (
     split_turns,
     summarize_turn_counts,
 )
+from luban_meter.log import get_logger
 from luban_meter.runtime.http_client import create_http_client, http_settings
 from luban_meter.runtime.request_params import (
     append_request_params,
@@ -54,6 +55,8 @@ from luban_meter.runtime.request_params import (
 
 from .common.lengths import assess_lengths
 from .common.tokenization import LengthSampler, derived_seed, load_tokenizer
+
+logger = get_logger(__name__)
 
 # Poll interval for think-time sleeps so a stop request is honoured
 # promptly instead of after the whole gap has elapsed.
@@ -113,7 +116,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
 
     profile_modes = frozenset({"requests"})
     capabilities = frozenset({"client_stream_timing", "multi_turn_timing"})
-    default_metrics = ("multi_turn_performance",)
+    default_metrics = ("streaming_performance",)
     summary_fields = GenerationPerformanceBenchmark.summary_fields + (
         "multi_max_turns",
         "multi_num_sessions",
@@ -324,6 +327,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             try:
                 pool_index = next(pool)
             except StopIteration:
+                logger.debug("Conversation sample pool exhausted")
                 # The usable pool ran out.  repeat_data is the only way
                 # to reuse it, so sessions are never silently padded.
                 return

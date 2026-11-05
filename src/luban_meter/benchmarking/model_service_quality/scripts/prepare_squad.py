@@ -11,9 +11,14 @@ import argparse
 import json
 from pathlib import Path
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
 from ..reading_comprehension import load_samples
 
+logger = get_logger("luban_meter.prepare_squad")
 
+
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -21,6 +26,7 @@ def main() -> None:
         "--out", type=Path, default=Path("dataset/squad/validation.jsonl")
     )
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
     if args.source.resolve() == args.out.resolve():
         parser.error("source and output must be different files")
     records = load_samples(args.source)
@@ -28,7 +34,7 @@ def main() -> None:
     with args.out.open("w", encoding="utf-8") as handle:
         for row in records:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    print(f"wrote {len(records)} samples -> {args.out}")
+    logger.info("Wrote %s samples -> %s", len(records), args.out)
 
 
 if __name__ == "__main__":

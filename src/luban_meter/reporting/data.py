@@ -1,6 +1,7 @@
 """Shared readers for persisted results; no metric recalculation."""
 
 import json
+import math
 from pathlib import Path
 
 STATUSES = {
@@ -104,3 +105,17 @@ def metric_groups(value, path="", unit="", count=None):
             yield from metric_groups(item, f"{path}/{index}", unit, count)
     elif isinstance(value, (int, float)) and not isinstance(value, bool):
         yield path, {"value": value, "unit": unit, "count": count}
+
+
+def format_number(value):
+    """Do not turn missing, boolean or non-finite observations into zero."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "N/A"
+    if isinstance(value, int):
+        return str(value)
+    if not math.isfinite(value):
+        return "N/A"
+    rounded = f"{value:.3f}".rstrip("0").rstrip(".")
+    if value != 0 and rounded in ("0", "-0"):
+        return f"{value:.3g}"
+    return rounded

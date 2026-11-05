@@ -5,8 +5,13 @@ const path = require('node:path');
 const vm = require('node:vm');
 const context = vm.createContext({taskDisplayName:name=>name});
 const source = path.join(__dirname,'../src/luban_meter/reporting');
-for(const file of ['case_analysis.js','summary_cards.js','report_overview.js'])
-  vm.runInContext(fs.readFileSync(path.join(source,file),'utf8'),context);
+const html=process.argv[3]?fs.readFileSync(process.argv[3],'utf8'):null;
+for(const file of ['case_analysis.js','summary_cards.js','report_overview.js']) {
+  const script=fs.readFileSync(path.join(source,file),'utf8');
+  if(html!==null)assert.ok(html.includes(script),'export contains '+file);
+  vm.runInContext(html===null?script:
+    html.slice(html.indexOf(script),html.indexOf(script)+script.length),context);
+}
 const call = (name,value,...extra) => {
   context.input=JSON.stringify(value);
   return JSON.parse(vm.runInContext('JSON.stringify('+name+'(JSON.parse(input)'+
@@ -33,6 +38,7 @@ function point(id,concurrency,value,parameters={}) {
       request_view:{ttft:{mean:10,unit:'ms'},tpot:{mean:2,unit:'ms/token'},
         itl:{mean:3,unit:'ms/token'}},
       service_view:{output_token_throughput:scalar(value),
+        total_token_throughput:scalar(value*2),
         request_throughput:scalar(1,'req/s')}}}}};
 }
 const task=cases=>({name:'performance',category:'generation_performance',cases});
@@ -141,51 +147,85 @@ const c=cardCase('best_latency',16,150,50,50,[10,4,25]);
 const recordsFor=cases=>cases.map((c,ci)=>({c,ci,ti:0,task:task(cases)}));
 const getCards=()=>call('performanceOverviewCards',recordsFor([a,b,c]));
 const initial=getCards();
-assert.deepEqual(initial.map(m=>m.value),[200,10,2,1,32,25]);
+assert.deepEqual(initial.map(m=>m.value),[200,400,10,2,1,32,25]);
 assert.equal(initial[0].href,'#summary-0-1');
-assert.equal(initial[1].href,'#summary-0-2');
-assert.equal(initial[2].href,'#summary-0-1');
-assert.equal(initial[2].unit,'ms/token');
-assert.equal(initial[4].href,'#summary-0-0');
-assert.equal(initial[3].kind,'percentage');
-assert.match(initial[3].source,/100 \/ 100/);
+assert.equal(initial[1].href,'#summary-0-1'); // Total throughput from the same best Case.
+assert.equal(initial[2].href,'#summary-0-2');
+assert.equal(initial[3].href,'#summary-0-1');
+assert.equal(initial[3].unit,'ms/token');
+assert.equal(initial[5].href,'#summary-0-0');
+assert.equal(initial[4].kind,'percentage');
+assert.match(initial[4].source,/100 \/ 100/);
 assert.deepEqual(call('performanceOverviewCards',recordsFor([a]),false).map(m=>m.value),
-  [999,1,1,.8,32,1]);
+  [999,1998,1,1,.8,32,1]);
 c.metrics.streaming_performance.values.service_view.total_requests.value=null;
-assert.equal(getCards()[3].value,1); // Explicit best Case, never an aggregate claim.
-assert.equal(call('performanceOverviewCards',recordsFor([c]),false)[3].value,null);
+assert.equal(getCards()[4].value,1); // Explicit best Case, never an aggregate claim.
+assert.equal(call('performanceOverviewCards',recordsFor([c]),false)[4].value,null);
 c.metrics.streaming_performance.values.service_view.total_requests.value=50;
 b.metrics.streaming_performance.values.service_view.output_token_throughput.value=null;
 b.metrics.streaming_performance.values.request_view.ttft={p99:.005,unit:'s',count:100};
 b.metrics.streaming_performance.values.request_view.tpot={p99:.002,unit:'s/token',count:100};
 assert.equal(getCards()[0].value,150);
-assert.equal(getCards()[1].value,5); // A missing throughput does not hide valid latency.
-assert.equal(getCards()[2].value,2);
+assert.equal(getCards()[1].value,400); // Output missing does not hide total throughput.
+assert.equal(getCards()[2].value,5); // A missing throughput does not hide valid latency.
+assert.equal(getCards()[3].value,2);
 assert.equal(b.metrics.streaming_performance.values.request_view.ttft.p99,.005);
 b.metrics.streaming_performance.values.request_view.ttft={p99:0,unit:'ms',count:100};
-assert.equal(getCards()[1].value,0);
+assert.equal(getCards()[2].value,0);
 b.metrics.streaming_performance.values.request_view.ttft.count=0;
-assert.equal(getCards()[1].value,10);
+assert.equal(getCards()[2].value,10);
 for(const value of [-1,null,'1']) {
   b.metrics.streaming_performance.values.request_view.ttft={p99:value,unit:'ms',count:100};
-  assert.equal(getCards()[1].value,10);
+  assert.equal(getCards()[2].value,10);
 }
 b.metrics.streaming_performance.values.request_view.tpot.weight_sum=-1;
-assert.equal(getCards()[2].value,4);
+assert.equal(getCards()[3].value,4);
 b.metrics.streaming_performance.values.request_view.ttft={p99:1,unit:'unknown',count:100};
-assert.equal(getCards()[1].value,10);
+assert.equal(getCards()[2].value,10);
 assert.ok(call('performanceOverviewCards',[]).every(card=>card.value===null));
 const failed=cardCase('all_failed',4,0,0,10,[null,null,null]);failed.status='failed';
 const failedScope=call('summaryScopeGroups',[task([failed])])[0];
 assert.equal(failedScope.peaks.length,0);
 const failedCards=call('performanceOverviewCards',recordsFor([failed]));
-assert.deepEqual(failedCards.map(card=>card.value),[null,null,null,0,4,null]);
+assert.deepEqual(failedCards.map(card=>card.value),[null,null,null,null,0,4,null]);
 failed.metrics.streaming_performance.values.service_view.total_requests.value=0;
 failed.metrics.streaming_performance.values.service_view.failed_requests.value=0;
-assert.equal(call('performanceOverviewCards',recordsFor([failed]))[3].value,null);
+assert.equal(call('performanceOverviewCards',recordsFor([failed]))[4].value,null);
 const badCounts=cardCase('bad_counters',4,10,5,10,[1,1,1]);
 badCounts.metrics.streaming_performance.values.service_view.failed_requests.value=-1;
-assert.equal(call('performanceOverviewCards',recordsFor([badCounts]))[3].value,null);
+assert.equal(call('performanceOverviewCards',recordsFor([badCounts]))[4].value,null);
+// Service statistics remain available when no request distributions were saved.
+for(const request of [undefined,null,{}]) {
+  const serviceOnly=cardCase('service_only',4,10,1,1,[5,2,20]);
+  const metric=serviceOnly.metrics.streaming_performance;
+  if(request===undefined)delete metric.values.request_view;
+  else metric.values.request_view=request;
+  assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .map(card=>card.value),[10,20,null,null,1,4,null]);
+  assert.equal(summarize([serviceOnly]).included,1);
+  // A second provider cannot fill missing distributions in the selected one.
+  serviceOnly.metrics.z_later=cardCase('later',4,999,1,1,[1,1,1])
+    .metrics.streaming_performance;
+  assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .map(card=>card.value),[10,20,null,null,1,4,null]);
+  metric.error='selected provider failed';
+  assert.ok(call('performanceOverviewCards',recordsFor([serviceOnly]))
+    .every(card=>card.value===null));
+  assert.equal(summarize([serviceOnly]).included,0);
+}
+const serviceFailure=cardCase('service_failure',4,10,1,4,[5,2,20]);
+delete serviceFailure.metrics.streaming_performance.values.request_view;
+serviceFailure.status='partial_failed';
+serviceFailure.metrics.streaming_performance.status='partial_failed';
+assert.deepEqual(call('performanceOverviewCards',recordsFor([serviceFailure]))
+  .map(card=>card.value),[null,null,null,null,.25,4,null]);
+const engineOnly=point('engine',4,999);
+engineOnly.metrics={engine_performance:{status:'success',values:{
+  engine_view:{internal_ttft:{p99:1,unit:'ms'}},
+  service_view:{total_token_throughput:scalar(999)}}}};
+assert.ok(call('performanceOverviewCards',recordsFor([engineOnly]))
+  .every(card=>card.value===null));
+assert.equal(summarize([engineOnly]).included,0);
 const other=cardCase('different_length',16,9000,1,1,[.1,.1,.1]);
 other.parameters.input_tokens=256;
 const separated=summarize([a,b,c,other]);
@@ -250,8 +290,27 @@ assert.equal(call('sessionValues',sessionCase).turn_view.turns_observed,3);
 assert.deepEqual(call('sessionValues',{...sessionCase,status:'discarded'}),null);
 assert.deepEqual(call('corePerformanceMetrics',sessionCase).map(m=>m.path),
   ['ttft','tpot','itl','e2el'].map(k=>'/multi_turn_performance/values/request_view/'+k)
-    .concat(['request_throughput','output_token_throughput']
+    .concat(['request_throughput','output_token_throughput','total_token_throughput']
       .map(k=>'/multi_turn_performance/values/service_view/'+k)));
+assert.deepEqual(call('summaryMetrics',task([point('s1',4,100)])).map(m=>m.key),
+  ['ttft','tpot','output_token_throughput','total_token_throughput']);
+// The independent run-level token_throughput metric shares the
+// total_token_throughput key but must never be taken for the serving
+// calculator, regardless of metric key order.
+const runLevel=point('run',4,100);
+runLevel.metrics.token_throughput={status:'success',values:{service_view:{
+  total_token_throughput:scalar(999)}}};
+assert.deepEqual(call('corePerformanceMetrics',runLevel).map(m=>m.key),
+  ['ttft','tpot','itl','request_throughput',
+    'output_token_throughput','total_token_throughput']);
+assert.equal(call('servingMetric',runLevel).status,'success');
+const runLevelReversed=JSON.parse(JSON.stringify(runLevel));
+runLevelReversed.metrics=Object.fromEntries(
+  Object.entries(runLevelReversed.metrics).reverse());
+assert.deepEqual(call('corePerformanceMetrics',runLevelReversed).map(m=>m.path),
+  call('corePerformanceMetrics',runLevel).map(m=>m.path));
+assert.deepEqual(call('summaryMetrics',task([runLevel])).map(m=>m.key),
+  ['ttft','tpot','output_token_throughput','total_token_throughput']);
 const sessionSummary=call('performanceSummary',[task([sessionCase])]);
 assert.equal(sessionSummary.included,1);
 assert.equal(sessionSummary.groups[0].maximum,120);
@@ -263,3 +322,43 @@ console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+
   'quality optimization directions, comparable datasets and summary-row links; '+
   'session metrics resolved by view, per-turn sample counts preserved');
+
+
+// Provider selection must survive actual sorted JSON persistence.
+if(process.argv[2]) {
+  const persisted=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+  if(html!==null)assert.deepEqual(JSON.parse(html.split('id="report-data">')[1]
+    .split('</script>')[0]).result,persisted);
+  for(const task of persisted.tasks) {
+    const c=task.cases[0],record={task,c,ti:0,ci:0};
+    const provider=Object.keys(c.metrics).find(k=>k!=='token_throughput');
+    const hasLatency=Boolean(c.metrics[provider].values.request_view?.ttft);
+    const cards=call('performanceOverviewCards',[record]);
+    assert.equal(cards[0].value,10);
+    // The provider saves no total_token_throughput; the independent
+    // run-level token_throughput metric (999) must not leak into the card.
+    assert.equal(cards[1].value,null);
+    assert.equal(cards[2].value,hasLatency?5:null);
+    assert.equal(cards[3].value,hasLatency?2:null);
+    assert.equal(cards[4].value,1);
+    assert.equal(cards[5].value,4);
+    assert.equal(cards[6].value,hasLatency?20:null);
+    const groups=call('performanceSummary',[task]);
+    assert.equal(groups.groups[0].maximum,10);
+    const reordered=JSON.parse(JSON.stringify(c));
+    reordered.metrics=Object.fromEntries(Object.entries(c.metrics).reverse());
+    const reversed=call('performanceOverviewCards',[
+      {...record,c:reordered}
+    ]);
+    assert.deepEqual(reversed.map(m=>m.value),cards.map(m=>m.value));
+    assert.equal(call('servingMetric',c).status,'success');
+    // An unavailable selected provider stays unavailable with its own status.
+    c.metrics[provider].error='provider failed';
+    assert.equal(call('performanceOverviewCards',[record])[0].value,null);
+    delete c.metrics[provider];
+    assert.ok(call('performanceOverviewCards',[record])
+      .every(card=>card.value===null));
+    assert.equal(call('performanceSummary',[task]).groups.length,0);
+  }
+  console.log('PASS: persisted common/online/session/custom provider selection');
+}

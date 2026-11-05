@@ -6,6 +6,10 @@ import threading
 import time
 import uuid
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 class AsyncEngineBackend:
     def __init__(self, parameters, factory=None):
@@ -19,6 +23,7 @@ class AsyncEngineBackend:
         try:
             self.call(self.initialize(factory))
         except BaseException:
+            logger.exception("Engine initialization failed")
             self.close()
             raise
 
@@ -78,6 +83,7 @@ class AsyncEngineBackend:
                         first = first or now
                         timestamps.append(now)
         except BaseException:
+            logger.exception("Engine request aborted")
             aborted = self.engine.abort(request_id)
             if inspect.isawaitable(aborted):
                 await aborted

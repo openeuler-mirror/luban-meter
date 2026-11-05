@@ -15,7 +15,11 @@ from luban_meter.core.parameters import (
     validate_parameters,
 )
 from luban_meter.core.template_contracts import compatible
+from luban_meter.log import add_log_secrets, get_logger
 from luban_meter.runtime.load_profiles import profiles
+
+logger = get_logger(__name__)
+
 
 TASK_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 
@@ -47,6 +51,8 @@ def cli_schema():
                 "config",
                 "task",
                 "result_dir",
+                "log_level",
+                "log_dir",
                 "fail_fast",
                 "observe",
                 "observe_url",
@@ -140,6 +146,12 @@ def build_plan(base, config=None, selected=(), *, observe=False):
             supplied.pop("name", None)
             case_definition = supplied.pop("cases", None)
             schema = schema_for(scenario, supplied)
+            add_log_secrets(
+                supplied[key] for key, spec in schema.items()
+                if spec.secret and isinstance(supplied.get(key), str)
+            )
+            logger.info("Resolving task: name=%s scenario=%s", name,
+                        scenario_name)
             # Resolve CLI paths before applying file-relative paths.
             for key, value in common.items():
                 if key not in entry and key in schema and schema[key].path:
@@ -191,6 +203,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
                 }
             )
         except (ValueError, TypeError) as exc:
+            logger.exception("Task parameter resolution failed")
             raise ValueError(f"task {name}: {exc}") from exc
     unknown = set(selected) - set(names)
     if unknown:

@@ -7,6 +7,10 @@ import random
 from dataclasses import dataclass
 
 from luban_meter.api import Parameter
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 LENGTH_PARAMETERS = {
     **{
@@ -88,6 +92,7 @@ def load_tokenizer(parameters):
     try:
         from transformers import AutoTokenizer
     except ImportError as exc:
+        logger.exception("Tokenizer dependency unavailable")
         raise RuntimeError(
             "install luban-meter[generation] for random_token"
         ) from exc
@@ -111,6 +116,7 @@ class TextGenerator:
         try:
             from faker import Faker
         except ImportError as exc:
+            logger.exception("Data generator dependency unavailable")
             raise RuntimeError("install luban-meter[generation]") from exc
         # Explicit locale makes generation independent of host locale.
         self.faker_type = Faker

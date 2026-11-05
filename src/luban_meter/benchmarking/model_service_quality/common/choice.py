@@ -34,7 +34,11 @@ from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_choice_prompt,
     validate_prompt_version,
 )
+from luban_meter.log import get_logger
 from luban_meter.runtime.thinking import response_facts
+
+logger = get_logger(__name__)
+
 
 PROTOCOL = "openai_compatible_chat_and_completions"
 SCORER_VERSION = "metrics-v1"
@@ -222,6 +226,7 @@ def collect_sample(
                     extract_choice,
                 )
             except ValueError as exc:
+                logger.warning("Choice answer parsing failed", exc_info=True)
                 record.update(status="parse_failed", error=str(exc))
                 return record
             record.update(parsed_output=prediction, prediction=prediction)
@@ -232,6 +237,7 @@ def collect_sample(
         record["correct"] = prediction == answer
         record["status"] = "success"
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record["error"] = str(exc)
     return record
 

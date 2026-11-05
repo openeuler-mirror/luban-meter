@@ -8,6 +8,7 @@ import json
 import signal
 import sys
 import time
+import traceback
 from collections.abc import Mapping
 from typing import Any
 
@@ -43,7 +44,15 @@ class _LimitedWriter(io.TextIOBase):
 
 
 def _error(status: str, error: BaseException) -> dict[str, Any]:
+    # The container cannot access the host log. Return frame locations
+    # through the result protocol, without generated source or payloads.
+    frames = traceback.extract_tb(error.__traceback__)
+    stack = "\n".join(
+        f"  {frame.filename}:{frame.lineno} in {frame.name}"
+        for frame in frames
+    )
     return {
+        "traceback": stack,
         "status": status,
         "passed": False,
         "error_type": type(error).__name__,

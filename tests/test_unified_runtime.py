@@ -527,7 +527,7 @@ def test_duration_stops_admission_and_drains(service, tmp_path):
 
 
 def test_observation_failure_does_not_fail_inference(service, tmp_path):
-    result, _ = RunCoordinator().run(
+    result, directory = RunCoordinator().run(
         build_plan(serving(service)),
         tmp_path,
         observation={"url": "http://127.0.0.1:1/metrics", "interval": 0.01},
@@ -536,6 +536,12 @@ def test_observation_failure_does_not_fail_inference(service, tmp_path):
     assert case["status"] == "success", case
     assert case["observation"]["status"] == "failed"
     assert case["observation"]["failed_samples"] >= 2
+    text = next((directory / "log").glob("luban-meter-*.log")).read_text()
+    failures = case["observation"]["failed_samples"]
+    assert text.count("Prometheus sampling failed") == failures
+    assert "Traceback (most recent call last)" in text
+    assert "task=task_1 case=case_1" in text
+    assert "Prometheus observation stopped" in text
 
 
 def test_html_bounds_observation_data_without_mutating_result():

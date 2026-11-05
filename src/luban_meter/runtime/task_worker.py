@@ -7,8 +7,11 @@ from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.planning import bootstrap
+from luban_meter.log import configure_logging, get_logger
 from luban_meter.runtime.evaluation_session import run_case
 from luban_meter.utils.json_io import write_json_atomic
+
+logger = get_logger("luban_meter.runtime.task_worker")
 
 
 def aggregate_status(results):
@@ -26,10 +29,24 @@ def aggregate_status(results):
 
 def main():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
-    bootstrap()
     source = Path(sys.argv[1])
     payload = json.loads(source.read_text())
     source.unlink()
+    task = payload["task"]
+    with configure_logging(
+        payload["log_directory"], filename=payload["log_filename"],
+        task=task["name"],
+        level=payload["log_level"],
+        secrets=payload.get("log_secrets", ()),
+    ):
+        logger.debug("Worker logging configured: level=%s",
+                     payload["log_level"])
+        logger.info("Worker initializing: scenario=%s", task["scenario"])
+        bootstrap()
+        _run_task(payload)
+
+
+def _run_task(payload):
     task = payload["task"]
     directory = Path(payload["directory"])
     stop_file = Path(payload["stop_file"])
@@ -50,6 +67,8 @@ def main():
                 "status": "skipped",
                 "reason": stop_reason or "user_interrupt",
             }
+            logger.info("Case skipped: reason=%s", collected["reason"],
+                        extra={"case": case["id"]})
         else:
             collected = run_case(
                 implementation,
@@ -66,6 +85,8 @@ def main():
     if stop_file.exists():
         result["status"] = "interrupted"
     write_json_atomic(directory / "result.json", result)
+    logger.info("Worker finished: status=%s result=%s",
+                result["status"], directory / "result.json")
 
 
 if __name__ == "__main__":

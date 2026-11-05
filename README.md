@@ -96,6 +96,7 @@ luban-meter run \
 | --- | --- | --- |
 | `constant` | `--request-rate 10 --max-concurrency 32` | 从时间0开始，每0.1秒计划一次请求 |
 | `poisson` | `--request-rate 10 --max-concurrency 32` | 首次计划在0，后续指数间隔，平均每秒10次 |
+| `rate` | `--request-rate 10 --arrival-process gamma` | 兼容入口，按到达过程安排请求，详见下文 |
 | `concurrent` | `--max-concurrency 8` | 最多8个请求并发，样本完成后补充 |
 | `throughput` | `--max-concurrency 32` | 在并发容量内持续尽快发送，无到达速率等待 |
 | `replay` | `--replay-speed 2 --max-concurrency 32` | 按轨迹时间的1/2安排请求，详见轨迹回放 |
@@ -146,6 +147,7 @@ ShareGPT发送首个有效human消息，保留原文（包括首尾空白），�
 
 默认只读取选定数据一遍；性能任务可用`--repeat-data`循环输入。
 JSON/JSONL/CSV记录的输入字段默认是`prompt`，可通过`--prompt-field`调整。
+CSV（包括BurstGPT轨迹）支持带或不带文件头BOM的UTF-8编码。
 主数据集和few-shot通过同一公共`DatasetLoader`读取，保留原始记录；
 Prompt构造、答案解析与指标计算独立执行。Python调用方式见[架构指南](ARCHITECTURE.md)。
 
@@ -330,6 +332,13 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 轮次严格顺序执行，每轮请求携带此前轮次的**实际模型回答**作为历史。
 不同会话并行，同一会话同时最多一个在途请求。
 
+`online_serving`和`multi_turn_serving`保留各自的执行方式，默认都使用
+`streaming_performance`计算指标。是否执行多轮由场景决定，不由Metric名称决定。
+旧任务若显式配置`"metrics": ["multi_turn_performance"]`，需改为
+`"metrics": ["streaming_performance"]`；旧名称已移除，不保留配置别名。
+未指定`metrics`时直接使用场景默认值。已保存结果中的历史
+`multi_turn_performance`指标键仍可由当前报告读取。
+
 ```bash
 luban-meter run --scenario multi_turn_serving \
   --model served-model --base-url http://127.0.0.1:8000 \
@@ -434,6 +443,37 @@ luban-meter run --scenario online_serving --model served-model \
 服务端经典直方图的分位数落入 `+Inf` 桶时，按 Prometheus 规则返回最高有限桶边界，
 不对无界区间插值；只有 `+Inf` 桶、没有有限桶边界时，分位数标为不可用。
 
+服务端观测聚合保存在Case的`observation.metrics`。其中`latency_decomposition.queue_time_window`（s）
+是等待队列中平均每个请求的等待时间（分母为窗口内全部完成请求，含等待约等于0的），
+为服务端指标（`boundary=server`）：按观测窗口对vLLM的`vllm:request_queue_time_seconds`
+histogram差分，分子为各标签序列累计等待秒数增量之和，分母为窗口内上报完成请求数
+的增量之和。计数器重置通过相邻快照逐对检测：累计值只增不减，任何回退即判定重置，
+该序列整体剔除并记录`counter reset between snapshots`，即使末值重新超过起点也不再用
+首末差分；末快照消失的序列记录`series missing from the last snapshot`。均值与增量
+按原始精度落盘，展示层才格式化，微秒级正等待不会被保存成0。结果保存首末快照时间戳
+（`window.started_at/ended_at`，unix秒）、每条纳入序列的标签与增量
+（`series[].labels/delta_sum/delta_count`）、合计分子分母与序列数，全部为已落盘事实，
+可从原始快照复算。首末快照都没有该指标时字段不出现；窗口内没有完成请求时`mean`
+留空并给出`reason`，不补0；有效观测的零等待显示为真实0。该窗口是Prometheus观测
+采样区间，与正式Case窗口边界略有差异；共享服务的其他流量会计入分子分母，不能承诺
+仅包含本次压测请求。vLLM在请求结束后才上报该histogram，数值不代表当前仍在队列中
+请求已等待的时长。
+
+另一口径来自逐请求指标：vLLM v0.25.0起服务端加`--enable-per-request-metrics`后，
+响应（流式为最后usage chunk）顶层`metrics.queue_time_ms`给出该请求在调度队列中的
+等待毫秒数。LuBan-Meter将其保存为请求事实`server_queue_time_ms`（原始精度），并在
+`streaming_performance.values`中计算客户要求的"只算等待过请求"口径：
+`request_view.queue_time_ms`为等待时间大于0请求的分布（`count`即等待过的请求数，
+保留6位小数以维持微秒级精度），`service_view.queue_time_waited_mean`为这些请求的
+平均等待（`ms`）。读取与聚合两层都拒绝非数值、负值和非有限值（无穷、NaN），非法
+计时视为未上报，不影响TTFT等其余指标的汇总。计时覆盖率保存为
+`service_view.queue_time_reported_requests`/`queue_time_missing_requests`：全部缺失
+（未开启参数、`n>1`等无法归属）给出`reason`；部分上报时保留已上报子集的结果并
+以`condition`标注"partial timing coverage"，缺失请求不会被解释为零等待；已上报
+请求全部为零且无缺失是完整真实观测。逐请求口径按请求过滤、不受共享流量影响，
+与上文的Prometheus全请求口径互补。不能同时启用`--disable-log-stats`；高并发下该
+参数可能增加服务端CPU开销。多轮会话每轮复用同一计算，轮次事实保存在各轮请求记录中。
+
 `--host-exporter-url`接入被测Linux服务器的node_exporter，独立采集CPU、内存、
 文件系统、块设备I/O和网络接口；可与GPU监控同时启用，也可单独启用，不依赖GPU识别。
 两个Exporter需预先启动，配置地址不会安装或启动服务器组件。`127.0.0.1`指LuBan
@@ -452,19 +492,59 @@ iowait。内存已用量为总量减MemAvailable；文件系统已用量为size�
 输出目录：
 
 ```text
-results/<run_id>/
+runs/<run_id>/               # 可用 --result-dir 修改根目录
   plan.json                  # 有效配置，凭据字段脱敏
   result.json                # 运行汇总
   report.html                # 可离线打开的单文件报告
+  log/
+    luban-meter-<run_id>-<YYYY-MM-DD>.log  # 主程序、任务和Case共用
   tasks/<task_name>/
     result.json
     raw/events.jsonl         # 请求、样本和观测事件
     raw/case_1.json          # Case原始事实
     raw/case_1.result.json
     raw/manifest.json
-    logs/stdout.log
-    logs/stderr.log
     artifacts/
+```
+
+日志接口和格式参考[luban-sculpt](https://gitcode.com/openeuler/luban-sculpt/blob/master/luban_sculpt/log/logging.py)，
+配置与格式统一放在`src/luban_meter/log/`，各模块通过`get_logger()`获取日志对象。
+`run`默认启用INFO级别的终端与文件日志，记录任务/Case、准备、预热、正式采集、指标、
+结果落盘、报告生成和资源清理；超时、中断、失败及捕获到的异常堆栈也会保存。
+格式为`时间 | 模块 | 函数:行号 | 级别 | 上下文 | 消息`；上下文包含PID、任务、
+Case和阶段标识，请求错误另带样本/请求编号。主程序和任务子进程共用同一个实例日志，不另建stdout/stderr文件。
+交互终端中，DEBUG为青色、INFO为绿色、WARNING为橘色、ERROR为红色。
+实例文件和重定向输出保持纯文本；设置`NO_COLOR=1`可关闭终端颜色。
+日志日期采用实例开始时的UTC日期。CLI解析、最终生效的Case参数、启动的命令
+默认以INFO记录；可恢复异常以WARNING记录，执行失败以ERROR记录并附堆栈，
+正常迭代结束等控制流使用DEBUG。默认不逐条记录成功请求、提示词或模型回答。
+密钥字段和已声明的密钥值脱敏，服务端返回的错误消息仍可能含业务数据。
+
+所有CLI子命令支持`--log-level debug|info|warn|error`及`--log-dir`。
+目录优先级为`--log-dir`、环境变量`LUBAN_LOG_DIR`、默认目录。
+`run`默认写到实例目录的`log/`；`plan`、`report`等单独执行时默认写到
+当前目录的`log/`，使用独立调用ID。参数解析失败也保留日志。自定义目录下
+每次执行使用独立文件；UTF-8追加写入，不自动轮转或清理。
+
+关键过程提示（计划摘要、阶段状态、结果和报告保存位置等）通过统一日志
+处理器写入`stderr`与实例文件，受`--log-level`控制。HTML报告的路径及
+完整报告说明也通过日志输出，不再单独写入`stdout`。
+完整计划、最终生效的Case参数和准备信息JSON以INFO仅写入实例文件，
+不在终端展开；终端保留简短阶段提示、进度及完成记录。这些详细记录
+同样受`--log-level`过滤。
+交互终端的阶段日志与动态进度分行显示；异常中的已声明敏感值及其转义形式也会脱敏，
+同时保留异常类型与堆栈。
+计划JSON、Benchmark/Metric列表和文本报告正文保留在`stdout`，不受日志
+级别过滤，可通过管道或重定向使用；指定文本报告`--output`时正文写入
+指定文件。数据准备及示例生成脚本的下载、转换、跳过文件及完成提示
+同样写入日志。
+
+```bash
+tail -f runs/<run_id>/log/luban-meter-*.log
+
+luban-meter run --config tasks.json --log-level debug
+luban-meter run --config tasks.json --log-dir /work/custom-log
+LUBAN_LOG_DIR=/work/custom-log luban-meter run --config tasks.json
 ```
 
 HTML按模块分页展示，支持报告总结、任务与Case筛选、摘要表格排序、Case指标分析、
@@ -492,15 +572,20 @@ luban-meter report --input results/<run_id>/result.json --output report.html
 | E2EL | 响应收集结束−t0 | ms |
 | Stream Event ITL | 相邻有效流式事件的时间间隔 | ms |
 | Request/Token Throughput | 对应成功请求或Token数除以统计窗口 | req/s、token/s |
+| Total Token Throughput | 成功请求的输入与输出Token总数之和除以统计窗口 | token/s |
 
 TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包含多个Token，
 因此Stream Event ITL单独统计。`--goodput tpot:50`沿用已有SLO含义，
 约束的是排除首Token等待的ITL，不是报告中的TPOT；多个SLO条件需同时满足。
 迁移保留这些公式，不将CLI风格与其他工具的指标含义混同。
 
-多轮性能（`multi_turn_performance`）同样从客户端观察，每一轮就是一次普通流式
-请求，请求级与服务级视图直接复用在线公式，不另写一套。分母是本Case已保存的
-轮次请求，不是会话数或计划轮次数。此外保存：
+`streaming_performance`从正式采集的请求事实计算一次共有请求级与服务级指标，
+单轮和多轮使用同一套在线公式。多轮中每一轮就是一次普通流式请求，分母是本Case
+已保存的正式请求，不是会话数或计划轮次数；预热不参与。失败或部分完成的会话中，
+已经结束的请求仍参与请求统计，未发送轮次不计为请求失败。失败请求进入请求分母，
+不贡献Token；缺少usage时保留可用计时与请求计数，对应Token统计留空并说明原因。
+缺少必要响应计时仍会产生可诊断的指标计算错误，不补造时间。
+正式请求带有轮次事实时，统一Metric额外保存以下多轮视图：
 
 | 视图 | 内容 | 口径 |
 |---|---|---|
@@ -595,9 +680,15 @@ WikiText、HumanEval及选择题ppl保留特殊流程，不强行套用通用答
 
 ## 运行中的终端进度
 
-`run` 默认在 stderr 显示整轮 Case 进度与当前 Case 的请求/样本进度。
-交互终端使用两行原位刷新，显示任务、Case、当前阶段和已用时间；窄终端会
-缩短行宽。重定向或非交互终端仅输出阶段和 Case 状态变化，不逐请求刷屏。
+`run` 默认在 stderr 显示当前 Case 的请求/样本进度。
+每个任务打印一次“当前任务”标题；交互终端只原地刷新当前 Case 一行。
+行内显示任务名、Case 序号/总数、进度条、样本与请求计数以及失败、未完成、
+未开始计数。结束后保留完整行及最终状态，下一 Case 从新行继续。
+重定向输出只在阶段变化时打印进度，完成行同样保留。
+准备信息 JSON 不在终端展开；准备确认流程和原始文件保留。
+运行前只显示任务数、Case 数及任务列表，不展开 Case 参数 JSON。
+完整有效参数可用同样配置执行 luban-meter plan --config tasks.json 查看，
+或读取运行目录的 plan.json。
 
 ```bash
 luban-meter run --config tasks.json
@@ -607,13 +698,14 @@ luban-meter run --config tasks.json --no-progress --no-summary
 
 - `--no-progress` 仅关闭运行进度；`--no-summary` 仅关闭结束后的摘要。
   进度开关不进入 Benchmark 参数或结果 JSON。
-- 整轮分母取计划 Case 数，“已结束”包含成功、失败、跳过、中断/丢弃，
-  这些状态分别计数；100% 结束不代表全部成功。
+- Case 序号/总数取当前任务计划，序号不代表成功数量。
+  每个 Case 按任务与 ID 去重打印，成功、失败、跳过、中断/丢弃按实际状态显示。
+  进度条仅表示样本处理进度，填满不代表全部成功；无已知总量不推算百分比。
 - 当前 Case 的样本数使用已保存事件的 `weight`，请求数使用
   `logical_requests`，两者分别显示。正式进度排除预热，不等同于评分正确率。
   未完成和未开始样本单列，不算作已完成样本。
 - 样本总量取 `case_ready.total_samples`，请求总量取配置的请求数量上限。
-  无已知总量时显示“未知”及累计数、已用时间，不推算百分比或 ETA；达到
+  无已知总量时显示“未知”及累计数，不推算百分比或 ETA；达到
   时间限制、数据耗尽或中断时，不强行将当前 Case 的计数补满。
   多轮场景的样本是会话、请求是轮次，样本总量为 `multi_num_sessions`，
   两个计数分别显示，不把一个会话当作一次请求。
@@ -622,8 +714,35 @@ luban-meter run --config tasks.json --no-progress --no-summary
   不截断原始文件。无法解析的记录不补造计数，最终样本数以覆盖率校准。
 - 准备摘要输出前清除进度行；结束或中断后换行。进度读取或输出失败会关闭
   进度显示，不改变评测执行、指标、退出码或结果保存。
+- 每个 Case 结束后保留任务名、Case 序号、进度条、最终计数及状态。
+  后续进度在下方刷新，不清除历史完成记录；无采集证据的计数显示“未知”。
+  重复读取相同结果不重复打印；最终状态发生变化时追加“更正”记录。
 
 ## 服务器终端结果摘要
+
+每个性能评测 Case 的 total_token_throughput 以正式成功请求的实际输入和输出
+Token 总数除以该 Case 的正式测试窗口，单位为 tokens/s。在线性能优先读取
+已保存的 service_view.total_token_throughput。效果评测不计算、保存或展示吞吐量指标及 Case Token 总量；原始响应事实保留。
+性能评测总体吞吐量仅使用 generation_performance 类别 Case 的上述 Token 数之和
+除以其正式测试窗口时长之和，不纳入效果评测的 Token 和时长。
+预热 Token 和预热耗时均不参与吞吐量计算。另列整轮墙钟时长（duration，秒），
+使用单调时钟计算经过时长，包含准备、预热及任务切换耗时，不受系统时间校准影响。
+started_at 和 finished_at 保留 Unix 时间戳，不用于计算 duration。
+Case 筛选和默认展示条数不改变整轮统计范围。
+指标在执行与汇总阶段计算并写入结果 JSON，终端仅展示保存值。
+Case 指标保存在原有性能指标的 values.service_view 中，例如
+metrics.streaming_performance.values.service_view，包含 total_tokens、
+benchmark_duration 和 total_token_throughput 三个带单位的统计节点。
+整轮 result.json 的 metrics.token_throughput 保存性能 Case 汇总，
+这是运行级汇总字段，不是独立注册的 Metric 类；顶层 duration_s 保存整轮耗时。
+原有性能指标保留请求成功/失败数；缺失 Token 用量时吞吐量不可用。
+整轮 metadata 逐项保存纳入、跳过、不可用的任务/Case 身份、统计依据和原因。
+不可用 Case 不会被静默排除后生成局部整轮吞吐量。
+终端与 HTML 总览均展示整轮已保存值、单位和不可用原因，详细区展示统计依据。
+吞吐量计算在原有性能 Metric 内完成，复用公共计算函数，不新增 Metric 类，
+也不在执行阶段自动追加指标。
+Case 原始 .result.json、任务结果及整轮结果均保留 Case 指标。
+旧结果缺少字段时显示 N/A；重新导出终端报告不读取原始文件或补算指标。
 
 `run` 完成后默认打印简洁摘要；`run --no-summary` 关闭摘要。结果保存、HTML
 生成和运行退出码保持原行为，摘要显示故障不改变 Benchmark 的执行结果。
@@ -652,10 +771,15 @@ aggregation、percentile_method、weight_sum、统计口径和已保存的诊断
   Token 吞吐量；其他性能项提示数量并在 `--verbose` 中完整展示。若没有这些
   优先项，则直接展示已有统计，未知指标不会被丢弃。
   新增 F1、pass@k、自定义统计节点无需修改终端指标白名单；原字段名未配置
-  展示别名时直接保留。CEVAL/CMMLU 的按学科分数也按保存结构显示。
+  展示别名时直接保留。默认隐藏明确的学科/子类别分组（如
+  accuracy_by_subject），提示隐藏项数；任意嵌套扩展指标不会因此被隐藏。
+  使用 --format text --verbose 查看全部明细，--task / --case 可精确筛选；
+  原始指标数据、诊断和评分分母保持不变。
 - Mean/Value、P50、P95、Unit、N 读取已保存结果。N 不由总样本数推算。
   浮点值显示最多三位小数，微小非零值使用科学计数法，绝不修改 JSON 精度。
   标量质量指标使用 Metric/Value/Unit/N 四列，ratio 保持原比例，不自动转百分比。
+  数字列按格式化后的实际长度分配宽度，优先保证数值完整；空间不足时使用
+  纵向布局，避免将分位数拆成上下两行。
   不存在的指标不显示；存在但不可用的值显示 N/A，真实 0 保持 0。
   无统计样本时不把占位零当作有效测量；标量的分位数不适用。
 - 请求级 Token 数是请求分布，服务级 `total_*_tokens` 是总数，
@@ -847,6 +971,9 @@ Max Tested Concurrency 和 Best E2E P99。任务、Case 及样本数量缩为一
   运行的合计成功率。每个 Case 使用自身成功请求数除以总请求数，失败请求
   进入分母；计数缺失、不一致或分母为零的 Case 不参与择优。来源旁保留分子、
   分母和并列信息。手动选 Case 后仅显示其自身成功率，无效计数显示 Unavailable。
+- 服务统计可独立于请求延迟视图存在。缺少请求延迟时，相应延迟显示 Unavailable，
+  已保存的吞吐量、请求成功率与趋势仍按各自条件判断；缺失字段不从另一份指标
+  结果补齐，也不因已选结果失败而换用其他结果。
 - 最大测试并发采用已完成且有请求执行证据的 Case 的配置上限，不等同于
   实际平均或峰值并发。手动查看时改为该 Case 的已保存配置并发上限。
 - 能力得分在同一任务、数据集、划分、few-shot、评分模式和样本选择条件内
@@ -871,7 +998,7 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
 不依赖任务名是否为 `knowledge_accuracy`。运行诊断采用同样的类别层级，
 各数据集任务位于“模型能力评测”外层折叠标签中；原有任务、Case、请求锚点保留，
 深链可自动展开所有父级。
-性能任务默认展示 TTFT Mean、TPOT Mean 和窗口输出吞吐量；质量任务根据已保存
+性能任务默认展示 TTFT Mean、TPOT Mean、窗口输出吞吐量和总 Token 吞吐量；质量任务根据已保存
 指标生成列，不强制使用 Accuracy。完成、失败、未完成和未开始样本分别保留，
 不能把完成数当作评分分母。数值列可排序，表头固定，窄屏可横向滚动。
 “完成 / 失败”和“未完成 / 未开始”组合列按前一项排序。
@@ -880,7 +1007,7 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
 区分。Case 指标分析在桌面端横向排列带标签的选择框，窄屏自动换行：
 
 - 生成性能任务：任务 → Case → 性能指标。主菜单按 TTFT、TPOT、ITL、E2EL、
-  请求吞吐量、输出 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
+  请求吞吐量、输出 Token 吞吐量、总 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
   已保存统计量、单位及 count；有分位数时显示分位数图，标量只显示聚合值。
   Median 和 P50 分别保留，不根据数值相等推定统计定义相同。
   多轮 Case 在核心指标下方额外展示“按轮次统计”：逐轮列出 TTFT、E2EL、输入与
@@ -925,8 +1052,8 @@ JSON 标识及未知任务名保持原样。
 
 核心性能菜单严格匹配在线服务计算器保存的 `values.request_view` 下的
 `ttft/tpot/itl/e2el`，及 `values.service_view` 下的
-`request_throughput/output_token_throughput`；指标名不参与匹配，因此
-`streaming_performance` 与复用同一套视图的 `multi_turn_performance` 都能命中，
+`request_throughput/output_token_throughput/total_token_throughput`；指标名不参与匹配，因此
+当前 `streaming_performance` 与历史结果中的 `multi_turn_performance` 都能命中，
 但不会替代为 Engine 或其他来源的同名指标。
 默认 TTFT，缺失时选择第一个可用项；切换 Case 保留仍存在的选择，否则回退。
 其他性能诊断数据继续保留在“全部指标”及原始详情中。
@@ -985,3 +1112,17 @@ Chrome；`NODE_PATH` 需包含 Playwright。总览回归额外检查分组峰值
 
 此真实数据回归针对包含 12 个性能 Case 和 1 个 CMMLU Case 的报告；额外结构和
 异常场景使用明确标注的合成测试数据。只读取保存结果，不调用模型或下载数据。
+
+
+终端摘要额外展示“最佳性能指标”和“最佳能力得分”。择优范围为 CLI
+任务/Case 筛选后的全部结果，不受默认 Case 展示条数限制。性能指标分别取
+最大输出/总 Token 吞吐量、最低 TTFT/TPOT/E2E P99、最高请求成功率和
+最大已测配置并发，标注来源 Case、并发和并列数量；各项最佳值不代表
+同一工作点。请求成功率使用已保存的成功/总请求计数，失败计入分母。
+缺失 P99 不使用 P95 替代。吞吐量和延迟仅从成功、采集完整的结果择优。
+能力得分按任务、数据集与评分条件分组；准确率等取最大值，
+困惑度/损失等取最小值，不跨数据集排名，不展开学科明细。
+能力指标支持顶层字段和`values`包装两种保存方式，评分分母读取各指标的
+`sample_count`或`count`。总Token吞吐优先读取当前性能指标中的已保存字段，
+历史`token_throughput`仅作旧布局回退；当前来源缺值或失败时不从旧来源补值。
+所有择优仅读取保存值，不重新计算吞吐量、分位数或准确率。

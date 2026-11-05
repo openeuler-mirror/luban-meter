@@ -5,12 +5,16 @@ from __future__ import annotations
 import math
 import threading
 import time
+from contextvars import copy_context
 
 import httpx
 
 from luban_meter.benchmarking.generation_performance.common.prometheus import (
     parse_prometheus_text,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
 
 CPU_MODES = {"user", "nice", "system", "idle", "iowait", "irq",
              "softirq", "steal"}
@@ -264,17 +268,24 @@ class HostMonitorDaemon:
             self.previous_tick = tick
             self.previous = snapshot
         except Exception as exc:
+            logger.warning("Host sampling failed", exc_info=True)
             snapshot = {"started_at": snapshot["started_at"],
                         "error": {"type": type(exc).__name__,
                                   "message": str(exc)}}
             self.previous = None
             self.previous_tick = None
+        if "error" not in snapshot and self.samples:
+            if "error" in self.samples[-1]:
+                logger.info("Host sampling recovered")
         snapshot["finished_at"] = time.time()
         self.samples.append(snapshot)
 
     def start(self):
+        logger.info("Host monitoring started")
         self.sample()
-        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread = threading.Thread(
+            target=copy_context().run, args=(self._run,), daemon=True
+        )
         self.thread.start()
 
     def _run(self):
@@ -288,6 +299,8 @@ class HostMonitorDaemon:
             self.thread = None
             self.sample()
         self.client.close()
+        logger.info("Host monitoring stopped: samples=%s failures=%s",
+                    len(self.samples), sum("error" in s for s in self.samples))
 
     def result(self, start, end):
         valid = [s for s in self.samples if "error" not in s]

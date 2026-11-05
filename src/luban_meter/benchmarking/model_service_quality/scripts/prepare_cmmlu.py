@@ -21,6 +21,8 @@ import csv
 import json
 from pathlib import Path
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
 REQUIRED_COLUMNS = ("question", "a", "b", "c", "d", "answer")
 CHOICE_COLUMNS = ("a", "b", "c", "d")
 
@@ -77,6 +79,10 @@ def convert_split(source_dir: Path, out_file: Path) -> int:
     return len(records)
 
 
+logger = get_logger("luban_meter.prepare_cmmlu")
+
+
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -90,6 +96,7 @@ def main() -> None:
     )
     parser.add_argument("--out", type=Path, default=Path("dataset/cmmlu"))
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
     # Output split -> official CMMLU source split. The official
     # evaluation
     # split is named "test"; luban-meter stores it as val.jsonl.
@@ -99,10 +106,8 @@ def main() -> None:
         if not split_dir.is_dir():
             raise SystemExit(f"expected directory not found: {split_dir}")
         count = convert_split(split_dir, args.out / f"{output_split}.jsonl")
-        print(
-            f"wrote {count} records -> {args.out / f'{output_split}.jsonl'}"
-            f" (source split '{source_split}')"
-        )
+        logger.info("Wrote %s records -> %s (source split '%s')",
+                    count, args.out / f"{output_split}.jsonl", source_split)
 
 
 if __name__ == "__main__":

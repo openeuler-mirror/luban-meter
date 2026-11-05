@@ -5,10 +5,14 @@ import math
 import random
 import re
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def read_trace(path, *, skip_invalid=False):
     records, rejected = [], []
-    with path.open(encoding="utf-8", newline="") as stream:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         names = reader.fieldnames
         if not names or len(names) != len(set(names)):
@@ -37,6 +41,7 @@ def read_trace(path, *, skip_invalid=False):
                             raise ValueError("must be positive")
                     converted[target] = parsed
                 except (ValueError, TypeError) as exc:
+                    logger.warning("Invalid trace row", exc_info=True)
                     error = {
                         "file": str(path),
                         "line": reader.line_num,
