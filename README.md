@@ -96,6 +96,7 @@ luban-meter run \
 | --- | --- | --- |
 | `constant` | `--request-rate 10 --max-concurrency 32` | 从时间0开始，每0.1秒计划一次请求 |
 | `poisson` | `--request-rate 10 --max-concurrency 32` | 首次计划在0，后续指数间隔，平均每秒10次 |
+| `rate` | `--request-rate 10 --arrival-process gamma` | 兼容入口，按到达过程安排请求，详见下文 |
 | `concurrent` | `--max-concurrency 8` | 最多8个请求并发，样本完成后补充 |
 | `throughput` | `--max-concurrency 32` | 在并发容量内持续尽快发送，无到达速率等待 |
 | `replay` | `--replay-speed 2 --max-concurrency 32` | 按轨迹时间的1/2安排请求，详见轨迹回放 |
@@ -439,6 +440,37 @@ luban-meter run --scenario online_serving --model served-model \
 服务端Prometheus采样只适用于HTTP任务。硬件exporter地址单独指定；不提供时不启动硬件监控。
 观测故障独立记录，不让推理任务因为指标接口故障而失败。报告保留实际采样时间和缺失信息。
 
+服务端观测聚合保存在Case的`observation.metrics`。其中`latency_decomposition.queue_time_window`（s）
+是等待队列中平均每个请求的等待时间（分母为窗口内全部完成请求，含等待约等于0的），
+为服务端指标（`boundary=server`）：按观测窗口对vLLM的`vllm:request_queue_time_seconds`
+histogram差分，分子为各标签序列累计等待秒数增量之和，分母为窗口内上报完成请求数
+的增量之和。计数器重置通过相邻快照逐对检测：累计值只增不减，任何回退即判定重置，
+该序列整体剔除并记录`counter reset between snapshots`，即使末值重新超过起点也不再用
+首末差分；末快照消失的序列记录`series missing from the last snapshot`。均值与增量
+按原始精度落盘，展示层才格式化，微秒级正等待不会被保存成0。结果保存首末快照时间戳
+（`window.started_at/ended_at`，unix秒）、每条纳入序列的标签与增量
+（`series[].labels/delta_sum/delta_count`）、合计分子分母与序列数，全部为已落盘事实，
+可从原始快照复算。首末快照都没有该指标时字段不出现；窗口内没有完成请求时`mean`
+留空并给出`reason`，不补0；有效观测的零等待显示为真实0。该窗口是Prometheus观测
+采样区间，与正式Case窗口边界略有差异；共享服务的其他流量会计入分子分母，不能承诺
+仅包含本次压测请求。vLLM在请求结束后才上报该histogram，数值不代表当前仍在队列中
+请求已等待的时长。
+
+另一口径来自逐请求指标：vLLM v0.25.0起服务端加`--enable-per-request-metrics`后，
+响应（流式为最后usage chunk）顶层`metrics.queue_time_ms`给出该请求在调度队列中的
+等待毫秒数。LuBan-Meter将其保存为请求事实`server_queue_time_ms`（原始精度），并在
+`streaming_performance.values`中计算客户要求的"只算等待过请求"口径：
+`request_view.queue_time_ms`为等待时间大于0请求的分布（`count`即等待过的请求数，
+保留6位小数以维持微秒级精度），`service_view.queue_time_waited_mean`为这些请求的
+平均等待（`ms`）。读取与聚合两层都拒绝非数值、负值和非有限值（无穷、NaN），非法
+计时视为未上报，不影响TTFT等其余指标的汇总。计时覆盖率保存为
+`service_view.queue_time_reported_requests`/`queue_time_missing_requests`：全部缺失
+（未开启参数、`n>1`等无法归属）给出`reason`；部分上报时保留已上报子集的结果并
+以`condition`标注"partial timing coverage"，缺失请求不会被解释为零等待；已上报
+请求全部为零且无缺失是完整真实观测。逐请求口径按请求过滤、不受共享流量影响，
+与上文的Prometheus全请求口径互补。不能同时启用`--disable-log-stats`；高并发下该
+参数可能增加服务端CPU开销。多轮会话每轮复用同一计算，轮次事实保存在各轮请求记录中。
+
 `--host-exporter-url`接入被测Linux服务器的node_exporter，独立采集CPU、内存、
 文件系统、块设备I/O和网络接口；可与GPU监控同时启用，也可单独启用，不依赖GPU识别。
 两个Exporter需预先启动，配置地址不会安装或启动服务器组件。`127.0.0.1`指LuBan
@@ -537,6 +569,7 @@ luban-meter report --input results/<run_id>/result.json --output report.html
 | E2EL | 响应收集结束−t0 | ms |
 | Stream Event ITL | 相邻有效流式事件的时间间隔 | ms |
 | Request/Token Throughput | 对应成功请求或Token数除以统计窗口 | req/s、token/s |
+| Total Token Throughput | 成功请求的输入与输出Token总数之和除以统计窗口 | token/s |
 
 TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包含多个Token，
 因此Stream Event ITL单独统计。`--goodput tpot:50`沿用已有SLO含义，
@@ -962,7 +995,7 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
 不依赖任务名是否为 `knowledge_accuracy`。运行诊断采用同样的类别层级，
 各数据集任务位于“模型能力评测”外层折叠标签中；原有任务、Case、请求锚点保留，
 深链可自动展开所有父级。
-性能任务默认展示 TTFT Mean、TPOT Mean 和窗口输出吞吐量；质量任务根据已保存
+性能任务默认展示 TTFT Mean、TPOT Mean、窗口输出吞吐量和总 Token 吞吐量；质量任务根据已保存
 指标生成列，不强制使用 Accuracy。完成、失败、未完成和未开始样本分别保留，
 不能把完成数当作评分分母。数值列可排序，表头固定，窄屏可横向滚动。
 “完成 / 失败”和“未完成 / 未开始”组合列按前一项排序。
@@ -971,7 +1004,7 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
 区分。Case 指标分析在桌面端横向排列带标签的选择框，窄屏自动换行：
 
 - 生成性能任务：任务 → Case → 性能指标。主菜单按 TTFT、TPOT、ITL、E2EL、
-  请求吞吐量、输出 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
+  请求吞吐量、输出 Token 吞吐量、总 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
   已保存统计量、单位及 count；有分位数时显示分位数图，标量只显示聚合值。
   Median 和 P50 分别保留，不根据数值相等推定统计定义相同。
   多轮 Case 在核心指标下方额外展示“按轮次统计”：逐轮列出 TTFT、E2EL、输入与
@@ -1016,7 +1049,7 @@ JSON 标识及未知任务名保持原样。
 
 核心性能菜单严格匹配在线服务计算器保存的 `values.request_view` 下的
 `ttft/tpot/itl/e2el`，及 `values.service_view` 下的
-`request_throughput/output_token_throughput`；指标名不参与匹配，因此
+`request_throughput/output_token_throughput/total_token_throughput`；指标名不参与匹配，因此
 当前 `streaming_performance` 与历史结果中的 `multi_turn_performance` 都能命中，
 但不会替代为 Engine 或其他来源的同名指标。
 默认 TTFT，缺失时选择第一个可用项；切换 Case 保留仍存在的选择，否则回退。

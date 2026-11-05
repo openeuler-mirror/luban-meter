@@ -86,16 +86,28 @@ def test_run_summary_uses_same_saved_values_and_reason_as_terminal(tmp_path):
     rows = [[cell.text for cell in row] for row in node.findall(".//tbody/tr")]
     assert rows[-1] == ["total_token_throughput", "999", "token/s"]
     assert rows[0] == ["整轮 duration", "10", "s"]
+    # The saved total throughput also leads as a large hero number.
+    assert 'class="run-hero"' in fragment
+    assert 'run-hero-value">999<' in fragment
     text = render_text(payload)
     assert "性能评测总体 total_token_throughput=999 tokens/s" in text
     assert "<script>unsafe" not in fragment
     exported = write_html(payload, tmp_path / "report.html").read_text()
     assert fragment in exported
     assert "__RUN_SUMMARY__" not in exported
+    # Model identity and the core metric cards precede the run summary.
+    assert exported.index('id="overview-models"') < exported.index(
+        'id="run-throughput-summary"'
+    )
+    assert exported.index('id="cards"') < exported.index(
+        'id="run-throughput-summary"'
+    )
     assert payload == original
     metric.update(status="unavailable", reason="missing usage in case_2")
     metric["values"]["service_view"]["total_token_throughput"]["value"] = None
-    assert "missing usage in case_2" in run_summary_html(payload)
+    unavailable = run_summary_html(payload)
+    assert "missing usage in case_2" in unavailable
+    assert 'run-hero-value">N/A<' in unavailable
     assert "missing usage in case_2" in render_text(payload)
     del payload["metrics"]
     assert "N/A" in run_summary_html(payload)

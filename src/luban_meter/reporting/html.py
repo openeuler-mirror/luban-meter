@@ -196,9 +196,23 @@ def run_summary_html(payload):
         ("性能评测输入＋输出 Token 总数", view.get("total_tokens") or {}),
         ("total_token_throughput", view.get("total_token_throughput") or {}),
     ]
-    if not any(t.get("category") == "generation_performance"
-               for t in payload.get("tasks", [])):
+    has_performance = any(t.get("category") == "generation_performance"
+                          for t in payload.get("tasks", []))
+    if not has_performance:
         nodes = nodes[:1]
+    # Lead with the saved run-level total throughput as a large number;
+    # the table below keeps the full ledger of the same saved values.
+    hero = ""
+    if has_performance:
+        throughput = view.get("total_token_throughput") or {}
+        hero = (
+            '<div class="run-hero" aria-label="整轮总 Token 吞吐量">'
+            '<span class="run-hero-label">'
+            "总 Token 吞吐量（输入＋输出，整轮平均）</span>"
+            '<span class="run-hero-value">' + text(throughput.get("value"))
+            + '</span><span class="run-hero-unit">'
+            + text(throughput.get("unit") or "token/s") + "</span></div>"
+        )
     rows = "".join(
         "<tr><td>" + escape(label) + "</td><td>" + text(node.get("value"))
         + "</td><td>" + text(node.get("unit")) + "</td></tr>"
@@ -214,8 +228,8 @@ def run_summary_html(payload):
                                  ensure_ascii=False, indent=2))
     return (
         '<div id="run-throughput-summary" class="overview-result-column">'
-        "<h3>运行信息与性能评测汇总</h3>"
-        '<div class="table-wrap"><table><thead><tr><th>指标</th>'
+        "<h3>运行信息与性能评测汇总</h3>" + hero
+        + '<div class="table-wrap"><table><thead><tr><th>指标</th>'
         "<th>保存值</th><th>单位</th></tr></thead><tbody>"
         + rows + "</tbody></table></div>" + diagnostic
         + "<details><summary>统计范围与计算口径</summary><pre>"

@@ -7,6 +7,10 @@ const metricNames = {
   input_tokens:'实际输入 Token', output_tokens:'实际输出 Token',
   decode_token_throughput:'解码 Token 吞吐量', dispatch_delay:'调度延迟',
   scheduled_latency:'从计划时间起的耗时', stream_event_itl:'流式事件间隔',
+  queue_time_ms:'服务端排队等待时间（等待过的请求）',
+  queue_time_waited_mean:'服务端平均排队等待（仅等待过的请求）',
+  queue_time_reported_requests:'排队计时上报请求数',
+  queue_time_missing_requests:'排队计时缺失请求数',
   accuracy:'准确率', exact_match:'精确匹配（Exact Match）',
   f1:'F1', token_f1:'Token F1', rouge1:'ROUGE-1', rouge2:'ROUGE-2',
   rougeL:'ROUGE-L', perplexity:'困惑度（PPL）', mean_loss:'平均损失',
@@ -194,17 +198,22 @@ function isDimension(metric) {
 }
 function summaryMetrics(task) {
   const all = new Map();
+  const providers = new Map(task.cases.map(c => [c, calculatorProviderName(c)]));
   task.cases.forEach(c => metricsFor(c).forEach(m => {
+    // Run-level throughput metrics saved under other providers must not
+    // leak into per-Case summary columns.
+    const provider = providers.get(c);
+    if (provider !== null && m.parts[0] !== provider) return;
     all.set(JSON.stringify([m.path,m.unit]),m);
   }));
   const available = [...all.values()];
   if (task.category !== 'generation_performance')
     return available.filter(m=>!isDimension(m));
   const core = available.filter(m =>
-    /\/request_view\/(ttft|tpot)$|\/service_view\/output_token_throughput$/.test(m.path));
+    /\/request_view\/(ttft|tpot)$|\/service_view\/(output_token_throughput|total_token_throughput)$/.test(m.path));
   return core.length ? core.sort((a,b)=>
-    ['ttft','tpot','output_token_throughput'].indexOf(a.key)-
-    ['ttft','tpot','output_token_throughput'].indexOf(b.key)) : available.slice(0,4);
+    ['ttft','tpot','output_token_throughput','total_token_throughput'].indexOf(a.key)-
+    ['ttft','tpot','output_token_throughput','total_token_throughput'].indexOf(b.key)) : available.slice(0,4);
 }
 const taskCategoryNames = {generation_performance:'推理性能评测',
   model_service_quality:'模型能力评测'};
@@ -368,26 +377,38 @@ function renderPerformance(parent,metric) {
 // Exact persisted view/metric pairs of the online serving calculator.
 // Session metrics reuse those views unchanged, so the provider name is
 // deliberately not part of the match; nothing else may be substituted.
-const corePerformanceViews = [
+const calculatorViews = [
   ['request_view','ttft'], ['request_view','tpot'],
   ['request_view','itl'], ['request_view','e2el'],
   ['service_view','request_throughput'],
   ['service_view','output_token_throughput']
 ];
+// Menu order; total_token_throughput is also saved by the independent
+// run-level token_throughput metric, so its rows are only core when they
+// come from the identified serving calculator provider.
+const corePerformanceViews = [
+  ...calculatorViews, ['service_view','total_token_throughput']
+];
+function calculatorProviderName(c) {
+  for (const [name, metric] of Object.entries(c?.metrics||{})) {
+    const values=metric?.values;
+    if (calculatorViews.some(([view,key])=>
+        Object.hasOwn(values?.[view]||{},key))) return name;
+  }
+  return null;
+}
 function corePerformanceMetrics(c) {
   const available=metricsFor(c);
+  const provider=calculatorProviderName(c);
   return corePerformanceViews.flatMap(([view,key])=>
-    available.filter(m=>m.key===key && m.parts.at(-2)===view));
+    available.filter(m=>m.key===key && m.parts.at(-2)===view &&
+      (provider===null || m.parts[0]===provider)));
 }
 // Saved request/service fields identify the online calculator independently;
 // missing distributions do not hide available service statistics.
 function servingMetric(c) {
-  for (const metric of Object.values(c?.metrics||{})) {
-    const values=metric?.values;
-    if (corePerformanceViews.some(([view,key])=>
-        Object.hasOwn(values?.[view]||{},key))) return metric;
-  }
-  return undefined;
+  const name=calculatorProviderName(c);
+  return name===null?undefined:c?.metrics?.[name];
 }
 // Per-turn facts live in turn_view; a metric carrying it is a session metric.
 function sessionValues(c) {

@@ -125,8 +125,8 @@ class ServingMetricsTest(unittest.TestCase):
         request_view = case["request_view"]
         service_view = case["service_view"]
 
-        self.assertEqual(len(request_view), 11)
-        self.assertEqual(len(service_view), 15)
+        self.assertEqual(len(request_view), 12)
+        self.assertEqual(len(service_view), 18)
         self.assertEqual(request_view["ttft"]["count"], 2)
         self.assertEqual(request_view["itl"]["count"], 2)
         self.assertEqual(request_view["itl"]["mean"], 75.0)

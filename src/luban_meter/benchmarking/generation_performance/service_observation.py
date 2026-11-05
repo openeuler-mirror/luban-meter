@@ -9,6 +9,7 @@ from luban_meter.benchmarking.generation_performance.common.prometheus import (
     counter_value,
     gauge_value,
     histogram_quantiles,
+    histogram_series_totals,
     select_metric,
 )
 from luban_meter.benchmarking.generation_performance.common.statistics import (
@@ -97,6 +98,131 @@ def _aggregate_histogram_quantiles(
     if total_sum is not None:
         result["sum"] = round(float(total_sum), 3)
     return result
+
+
+def _aggregate_window_delta_mean(
+    snapshots: Sequence[Mapping[str, Any]],
+    metric_name: str,
+    unit: str,
+) -> dict[str, Any] | None:
+    """Average per-request value of a histogram over the observation window.
+
+    Diffs the cumulative ``_sum``/``_count`` of each label series between
+    the first and the last snapshot that exposes the metric, then sums
+    numerator and denominator across series:
+    ``mean = total_delta_sum / total_delta_count``.
+
+    Series rules:
+      - non-zero baselines in the first snapshot are subtracted;
+      - a series that only appears later starts from a zero baseline;
+      - a counter reset is detected between adjacent snapshots that
+        expose the metric (cumulative totals may only grow); the whole
+        series is dropped with a diagnostic, even when the final totals
+        exceed the window start again;
+      - series missing from the last snapshot are dropped with a
+        diagnostic.
+
+    Values are persisted at their original precision; the presentation
+    layers format them. The result carries the first/last snapshot
+    timestamps, the label sets of the included series and the per-series
+    deltas so the mean is recomputable from the persisted facts. The
+    denominator counts every request reported in the window, including
+    ones that waited about zero seconds. Returns None when the metric is
+    absent from all snapshots; returns a reason-marked result without
+    substituting zero when the count delta is not positive.
+    """
+    first_totals: (
+        dict[tuple[tuple[str, str], ...], tuple[float, float]] | None
+    ) = None
+    last_totals: (
+        dict[tuple[tuple[str, str], ...], tuple[float, float]] | None
+    ) = None
+    first_timestamp: Any = None
+    last_timestamp: Any = None
+    last_seen: dict[
+        tuple[tuple[str, str], ...], tuple[float, float]
+    ] = {}
+    reset_keys: set[tuple[tuple[str, str], ...]] = set()
+    for snap in snapshots:
+        totals = histogram_series_totals(
+            snap.get("metrics", {}), metric_name
+        )
+        if not totals:
+            continue
+        for key, values in totals.items():
+            seen = last_seen.get(key)
+            if seen is not None and (
+                values[0] < seen[0] or values[1] < seen[1]
+            ):
+                reset_keys.add(key)
+            last_seen[key] = values
+        if first_totals is None:
+            first_totals = totals
+            first_timestamp = snap.get("finished_at")
+        last_totals = totals
+        last_timestamp = snap.get("finished_at")
+    if first_totals is None or last_totals is None:
+        return None
+
+    delta_sum = 0.0
+    delta_count = 0.0
+    series_deltas: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for key in sorted(set(first_totals) | set(last_totals)):
+        labels = dict(key)
+        if key in reset_keys:
+            dropped.append({
+                "labels": labels,
+                "reason": "counter reset between snapshots",
+            })
+            continue
+        if key not in last_totals:
+            dropped.append({
+                "labels": labels,
+                "reason": "series missing from the last snapshot",
+            })
+            continue
+        last_sum, last_count = last_totals[key]
+        first_sum, first_count = first_totals.get(key, (0.0, 0.0))
+        delta_sum += last_sum - first_sum
+        delta_count += last_count - first_count
+        series_deltas.append({
+            "labels": labels,
+            "delta_sum": last_sum - first_sum,
+            "delta_count": {"value": int(last_count - first_count),
+                            "unit": "request"},
+        })
+    series_count = len(series_deltas)
+    result: dict[str, Any] = {
+        "unit": unit,
+        "boundary": "server",
+        "window": {
+            "started_at": {
+                "value": first_timestamp, "unit": "unix_s",
+            },
+            "ended_at": {
+                "value": last_timestamp, "unit": "unix_s",
+            },
+        },
+        "series": series_deltas,
+        "series_count": {"value": series_count, "unit": "series"},
+    }
+    if dropped:
+        result["dropped_series"] = dropped
+    if delta_count <= 0:
+        return {
+            **result,
+            "mean": None,
+            "delta_sum": None,
+            "delta_count": None,
+            "reason": "no completed observations in the window",
+        }
+    return {
+        **result,
+        "mean": delta_sum / delta_count,
+        "delta_sum": delta_sum,
+        "delta_count": {"value": int(delta_count), "unit": "request"},
+    }
 
 
 def _aggregate_prefix_cache_hit_rate(
@@ -343,6 +469,12 @@ def process(raw_result: Mapping[str, Any]) -> dict[str, Any]:
         result = _aggregate_histogram_quantiles(snapshots, name, unit)
         if result is not None:
             latency[key] = result
+
+    queue_time_window = _aggregate_window_delta_mean(
+        snapshots, "vllm:request_queue_time_seconds", "s"
+    )
+    if queue_time_window is not None:
+        latency["queue_time_window"] = queue_time_window
 
     # --- Request Profile ---
     request_profile: dict[str, Any] = {}

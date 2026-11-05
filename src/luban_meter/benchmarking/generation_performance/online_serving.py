@@ -127,6 +127,9 @@ def _build_request_record(
         "reasoning_tokens": observation.reasoning_tokens,
         "finish_reason": observation.finish_reason,
         "usage": observation.usage,
+        # Raw per-request server queue wait; kept unrounded so the
+        # aggregated mean stays recomputable from persisted facts.
+        "server_queue_time_ms": observation.server_queue_time_ms,
     }
 
 
@@ -430,6 +433,7 @@ def process_case(
 
     total_input_tokens = 0
     total_output_tokens = 0
+    server_queue_times: list[float] = []
     for record in successful:
         ttft_ms = numeric(record, "ttft_ms")
         e2el_ms = numeric(record, "e2el_ms")
@@ -439,6 +443,15 @@ def process_case(
             raise ValueError(
                 "request e2el_ms must not be smaller than ttft_ms"
             )
+
+        reported_queue_ms = record.get("server_queue_time_ms")
+        if (
+            isinstance(reported_queue_ms, (int, float))
+            and not isinstance(reported_queue_ms, bool)
+            and math.isfinite(reported_queue_ms)
+            and reported_queue_ms >= 0
+        ):
+            server_queue_times.append(float(reported_queue_ms))
 
         raw_itls = record.get("itl_samples_ms")
         if not isinstance(raw_itls, Sequence) or isinstance(
@@ -493,6 +506,13 @@ def process_case(
     successful_count = len(successful)
     failed_count = len(failed)
     total_requests = len(records)
+    # Only requests that actually waited count towards the customer's
+    # "average wait among queued requests"; reported zero waits are real
+    # observations, not missing data.
+    waited_queue_times = [
+        value for value in server_queue_times if value > 0
+    ]
+    queue_time_reported = len(server_queue_times)
     if total_requests > 1:
         start_window_seconds = (max(start_offsets) - min(start_offsets)) / 1000
         achieved_start_rate = (
@@ -521,6 +541,11 @@ def process_case(
             decode_throughput_samples, "token/s"
         ),
         "dispatch_delay": summarize(dispatch_delays, "ms"),
+        # Microsecond-scale waits need more stored decimals than the
+        # default three; display layers still format for reading.
+        "queue_time_ms": summarize(
+            waited_queue_times, "ms", precision=6
+        ),
     }
     service_view = {
         "benchmark_duration": scalar(duration_seconds, "s", precision=6),
@@ -550,7 +575,53 @@ def process_case(
             ),
             "token/s",
         ),
+        "queue_time_waited_mean": (
+            scalar(
+                sum(waited_queue_times) / len(waited_queue_times),
+                "ms",
+                precision=6,
+            )
+            if waited_queue_times
+            else scalar(None, "ms")
+        ),
+        "queue_time_reported_requests": scalar(
+            queue_time_reported, "request"
+        ),
+        "queue_time_missing_requests": scalar(
+            successful_count - queue_time_reported, "request"
+        ),
     }
+    # Missing per-request metrics are not zero waits. Distinguish:
+    # nothing reported at all, a complete all-zero observation, zero
+    # waits among a partial sample, and subset results whose coverage
+    # must stay visible instead of implying the whole Case.
+    queue_time_reason = None
+    if successful_count and not queue_time_reported:
+        queue_time_reason = (
+            "service did not report per-request queue time metrics"
+        )
+    elif queue_time_reported and not waited_queue_times:
+        queue_time_missing = successful_count - queue_time_reported
+        if queue_time_missing:
+            queue_time_reason = (
+                "no request with reported timing waited; "
+                f"{queue_time_missing} of {successful_count} requests "
+                "did not report timing"
+            )
+        else:
+            queue_time_reason = "no request waited in the server queue"
+    if queue_time_reason is not None:
+        request_view["queue_time_ms"]["reason"] = queue_time_reason
+        service_view["queue_time_waited_mean"].update(
+            value=None, reason=queue_time_reason
+        )
+    elif 0 < queue_time_reported < successful_count:
+        scope = (
+            f"partial timing coverage: {queue_time_reported} of "
+            f"{successful_count} successful requests reported queue time"
+        )
+        request_view["queue_time_ms"]["condition"] = scope
+        service_view["queue_time_waited_mean"]["condition"] = scope
     # Missing usage preserves success but cannot imply zero tokens.
     missing_input = len(input_token_samples) < successful_count
     missing_output = len(output_token_samples) < successful_count
