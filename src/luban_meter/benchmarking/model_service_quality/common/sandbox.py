@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from luban_meter.log import get_logger, log_command
 from luban_meter.utils.docker_sandbox import (
     REGISTRY_ENV,
     DockerSandbox,
@@ -20,6 +21,9 @@ from luban_meter.utils.docker_sandbox import (
 )
 
 from .sandbox_runner import RESULT_PREFIX
+
+logger = get_logger(__name__)
+
 
 SandboxUnavailable = DockerSandboxUnavailableError
 
@@ -119,6 +123,7 @@ class DockerSandboxExecutor:
             },
             ensure_ascii=False,
         ).encode("utf-8")
+        logger.info("Sandbox command: %s", log_command(command))
         started = time.perf_counter()
         try:
             process = subprocess.Popen(
@@ -129,6 +134,7 @@ class DockerSandboxExecutor:
                 env=self.sandbox.environment(),
             )
         except OSError as exc:
+            logger.exception("Sandbox command launch failed")
             return ExecutionResult(
                 status="sandbox_error",
                 passed=False,
@@ -172,7 +178,7 @@ class DockerSandboxExecutor:
                 process.stdin.write(payload)
                 process.stdin.close()
             except BrokenPipeError:
-                pass
+                logger.warning("Sandbox input pipe closed", exc_info=True)
             process.wait(
                 timeout=(
                     self.config_path.timeout_seconds
@@ -180,6 +186,7 @@ class DockerSandboxExecutor:
                 )
             )
         except subprocess.TimeoutExpired:
+            logger.exception("Sandbox timed out")
             process.kill()
             process.wait()
             self.sandbox.remove_container(name)
@@ -197,6 +204,7 @@ class DockerSandboxExecutor:
                 error_message="sandbox exceeded the host-side timeout",
             )
         except BaseException:
+            logger.exception("Sandbox execution aborted")
             process.kill()
             process.wait()
             raise
@@ -210,6 +218,9 @@ class DockerSandboxExecutor:
                 continue
             try:
                 result = json.loads(line[len(RESULT_PREFIX) :])
+                if result.get("traceback"):
+                    logger.error("Sandbox %s: %s\n%s", result["status"],
+                                 result.get("error_type"), result["traceback"])
                 return ExecutionResult(
                     status=str(result["status"]),
                     passed=bool(result["passed"]),
@@ -222,6 +233,7 @@ class DockerSandboxExecutor:
                     error_message=result.get("error_message"),
                 )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                logger.exception("Invalid sandbox result")
                 break
         return ExecutionResult(
             status="sandbox_error",

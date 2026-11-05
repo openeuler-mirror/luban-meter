@@ -4,7 +4,10 @@ import copy
 import json
 from pathlib import Path
 
+from luban_meter.log import get_logger, logged_script
 from luban_meter.reporting.terminal_details import render_details
+
+logger = get_logger("luban_meter.examples.generate_terminal_details")
 
 
 def write_run(root, name, raw):
@@ -35,6 +38,7 @@ def write_run(root, name, raw):
     return payload, directory
 
 
+@logged_script
 def main():
     root = Path(__file__).resolve().parents[1] / "results/terminal-report-v2"
     raw = {"requests": [], "samples": []}
@@ -85,8 +89,8 @@ def main():
     text = render_details(missing, raw_root=directory, details="errors",
                           width=80, result_path=path)
     (root / "missing-80.txt").write_text(text + "\n", encoding="utf-8")
-    print(f"Synthetic examples (no model requests): {root}")
-    print("ITL/TPOT not stored in response: N/A, no recalculation.")
+    logger.info("Synthetic examples (no model requests): %s", root)
+    logger.info("ITL/TPOT not stored in response: N/A, no recalculation.")
 
 
 if __name__ == "__main__":

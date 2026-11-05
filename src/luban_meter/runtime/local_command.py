@@ -10,6 +10,9 @@ from time import monotonic
 
 from luban_meter.core.errors import ExecutionError
 from luban_meter.core.run_contracts import CommandResult, CommandSpec
+from luban_meter.log import get_logger, log_command
+
+logger = get_logger(__name__)
 
 
 class LocalCommandRunner:
@@ -31,6 +34,8 @@ class LocalCommandRunner:
 
     def _run(self, command: CommandSpec) -> CommandResult:
         started = monotonic()
+        logger.info("Starting command: argv=%s cwd=%s timeout=%s",
+                    log_command(command.argv), command.cwd, command.timeout)
 
         try:
             process = subprocess.Popen(
@@ -54,7 +59,7 @@ class LocalCommandRunner:
                     try:
                         os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError:
-                        pass
+                        logger.debug("Command process already exited")
                 elif process.poll() is None:
                     process.kill()
                 process.wait()
@@ -63,13 +68,15 @@ class LocalCommandRunner:
                 if process.stderr is not None:
                     process.stderr.close()
         except subprocess.TimeoutExpired as exc:
+            logger.exception("Command timed out")
             raise ExecutionError(
                 f"command timed out after {command.timeout} seconds: "
-                f"{list(command.argv)!r}"
+                f"{log_command(command.argv)!r}"
             ) from exc
         except OSError as exc:
+            logger.exception("Command launch failed")
             raise ExecutionError(
-                f"could not start command {list(command.argv)!r}: {exc}"
+                f"could not start command {log_command(command.argv)!r}: {exc}"
             ) from exc
 
         return CommandResult(

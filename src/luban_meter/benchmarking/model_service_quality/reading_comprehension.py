@@ -42,7 +42,10 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
 from luban_meter.data.engine import (
     resolve_data_path,
 )
+from luban_meter.log import get_logger
 from luban_meter.runtime.thinking import response_facts
+
+logger = get_logger(__name__)
 
 
 def validate_records(records: list[dict]) -> list[dict]:
@@ -262,9 +265,11 @@ def collect_sample(
             record["parser_context"] = {**sample, **rendered}
             record["status"] = "success"
         except ValueError as exc:
+            logger.warning("Answer parsing failed", exc_info=True)
             record["status"] = "parse_failed"
             record["error"] = str(exc)
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record["error"] = str(exc)
     return record
 

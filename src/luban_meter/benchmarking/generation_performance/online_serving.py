@@ -21,7 +21,10 @@ from luban_meter.benchmarking.generation_performance.common.statistics import (
     summarize_weighted,
 )
 from luban_meter.core.token_totals import token_throughput_value
+from luban_meter.log import get_logger
 from luban_meter.runtime.http_client import iter_response_lines
+
+logger = get_logger(__name__)
 
 
 class ActiveRequestTracker:
@@ -158,7 +161,8 @@ def execute_request(
     response = None
     observation = None
     error = None
-    cleanup_error = None
+    failure_info = None
+    drain_error = close_error = None
     started = time.perf_counter()
     tracker.enter()
     try:
@@ -172,24 +176,27 @@ def execute_request(
             for _ in lines:
                 pass
         except Exception as exc:  # noqa: BLE001
-            cleanup_error = exc
+            drain_error = exc
     except httpx.HTTPStatusError as exc:
         ended = time.perf_counter()
+        failure_info = (type(exc), exc, exc.__traceback__)
         response = exc.response
         try:
             detail = response.read().decode("utf-8", errors="replace")
         except httpx.HTTPError as read_error:
+            logger.warning("HTTP error body unavailable", exc_info=True)
             detail = str(read_error)
         error = RuntimeError(f"HTTP {response.status_code}: {detail}")
     except Exception as exc:  # noqa: BLE001
         ended = time.perf_counter()
         error = exc
+        failure_info = (type(exc), exc, exc.__traceback__)
     finally:
         try:
             if response is not None:
                 response.close()
         except Exception as exc:  # noqa: BLE001
-            cleanup_error = cleanup_error or exc
+            close_error = exc
         finally:
             tracker.exit()
     record = _build_request_record(
@@ -203,11 +210,21 @@ def execute_request(
     )
     if response is not None:
         record["http_version"] = response.http_version
-    if cleanup_error is not None:
-        record["connection_cleanup_error"] = {
+    if failure_info is not None:
+        logger.error("Streaming request failed: index=%s", request_index,
+                     exc_info=failure_info)
+    for cleanup_error in (drain_error, close_error):
+        if cleanup_error is None:
+            continue
+        logger.warning(
+            "HTTP connection cleanup failed: index=%s", request_index,
+            exc_info=(type(cleanup_error), cleanup_error,
+                      cleanup_error.__traceback__),
+        )
+        record.setdefault("connection_cleanup_error", {
             "type": type(cleanup_error).__name__,
             "message": str(cleanup_error),
-        }
+        })
     return record
 
 

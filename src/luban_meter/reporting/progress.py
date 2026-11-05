@@ -11,6 +11,10 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 class EventTail:
     """Bound each read and retain incomplete UTF-8 JSONL records."""
@@ -39,6 +43,7 @@ class EventTail:
                 chunk = stream.read(self.read_limit)
                 self.offset = stream.tell()
         except OSError:
+            logger.debug("Progress events not available")
             return False, []
         lines = (self.pending + chunk).split(b"\n")
         self.pending = lines.pop()
@@ -52,6 +57,9 @@ class EventTail:
             try:
                 event = json.loads(line)
             except (ValueError, UnicodeError):
+                logger.warning(
+                    "Ignoring invalid progress event", exc_info=True,
+                )
                 continue
             if isinstance(event, dict):
                 events.append(event)
@@ -131,10 +139,11 @@ class TerminalProgress:
         except Exception:
             # Optional display must never affect execution or its exit code.
             self.disabled = True
+            logger.warning("Progress display disabled", exc_info=True)
             try:
                 self.clear()
             except (OSError, UnicodeError):
-                pass
+                logger.warning("Progress cleanup failed", exc_info=True)
 
     def _update(self, kind, **facts):
         if kind == "log":
@@ -204,7 +213,7 @@ class TerminalProgress:
                 self._record(self.task_index, result)
                 self.result_stamp = stamp
         except (OSError, ValueError):
-            pass
+            logger.debug("Case result not yet readable")
         if self.current and self.current not in {
             key[1] for key in self.results if key[0] == self.task_index
         }:

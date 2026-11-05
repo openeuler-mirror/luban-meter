@@ -10,6 +10,10 @@ from luban_meter.benchmarking.generation_performance.common.statistics import (
     scalar,
     summarize,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 ENGINE_SLO_DIMENSIONS = (
     "internal_ttft_ms",
@@ -150,6 +154,7 @@ def build_engine(
     try:
         from vllm import LLM
     except ImportError as exc:
+        logger.exception("vLLM dependency unavailable")
         raise RuntimeError("vLLM is required for offline_vllm_engine") from exc
 
     kwargs: dict[str, Any] = {

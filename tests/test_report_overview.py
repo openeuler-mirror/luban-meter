@@ -70,26 +70,36 @@ def test_persisted_performance_metric_selection(tmp_path):
     tasks = []
     for name in ("streaming_performance", "multi_turn_performance",
                  "z_extension_performance", "a_extension_performance"):
-        metric = json.loads(json.dumps(provider))
-        if name == "multi_turn_performance":
-            metric["values"]["turn_view"] = {}
-        tasks.append({
-            "name": name, "category": "generation_performance",
-            "cases": [{
-                "id": "case_1", "status": "success",
-                "collection_complete": True, "metrics_status": "complete",
-                "parameters": {"model": "test", "profile": "concurrent",
-                               "max_concurrency": 4},
-                "metrics": {name: metric, "token_throughput": {
-                    "status": "success", "values": {"service_view": {
-                        "total_token_throughput": scalar(999, "token/s"),
+        for request_view in ("complete", "missing", "empty", "null"):
+            metric = json.loads(json.dumps(provider))
+            if name == "multi_turn_performance":
+                metric["values"]["turn_view"] = {}
+            if request_view == "missing":
+                del metric["values"]["request_view"]
+            elif request_view == "empty":
+                metric["values"]["request_view"] = {}
+            elif request_view == "null":
+                metric["values"]["request_view"] = None
+            tasks.append({
+                "name": name, "category": "generation_performance",
+                "status": "success",
+                "cases": [{
+                    "id": "case_1", "status": "success",
+                    "collection_complete": True, "metrics_status": "complete",
+                    "parameters": {"model": "test", "profile": "concurrent",
+                                   "max_concurrency": 4},
+                    "metrics": {name: metric, "token_throughput": {
+                        "status": "success", "values": {"service_view": {
+                            "total_token_throughput": scalar(999, "token/s"),
+                        }},
                     }},
-                }},
-            }],
-        })
+                }],
+            })
     target = tmp_path / "persisted.json"
-    write_json_atomic(target, {"tasks": tasks})
+    payload = {"kind": "run", "status": "success", "tasks": tasks}
+    write_json_atomic(target, payload)
+    report = write_html(payload, tmp_path / "report.html")
     subprocess.run([
         node, str(Path(__file__).with_name("report_overview.unit.cjs")),
-        str(target),
+        str(target), str(report),
     ], check=True, capture_output=True)

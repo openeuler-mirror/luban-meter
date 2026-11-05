@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 from typing import TextIO
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
 REQUIRED_FIELDS = (
     "task_id",
     "prompt",
@@ -80,6 +82,10 @@ def write_jsonl(records: list[dict[str, str]], path: Path) -> None:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+logger = get_logger("luban_meter.prepare_humaneval")
+
+
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -92,9 +98,10 @@ def main() -> None:
         default=Path("dataset/humaneval/HumanEval.jsonl"),
     )
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
     records = load_humaneval(args.source)
     write_jsonl(records, args.out)
-    print(f"wrote {len(records)} records -> {args.out}")
+    logger.info("Wrote %s records -> %s", len(records), args.out)
 
 
 if __name__ == "__main__":

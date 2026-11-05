@@ -5,6 +5,10 @@ import math
 import random
 import re
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def read_trace(path, *, skip_invalid=False):
     records, rejected = [], []
@@ -37,6 +41,7 @@ def read_trace(path, *, skip_invalid=False):
                             raise ValueError("must be positive")
                     converted[target] = parsed
                 except (ValueError, TypeError) as exc:
+                    logger.warning("Invalid trace row", exc_info=True)
                     error = {
                         "file": str(path),
                         "line": reader.line_num,

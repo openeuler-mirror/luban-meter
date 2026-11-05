@@ -5,6 +5,10 @@ import random
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 def select_columns(
     records: Sequence[Mapping[str, Any]], columns: Sequence[str]
@@ -53,6 +57,7 @@ def extract_prompts(
         try:
             prompts.append(extract_prompt(record, field))
         except ValueError:
+            logger.warning("Skipping invalid dataset row", exc_info=True)
             continue
     if not prompts:
         raise ValueError(f"no valid prompts found (field: {field!r})")

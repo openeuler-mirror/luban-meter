@@ -32,7 +32,11 @@ from luban_meter.benchmarking.model_service_quality.common.records import (
     object_list,
     scalar,
 )
+from luban_meter.log import get_logger
 from luban_meter.runtime.thinking import response_facts
+
+logger = get_logger(__name__)
+
 
 MEASUREMENT = "lcsts_rouge_online_service"
 PROTOCOL = "openai_compatible_chat_and_completions"
@@ -226,10 +230,12 @@ def collect_sample(
                 lambda text: text,
             )
         except ValueError as exc:
+            logger.warning("Answer parsing failed", exc_info=True)
             record.update(prediction="", status="parse_failed", error=str(exc))
             return record
         record["status"] = "success"
     except ServiceError as exc:
+        logger.exception("Model service failed")
         record.update(
             {
                 "prediction": "",

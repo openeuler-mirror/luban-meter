@@ -41,6 +41,11 @@ import argparse
 import json
 from pathlib import Path
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
+logger = get_logger("luban_meter.prepare_lcsts")
+
+
 # The instruction prefix present in all LCSTS records
 LCSTS_INSTRUCTION_PREFIX = (
     "在本任务中，您将获得一段文本，您的任务是生成该文本的摘要。"
@@ -71,6 +76,7 @@ def load_jsonl(path: Path) -> list[dict]:
             try:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
+                logger.exception("Dataset JSON decoding failed")
                 raise ValueError(
                     f"invalid JSON at line {line_num} in {path}: {exc}"
                 ) from exc
@@ -169,13 +175,14 @@ def download_from_huggingface(
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as exc:
+        logger.exception("Download dependency unavailable")
         raise ImportError(
             "huggingface_hub is required to download "
             "LCSTS. Install with: "
             "pip install huggingface_hub"
         ) from exc
     out_dir.mkdir(parents=True, exist_ok=True)
-    print("Downloading LCSTS test.json from Hugging Face...")
+    logger.info("Downloading LCSTS test.json from Hugging Face")
     test_src = hf_hub_download(
         repo_id="suolyer/lcsts",
         filename="test.json",
@@ -186,7 +193,7 @@ def download_from_huggingface(
         Path(test_src).read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    print("Downloading LCSTS train.json from Hugging Face...")
+    logger.info("Downloading LCSTS train.json from Hugging Face")
     train_src = hf_hub_download(
         repo_id="suolyer/lcsts",
         filename="train.json",
@@ -197,7 +204,7 @@ def download_from_huggingface(
         Path(train_src).read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    print(f"Downloaded to {out_dir}")
+    logger.info("Downloaded to %s", out_dir)
     return test_dst, train_dst
 
 
@@ -208,16 +215,17 @@ def process_split(
     id_prefix: str,
 ) -> int:
     """Process a single split (test or train)."""
-    print(f"Processing {source_file.name}...")
+    logger.info("Processing %s", source_file)
     records = load_jsonl(source_file)
     validate_dataset_integrity(records, expected_count, source_file.name)
     validate_all_records(records, source_file.name)
     converted = convert_records(records, id_prefix)
     write_jsonl(converted, out_file)
-    print(f"  Wrote {len(converted)} records -> {out_file}")
+    logger.info("Wrote %s records -> %s", len(converted), out_file)
     return len(converted)
 
 
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -245,6 +253,7 @@ def main() -> None:
         help=("Number of few-shot examples to extract (default: 0)"),
     )
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
     if args.source is None:
         test_file, train_file = download_from_huggingface(args.out / "_raw")
     else:
@@ -269,7 +278,7 @@ def main() -> None:
             raise FileNotFoundError(
                 "train.json required for few-shot but not found"
             )
-        print(f"Extracting {args.few_shot} few-shot examples...")
+        logger.info("Extracting %s few-shot examples", args.few_shot)
         train_records = load_jsonl(train_file)
         validate_all_records(train_records, train_file.name)
         if len(train_records) < args.few_shot:
@@ -286,15 +295,11 @@ def main() -> None:
             few_shot_records,
             args.out / "few_shot.jsonl",
         )
-        print(
-            f"  Wrote {len(few_shot_records)} "
-            f"few-shot records -> "
-            f"{args.out / 'few_shot.jsonl'}"
-        )
-    print("\nLCSTS dataset preparation complete!")
-    print(f"  Test: {test_count} records")
+        logger.info("Wrote %s few-shot records -> %s",
+                    len(few_shot_records), args.out / "few_shot.jsonl")
+    logger.info("LCSTS dataset preparation complete: test=%s", test_count)
     if args.few_shot > 0:
-        print(f"  Few-shot: {args.few_shot} records")
+        logger.info("Few-shot: %s records", args.few_shot)
 
 
 if __name__ == "__main__":

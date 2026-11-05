@@ -5,7 +5,10 @@ import json
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.parameters import public_parameters
 from luban_meter.core.planning import schema_for
+from luban_meter.log import get_logger
 from luban_meter.utils.json_io import write_json_atomic
+
+logger = get_logger(__name__)
 
 
 def discard_case(case, directory, reason):
@@ -23,6 +26,9 @@ def discard_case(case, directory, reason):
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "Ignoring invalid recovery event", exc_info=True,
+                    )
                     continue
                 if event.get("case_id") != case["id"]:
                     target.write(line)
@@ -47,6 +53,7 @@ def recover_cases(task, directory, outcome, status):
             try:
                 started.add(json.loads(line)["case_id"])
             except (ValueError, KeyError):
+                logger.warning("Invalid recovery record", exc_info=True)
                 continue
     collected = []
     for case in task["cases"]:

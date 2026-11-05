@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from luban_meter import cli
+from luban_meter.benchmarking.benchmark_metrics import SampleAccuracy
 from luban_meter.reporting.data import load_result, metric_rows
 from luban_meter.reporting.html import report_data
 from luban_meter.reporting.terminal import (
@@ -15,6 +16,7 @@ from luban_meter.reporting.terminal import (
     distribution_values,
     render_text,
 )
+from luban_meter.utils.json_io import write_json_atomic
 
 
 @pytest.fixture
@@ -115,6 +117,29 @@ def test_quality_metrics_keep_unit_and_scoring_denominator(result):
     assert "request_view" not in text
 
 
+def test_builtin_top_level_accuracy_reaches_saved_best_summary(
+        result, tmp_path):
+    task = result["tasks"][0]
+    task.update(scenario="custom", category="model_service_quality")
+    case = task["cases"][0]
+    case["metrics"] = {"sample_accuracy": SampleAccuracy().compute({
+        "samples": [
+            {"state": "complete", "facts": {"correct": True}},
+            {"state": "complete", "facts": {"correct": False}},
+        ],
+    })}
+    case.update(collection_complete=True, metrics_status="complete")
+    destination = tmp_path / "result.json"
+    write_json_atomic(destination, result)
+    saved = load_result(destination)
+    before = copy.deepcopy(saved)
+    text = render_text(saved, width=120)
+    assert "accuracy: 50 %" in text
+    assert "最佳得分: N/A" not in text
+    assert "[ratio] N=2" in render_text(saved, width=40)
+    assert saved == before
+
+
 def test_multi_case_limit_and_hierarchical_filters(result):
     task = result["tasks"][0]
     case = task["cases"][0]
@@ -183,23 +208,53 @@ def test_engine_metrics_keep_distinct_observation_boundary(result):
     assert "吞吐量范围: 正式 Case" not in text
 
 
-def test_text_cli_stdout_and_file_leave_json_unchanged(result, tmp_path,
-                                                     capsys):
+@pytest.mark.parametrize("level", ["debug", "info", "warn", "error"])
+def test_text_cli_stdout_and_file_leave_json_unchanged(
+    result, tmp_path, capsys, level,
+):
     path = tmp_path / "result.json"
     path.write_text(json.dumps(result))
     original = path.read_bytes()
-    assert cli.main(["report", "--input", str(path), "--format", "text"]) == 0
+    arguments = ["report", "--input", str(path), "--format", "text",
+                 "--log-dir", str(tmp_path / "log"), "--log-level", level]
+    assert cli.main(arguments) == 0
     assert "LuBan-Meter 终端结果摘要" in capsys.readouterr().out
     output = tmp_path / "text" / "report.txt"
-    assert cli.main(["report", "--input", str(path), "--format", "text",
-                     "--output", str(output)]) == 0
+    assert cli.main([*arguments, "--output", str(output)]) == 0
+    assert capsys.readouterr().out == ""
     assert output.is_file()
     assert path.read_bytes() == original
     assert not (tmp_path / "report.html").exists()
     assert load_result(path) == result
-    assert cli.main(["report", "--input", str(path), "--format", "text",
-                     "--output", str(path)]) == 2
+    assert cli.main([*arguments, "--output", str(path)]) == 2
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("include_requests", [False, True])
+@pytest.mark.parametrize("level", ["info", "error"])
+def test_html_report_locations_use_logs(
+    result, tmp_path, capsys, include_requests, level,
+):
+    path = tmp_path / "result.json"
+    path.write_text(json.dumps(result))
+    log_dir = tmp_path / "log"
+    arguments = ["report", "--input", str(path),
+                 "--log-dir", str(log_dir), "--log-level", level]
+    if include_requests:
+        arguments.append("--include-requests")
+    assert cli.main(arguments) == 0
+    report = tmp_path / (
+        "report-full.html" if include_requests else "report.html"
+    )
+    assert report.is_file()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    log_path, = log_dir.glob("*.log")
+    text = log_path.read_text()
+    assert text == captured.err
+    assert ("HTML report saved:" in text) is (level == "info")
+    assert (str(report) in text) is (level == "info")
+    assert ("完整报告含" in text) is (include_requests and level == "info")
 
 
 @pytest.mark.parametrize("extra", [
@@ -212,7 +267,7 @@ def test_cli_invalid_options_are_diagnosable(result, tmp_path, capsys, extra):
     path = tmp_path / "result.json"
     path.write_text(json.dumps(result))
     assert cli.main(["report", "--input", str(path), *extra]) == 2
-    assert "error:" in capsys.readouterr().err
+    assert "CLI command failed" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("status,code", [("success", 0), ("failed", 1),
@@ -282,11 +337,11 @@ def test_documented_example_cli(capsys):
 
 
 @pytest.mark.parametrize("text", ["invalid JSON", "{}", '{"kind": "run"}'])
-def test_invalid_result_is_reported_without_traceback(tmp_path, capsys, text):
+def test_invalid_result_failure_is_logged(tmp_path, capsys, text):
     path = tmp_path / "result.json"
     path.write_text(text)
     assert cli.main(["report", "--input", str(path), "--format", "text"]) == 2
-    assert "error:" in capsys.readouterr().err
+    assert "CLI command failed" in capsys.readouterr().err
 
 
 def test_run_default_prints_summary(result, tmp_path, monkeypatch, capsys):
@@ -305,8 +360,9 @@ def test_run_default_prints_summary(result, tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("no_summary", [False, True])
 @pytest.mark.parametrize("mode", ["ok", "malformed"])
 @pytest.mark.parametrize("no_progress", [False, True])
+@pytest.mark.parametrize("log_level", ["info", "error"])
 def test_real_cli_pipeline_preserves_saved_results(
-    tmp_path, monkeypatch, capsys, no_summary, mode, no_progress,
+    tmp_path, monkeypatch, capsys, no_summary, mode, no_progress, log_level,
 ):
     # Real sockets and worker process, synthetic responses (no GPU/model).
     from tests.test_http_connection_pool import PoolServer
@@ -328,6 +384,7 @@ def test_real_cli_pipeline_preserves_saved_results(
             "--profile", "synchronous",
             "--request-timeout", "3", "--task-timeout", "30",
             "--result-dir", str(tmp_path / "runs"),
+            "--log-level", log_level,
         ]
         if no_summary:
             arguments.append("--no-summary")
@@ -348,9 +405,24 @@ def test_real_cli_pipeline_preserves_saved_results(
     assert ("当前任务：" in captured.err) is not no_progress
     assert "\x1b" not in captured.err
     assert ("终端结果摘要" in output) is not no_summary
+    if no_summary:
+        assert output == ""
     path, = (tmp_path / "runs").glob("*/result.json")
+    log_path, = (path.parent / "log").glob("*.log")
+    log_text = log_path.read_text()
+    for message in ("Run plan: tasks=1 cases=1", "Resolved Case:",
+                    "Case prepared:", "HTML report saved:"):
+        assert (message in log_text) is (log_level == "info")
+    assert "Resolved Case:" not in captured.err
+    assert "Case prepared:" not in captured.err
+    assert "Case plan:" not in captured.err
+    if log_level == "info":
+        assert "task=task_1 case=case_1 phase=prepare" in log_text
+        assert str(path) in log_text and str(log_path) in log_text
     before = path.read_bytes()
     result = load_result(path)
+    assert output == ("" if no_summary else
+                      render_text(result, result_path=path) + "\n")
     assert result["status"] == ("success" if mode == "ok" else "failed")
     case = result["tasks"][0]["cases"][0]
     assert case["coverage"]["complete" if mode == "ok" else "failed"] == 3

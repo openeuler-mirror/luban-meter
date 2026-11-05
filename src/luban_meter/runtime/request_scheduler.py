@@ -7,6 +7,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from luban_meter.log import get_logger, log_context
+
+logger = get_logger(__name__)
+
 
 class AdmissionStopped(Exception):  # noqa: N818 - normal control flow
     """No more requests may start; already admitted work may finish."""
@@ -130,7 +134,8 @@ class RequestScheduler:
         }
         self.emit("request_started", record)
         try:
-            result = operation(ticket)
+            with log_context(request=record["request_id"], sample=sample_id):
+                result = operation(ticket)
             record["status"] = "success"
             if ticket.usage:
                 record["usage"] = ticket.usage
@@ -142,8 +147,15 @@ class RequestScheduler:
                     record["submission_delay_s"] = submitted - ticket.scheduled
                 if result.get("status") in ("failed", "service_failed"):
                     record["status"] = "failed"
+                    logger.error("Request returned failure: %s",
+                                 result.get("error", result["status"]),
+                                 extra={"request": record["request_id"],
+                                        "sample": sample_id})
             return result
         except Exception as exc:
+            logger.exception("Request failed",
+                             extra={"request": record["request_id"],
+                                    "sample": sample_id})
             record.update(status="failed", error=str(exc))
             raise
         finally:

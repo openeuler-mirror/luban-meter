@@ -12,6 +12,19 @@ from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.metric import metrics
 from luban_meter.core.planning import build_plan, cli_schema, public_plan
 from luban_meter.core.run_coordinator import RunCoordinator
+from luban_meter.log import (
+    LOG_LEVEL_NAMES,
+    add_log_secrets,
+    configure_logging,
+    get_logger,
+    instance_filename,
+    log_command,
+    log_context,
+    log_parameters,
+    redact_text,
+    resolve_log_dir,
+    task_secrets,
+)
 from luban_meter.reporting.data import load_result
 from luban_meter.reporting.html import write_html
 from luban_meter.reporting.progress import TerminalProgress
@@ -21,11 +34,24 @@ from luban_meter.reporting.terminal_details import (
     SORT_FIELDS,
     render_details,
 )
+from luban_meter.utils.run_id import create_run_id
+
+logger = get_logger("luban_meter.cli")
+
+
+class CommandParser(argparse.ArgumentParser):
+    def error(self, message):
+        logger.error("Argument parsing failed: %s", message)
+        super().error(redact_text(message))
 
 
 def _build_parser():
     schema = cli_schema()
-    parser = argparse.ArgumentParser(prog="luban-meter", allow_abbrev=False)
+    parser = CommandParser(prog="luban-meter", allow_abbrev=False)
+    parser.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
+                        default="info", help="终端和实例文件的日志级别")
+    parser.add_argument("--log-dir", type=Path,
+                        help="覆盖本次调用的日志目录")
     commands = parser.add_subparsers(dest="command", required=True)
     listing = commands.add_parser("benchmarks")
     listing.add_argument("action", choices=("list",))
@@ -38,6 +64,12 @@ def _build_parser():
         run.add_argument("--task", action="append", default=[])
         run.add_argument("--result-dir", type=Path, default=Path("runs"))
         run.add_argument("--fail-fast", action="store_true")
+        run.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
+                         default=argparse.SUPPRESS,
+                         help="终端和文件日志级别")
+        run.add_argument("--log-dir", type=Path,
+                         default=argparse.SUPPRESS,
+                         help="日志目录，默认 <运行目录>/log")
         if command == "run":
             run.add_argument(
                 "--no-summary", action="store_true",
@@ -89,12 +121,56 @@ def _build_parser():
         "--raw-root", type=Path,
         help="原始运行目录；默认使用输入结果文件所在目录",
     )
+    for child in (listing, metric_list, report):
+        child.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
+                           default=argparse.SUPPRESS)
+        child.add_argument("--log-dir", type=Path, default=argparse.SUPPRESS)
     return parser, schema
 
 
 def main(argv=None):
     parser, schema = _build_parser()
-    args = parser.parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Locate the logging destination before argparse can terminate on errors.
+    options = {}
+    secret_flags = {"--" + k.replace("_", "-") for k, v in schema.items()
+                    if v.secret}
+    secrets = []
+    positional = []
+    tokens = iter(argv)
+    for token in tokens:
+        flag, equal, value = token.partition("=")
+        if flag in secret_flags | {"--log-dir", "--result-dir", "--log-level",
+                                   "--request-params"}:
+            value = value if equal else next(tokens, "")
+            options[flag] = value
+            if flag in secret_flags or flag == "--request-params":
+                secrets.append(value)
+        else:
+            positional.append(token)
+    command = positional[0] if positional else None
+    run_id = create_run_id("run" if command == "run" else "cli")
+    fallback = (Path(options.get("--result-dir", "runs")) / run_id / "log"
+                if command == "run" else None)
+    level = options.get("--log-level", "info")
+    with configure_logging(
+        resolve_log_dir(options.get("--log-dir"), fallback=fallback),
+        filename=instance_filename(run_id),
+        level=level if level in LOG_LEVEL_NAMES else "info", secrets=secrets,
+    ) as log_file:
+        logger.info("Parsing command: luban-meter %s",
+                    log_command(argv, hidden_flags=secret_flags))
+        args = parser.parse_args(argv)
+        parsed = log_parameters({
+            key: "[redacted]" if key in schema and schema[key].secret
+            else value for key, value in vars(args).items()
+        }, secrets=secrets)
+        add_log_secrets(secrets)
+        logger.info("Parsed command and options: %s", parsed)
+        return _execute(args, schema, run_id, log_file)
+
+
+def _execute(args, schema, run_id, log_file):
     try:
         if args.command == "benchmarks":
             for name, implementation in benchmarks.items():
@@ -145,6 +221,7 @@ def main(argv=None):
                         )
                     args.output.parent.mkdir(parents=True, exist_ok=True)
                     args.output.write_text(text + "\n", encoding="utf-8")
+                    logger.info("Text report saved: %s", args.output)
                 else:
                     print(text)
                 return 0
@@ -158,13 +235,17 @@ def main(argv=None):
                 "report.html"
             )
             path = args.output or args.input.parent / filename
-            print(write_html(
+            logger.info("HTML report started")
+            report_path = write_html(
                 load_result(args.input), path,
                 include_requests=args.include_requests,
                 raw_root=args.raw_root or args.input.parent,
-            ))
+            )
+            logger.info("HTML report saved: %s", report_path)
             if args.include_requests:
-                print("完整报告含已保存的原始输入输出；未采集字段不补造。")
+                logger.info(
+                    "完整报告含已保存的原始输入输出；未采集字段不补造。"
+                )
             return 0
         values = vars(args)
         base = {
@@ -180,15 +261,18 @@ def main(argv=None):
         plan = build_plan(
             base, args.config, args.task, observe=bool(args.observe)
         )
+        add_log_secrets(task_secrets(plan["tasks"]))
         if args.command == "plan":
+            logger.info("Resolved plan: %s", log_parameters(public_plan(plan)),
+                        extra={"file_only": True})
             print(json.dumps(public_plan(plan), ensure_ascii=False, indent=2))
             return 0
-        print(f"计划：{len(plan['tasks'])}个任务，{plan['case_count']}个Case")
+        logger.info("Run plan: tasks=%s cases=%s",
+                    len(plan["tasks"]), plan["case_count"])
         for task in plan["tasks"]:
-            print(
-                f"  {task['name']}: {task['scenario']} "
-                f"({len(task['cases'])} Cases)"
-            )
+            with log_context(task=task["name"]):
+                logger.info("Task plan: scenario=%s cases=%s",
+                            task["scenario"], len(task["cases"]))
         observation = (
             {"url": args.observe_url, "interval": args.observe_interval}
             if args.observe
@@ -200,28 +284,29 @@ def main(argv=None):
             fail_fast=args.fail_fast,
             observation=observation,
             progress=None if args.no_progress else TerminalProgress(plan),
+            log_level=args.log_level,
+            log_dir=args.log_dir, run_id=run_id,
         )
+        logger.info("HTML report started")
         report_path = write_html(result, directory / "report.html")
-        print(f"{result['status']} | {directory / 'result.json'}")
-        print(f"HTML: {report_path}")
+        logger.info("HTML report saved: %s", report_path)
         if not args.no_summary:
             try:
                 print(render_text(
                     result, result_path=directory / "result.json",
                 ))
-            except Exception as exc:
-                # Display is optional: facts, HTML and exit status come first.
-                try:
-                    print(f"终端摘要未能显示: {exc}", file=sys.stderr)
-                except (OSError, UnicodeError):
-                    pass
+            except Exception:
+                # Display failures do not change the result or exit code.
+                logger.warning("Terminal summary failed", exc_info=True)
+        logger.info("CLI run completed: status=%s result=%s log=%s",
+                    result["status"], directory / "result.json", log_file)
         return (
             0
             if result["status"] == "success"
             else (130 if result["status"] == "interrupted" else 1)
         )
     except (ValueError, TypeError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        logger.exception("CLI command failed: %s", exc)
         return 2
 
 

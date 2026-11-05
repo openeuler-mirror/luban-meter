@@ -379,14 +379,13 @@ function corePerformanceMetrics(c) {
   return corePerformanceViews.flatMap(([view,key])=>
     available.filter(m=>m.key===key && m.parts.at(-2)===view));
 }
-// request_view/service_view come from the online serving calculator, which
-// session metrics reuse unchanged, so the provider name is not hardcoded.
+// Saved request/service fields identify the online calculator independently;
+// missing distributions do not hide available service statistics.
 function servingMetric(c) {
   for (const metric of Object.values(c?.metrics||{})) {
     const values=metric?.values;
-    if (values?.request_view && values?.service_view &&
-        corePerformanceViews.some(([view,key])=>
-          Object.hasOwn(values[view]||{},key))) return metric;
+    if (corePerformanceViews.some(([view,key])=>
+        Object.hasOwn(values?.[view]||{},key))) return metric;
   }
   return undefined;
 }

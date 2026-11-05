@@ -5,6 +5,8 @@ import pytest
 from luban_meter.benchmarking.generation_performance.common import (
     device_monitor,
 )
+from luban_meter.log import configure_logging
+from luban_meter.runtime.device_monitor import DeviceMonitorDaemon
 
 DCGM_METRICS = "\n".join(
     [
@@ -71,3 +73,32 @@ def test_model_names_reach_environment_and_samples(monkeypatch):
     assert snapshot.devices[0].memory_used_mb == 0
     # FREE + USED must not be treated as total memory without FB_TOTAL.
     assert snapshot.devices[0].memory_total_mb is None
+
+
+@pytest.mark.parametrize("metrics", [DCGM_METRICS, ""])
+def test_hardware_detection_messages_use_logs(tmp_path, capsys, metrics):
+    devices = device_monitor.detect_devices(metrics)
+    with configure_logging(tmp_path) as path:
+        device_monitor.print_hardware_info(devices)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    text = path.read_text()
+    assert text == captured.err
+    assert (" | WARNING | " in text) is not bool(devices)
+    for device in devices:
+        assert device.name in text
+
+
+def test_missing_monitor_devices_emit_one_warning(
+    tmp_path, monkeypatch, capsys,
+):
+    monkeypatch.setattr(device_monitor, "detect_devices", lambda **kw: [])
+    with configure_logging(tmp_path) as path:
+        daemon = DeviceMonitorDaemon("http://exporter.invalid")
+        daemon.start()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    text = path.read_text()
+    assert text == captured.err
+    assert text.count(" | WARNING | ") == 1
+    assert daemon.summary() is None

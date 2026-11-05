@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from luban_meter.log import get_logger
 from luban_meter.runtime.http_client import create_http_client
 from luban_meter.runtime.request_params import (
     append_request_params,
@@ -18,6 +19,8 @@ from luban_meter.runtime.thinking import (
     reasoning_text,
     reasoning_token_count,
 )
+
+logger = get_logger(__name__)
 
 
 class ServiceError(RuntimeError):
@@ -95,6 +98,7 @@ class OpenAIClient:
                 response.raise_for_status()
                 body = json.loads(content.decode("utf-8"))
         except httpx.HTTPStatusError as exc:
+            logger.exception("Quality HTTP request rejected: path=%s", path)
             detail = exc.response.read().decode("utf-8", "replace")[:500]
             raise ServiceError(
                 f"HTTP {exc.response.status_code} from {path}: {detail}"
@@ -105,6 +109,7 @@ class OpenAIClient:
             OSError,
             json.JSONDecodeError,
         ) as exc:
+            logger.exception("Quality HTTP request failed: path=%s", path)
             raise ServiceError(f"request to {path} failed: {exc}") from exc
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         return body, elapsed_ms
@@ -139,6 +144,7 @@ class OpenAIClient:
             thought = reasoning_text(message)
             thought_tokens = reasoning_token_count(usage)
         except ValueError as exc:
+            logger.exception("Quality response parsing failed")
             raise ServiceError(str(exc)) from exc
         return {
             "reasoning_text": thought,
@@ -243,6 +249,7 @@ class OpenAIClient:
             OSError,
             json.JSONDecodeError,
         ) as exc:
+            logger.exception("Model discovery failed")
             raise ServiceError(f"request to /v1/models failed: {exc}") from exc
         models = body.get("data") or []
         if not models or not isinstance(models[0], dict):

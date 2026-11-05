@@ -5,6 +5,11 @@ from __future__ import annotations
 import re
 import string
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
+
 _THINK_TAG = re.compile(r"</?think>", re.IGNORECASE)
 _CHOICE_PREFIX = (
     r"(?:(?:最终答案|正确答案|答案)(?:是)?\s*[:：]?\s*"
@@ -108,6 +113,7 @@ def extract_choice(text: str) -> str | None:
     try:
         answer = extract_final_output(text).strip()
     except ValueError:
+        logger.warning("Choice answer parsing failed", exc_info=True)
         return None
     answer = _BOXED_DISPLAY.sub(
         lambda match: match.group(1) or match.group(2), answer
@@ -146,6 +152,7 @@ def extract_number(text: str) -> float | None:
     try:
         return float(candidate.replace(",", ""))
     except ValueError:
+        logger.warning("Numeric answer parsing failed", exc_info=True)
         return None
 
 

@@ -998,7 +998,7 @@ def test_duration_stop_keeps_completed_turns(service, tmp_path):
         facts["coverage"][state]
         for state in ("complete", "failed", "incomplete", "not_started")
     ) == facts["coverage"]["selected"]
-    metric = case["metrics"]["multi_turn_performance"]
+    metric = case["metrics"]["streaming_performance"]
     assert metric["status"] != "unavailable", metric
     assert metric["values"]["turn_view"]["turns_observed"] >= 1
 
@@ -1389,7 +1389,7 @@ def test_sessions_run_concurrently_within_request_capacity(
     assert window["request_capacity"] == 3
     assert window["peak_requests"] <= 3
     assert "sample_capacity" not in window
-    assert case["metrics"]["multi_turn_performance"]["values"][
+    assert case["metrics"]["streaming_performance"]["values"][
         "multi_num_sessions"
     ] == 3
 
@@ -1407,7 +1407,7 @@ def test_multi_turn_metric_views(service, tmp_path):
         tmp_path,
     )
     case = result["tasks"][0]["cases"][0]
-    metric = case["metrics"]["multi_turn_performance"]
+    metric = case["metrics"]["streaming_performance"]
     assert metric["status"] == "success", metric
     values = metric["values"]
     assert values["multi_max_turns"] == 4
@@ -1446,7 +1446,7 @@ def test_prefix_cache_ceiling_without_server_support(service, tmp_path):
         tmp_path,
     )
     cache = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]["caching_view"]["prefix_cache"]
     assert cache["measured_turns"]["value"] == 8
     assert cache["reporting_turns"]["value"] == 0
@@ -1491,7 +1491,7 @@ def test_prefix_cache_reports_server_values_when_available(
         tmp_path,
     )
     cache = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]["caching_view"]["prefix_cache"]
     assert cache["reporting_turns"]["value"] == 8
     assert cache["reason"] is None
@@ -1511,7 +1511,7 @@ def test_prefix_cache_keeps_a_reported_zero(service, tmp_path):
         tmp_path,
     )
     cache = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]["caching_view"]["prefix_cache"]
     assert cache["reporting_turns"]["value"] == 8
     assert cache["reason"] is None
@@ -1530,7 +1530,7 @@ def test_prefix_cache_ignores_failed_turns(service, tmp_path):
         tmp_path,
     )
     cache = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]["caching_view"]["prefix_cache"]
     # Three sessions: 1 turn succeeds, and turns 0 of the two longer ones.
     assert cache["measured_turns"]["value"] == 3
@@ -1548,7 +1548,7 @@ def test_metric_keeps_completed_turns_of_failed_sessions(service, tmp_path):
     )
     case = result["tasks"][0]["cases"][0]
     assert case["status"] == "partial_failed", case
-    metric = case["metrics"]["multi_turn_performance"]
+    metric = case["metrics"]["streaming_performance"]
     # Both sessions that reach turn 2 fail it: 5 of 7 requests succeed,
     # so the metric itself is partial, not "success".
     assert metric["status"] == "partial_failed", metric
@@ -1572,7 +1572,7 @@ def test_goodput_applies_per_turn(service, tmp_path):
         tmp_path,
     )
     values = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]
     # Goodput is a service-view sub-result over the pooled turns.
     goodput = values["service_view"]["goodput"]
@@ -1591,7 +1591,7 @@ def test_unsatisfiable_goodput_reports_zero(service, tmp_path):
         tmp_path,
     )
     values = result["tasks"][0]["cases"][0]["metrics"][
-        "multi_turn_performance"
+        "streaming_performance"
     ]["values"]
     goodput = values["service_view"]["goodput"]
     assert goodput["slo_satisfied_rate"]["value"] == 0.0

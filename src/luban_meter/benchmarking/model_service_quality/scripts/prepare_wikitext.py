@@ -26,6 +26,8 @@ import json
 import re
 from pathlib import Path
 
+from luban_meter.log import get_logger, log_parameters, logged_script
+
 
 def wikitext_detokenizer(text: str) -> str:
     """Restore WikiText-2 tokenization artifacts to natural text.
@@ -115,6 +117,10 @@ def write_jsonl(records: list[dict[str, object]], out_file: Path) -> None:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+logger = get_logger("luban_meter.prepare_wikitext")
+
+
+@logged_script
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -134,6 +140,7 @@ def main() -> None:
         help="id prefix for generated records",
     )
     args = parser.parse_args()
+    logger.info("Parsed options: %s", log_parameters(vars(args)))
 
     for name, out_name in [
         ("wiki.valid.raw", "val.jsonl"),
@@ -141,7 +148,7 @@ def main() -> None:
     ]:
         raw_file = args.source / name
         if not raw_file.is_file():
-            print(f"skipping {raw_file} (not found)")
+            logger.warning("Skipping %s (not found)", raw_file)
             continue
         records = load_wikitext_raw(raw_file)
         # Apply the user-specified prefix
@@ -151,7 +158,7 @@ def main() -> None:
             )
         out_path = args.out / out_name
         write_jsonl(records, out_path)
-        print(f"wrote {len(records)} records -> {out_path}")
+        logger.info("Wrote %s records -> %s", len(records), out_path)
 
 
 if __name__ == "__main__":

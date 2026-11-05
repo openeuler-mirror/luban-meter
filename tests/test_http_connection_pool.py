@@ -23,6 +23,7 @@ from luban_meter.benchmarking.model_service_quality.common.client import (
 )
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.planning import build_plan
+from luban_meter.log import configure_logging, log_context
 from luban_meter.runtime.evaluation_session import run_case
 from luban_meter.runtime.http_client import create_http_client
 
@@ -222,10 +223,14 @@ def test_read_timeout_is_not_a_total_request_deadline(server):
     [("tail_timeout", "success"), ("before_timeout", "failed"),
      ("malformed", "failed"), ("http_error", "failed")],
 )
-def test_failures_do_not_leak_pool_slot_or_retry(server, mode, status):
+def test_failures_do_not_leak_pool_slot_or_retry(
+    server, mode, status, tmp_path
+):
     server.mode = mode
     with create_http_client(0.05, max_connections=1) as http:
-        first = request(http, server, timeout=0.05)
+        with configure_logging(tmp_path, filename="task.log", task="http"):
+            with log_context(case="case_1", request="request-0"):
+                first = request(http, server, timeout=0.05)
         assert first["status"] == status
         assert len(server.requests) == 1
         if mode == "tail_timeout":
@@ -240,9 +245,18 @@ def test_failures_do_not_leak_pool_slot_or_retry(server, mode, status):
         assert len(server.requests) == 2
     server.stalled.set()
     assert_closed(server)
+    text = (tmp_path / "task.log").read_text()
+    assert "Traceback (most recent call last)" in text
+    assert "task=http case=case_1" in text and "request=request-0" in text
+    if mode == "tail_timeout":
+        assert "HTTP connection cleanup failed" in text
+    else:
+        assert "Streaming request failed" in text
 
 
-def test_quality_requests_reuse_connection_and_preserve_errors(server):
+def test_quality_requests_reuse_connection_and_preserve_errors(
+    server, tmp_path
+):
     service = OpenAIClient(server.url, max_connections=1)
     try:
         assert service.discover_served_model_name() == "mock"
@@ -252,14 +266,19 @@ def test_quality_requests_reuse_connection_and_preserve_errors(server):
         assert chat["text"] == "42"
         assert server.accepted == 1
         server.mode = "http_error"
-        with pytest.raises(ServiceError, match="503.*rejected"):
-            service.complete("error")
+        with configure_logging(tmp_path, filename="task.log"):
+            with pytest.raises(ServiceError, match="503.*rejected"):
+                service.complete("error")
         assert len(server.requests) == 5
         assert server.accepted == 1
         assert all("Cookie" not in row[2] for row in server.requests)
     finally:
         service.close()
     assert_closed(server)
+    text = (tmp_path / "task.log").read_text()
+    assert "Quality HTTP request rejected" in text
+    assert "Traceback (most recent call last)" in text
+    assert "HTTPStatusError" in text
 
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
