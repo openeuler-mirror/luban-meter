@@ -21,9 +21,15 @@ def percentile(samples: Sequence[float], fraction: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * weight
 
 
-def summarize(samples: Sequence[float], unit: str) -> dict[str, Any]:
+def summarize(
+    samples: Sequence[float], unit: str, precision: int = 3
+) -> dict[str, Any]:
     """Return the common descriptive-statistics contract for one
     metric.
+
+    ``precision`` keeps the stored decimals for values that need more
+    resolution than the default three (e.g. microsecond-scale waits);
+    presentation layers still format for display.
     """
     values = [float(value) for value in samples]
     summary: dict[str, Any] = {
@@ -46,16 +52,16 @@ def summarize(samples: Sequence[float], unit: str) -> dict[str, Any]:
     median = percentile(values, 0.50)
     summary.update(
         {
-            "mean": round(statistics.mean(values), 3),
-            "median": round(median, 3),
-            "p50": round(median, 3),
-            "p90": round(percentile(values, 0.90), 3),
-            "p95": round(percentile(values, 0.95), 3),
-            "p99": round(percentile(values, 0.99), 3),
-            "p999": round(percentile(values, 0.999), 3),
-            "min": round(min(values), 3),
-            "max": round(max(values), 3),
-            "stddev": round(statistics.pstdev(values), 3),
+            "mean": round(statistics.mean(values), precision),
+            "median": round(median, precision),
+            "p50": round(median, precision),
+            "p90": round(percentile(values, 0.90), precision),
+            "p95": round(percentile(values, 0.95), precision),
+            "p99": round(percentile(values, 0.99), precision),
+            "p999": round(percentile(values, 0.999), precision),
+            "min": round(min(values), precision),
+            "max": round(max(values), precision),
+            "stddev": round(statistics.pstdev(values), precision),
         }
     )
     return summary

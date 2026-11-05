@@ -175,6 +175,8 @@ function performanceOverviewCards(records,bestMode=true) {
   const cards=[
     {id:'peak-throughput',title:'Peak Throughput',unit:'tok/s',tone:'cyan',
       description:'higher is better · 已测最大值'},
+    {id:'peak-total-throughput',title:'Peak Total Throughput',unit:'tok/s',
+      tone:'cyan',description:'higher is better · 输入＋输出合计'},
     {id:'best-ttft-p99',title:'Best TTFT P99',unit:'ms',tone:'purple',
       description:'lower is better · 最小已保存 P99'},
     {id:'best-tpot-p99',title:'Best TPOT P99',unit:'ms/token',tone:'purple',
@@ -187,10 +189,11 @@ function performanceOverviewCards(records,bestMode=true) {
       description:'lower is better · 最小已保存 P99'},
   ].map(card=>({...card,value:null,source:'缺少可用的已保存数据',href:'#summary-section'}));
   if(!bestMode) {
-    ['Throughput','TTFT P99','TPOT P99','Success Rate','Configured Concurrency','E2E P99']
+    ['Throughput','Total Throughput','TTFT P99','TPOT P99','Success Rate',
+      'Configured Concurrency','E2E P99']
       .forEach((title,index)=>{cards[index].title=title;});
     cards.forEach(card=>{card.description='当前 Case 的已保存指标';});
-  } else cards[3].title='Best Success Rate';
+  } else cards[4].title='Best Success Rate';
   if(!records.length)return cards;
   const completed=records.filter(({c})=>c.collection_complete===true &&
     c.status!=='discarded' && (!c.metrics_status || c.metrics_status==='complete'));
@@ -205,7 +208,7 @@ function performanceOverviewCards(records,bestMode=true) {
       ' · C'+valueText(best.c.parameters?.max_concurrency)+
       (ties>1?' · '+ties+' 个 Case 并列':'');
     cards[index].href='#summary-'+best.ti+'-'+best.ci;
-    if(index===3) {
+    if(index===4) {
       const counts=savedRequestCounts(best.c);
       cards[index].source+=' · '+counts.success+' / '+counts.total+' 请求';
     }
@@ -215,7 +218,12 @@ function performanceOverviewCards(records,bestMode=true) {
     return m?.unit==='token/s' && numeric(m.value) && m.value>=0?
       [{...record,value:m.value}]:[];
   }));
-  for(const [index,key] of [[1,'ttft'],[2,'tpot'],[5,'e2el']]) {
+  extreme(1,usable.flatMap(record=>{
+    const m=servingMetric(record.c)?.values?.service_view?.total_token_throughput;
+    return m?.unit==='token/s' && numeric(m.value) && m.value>=0?
+      [{...record,value:m.value}]:[];
+  }));
+  for(const [index,key] of [[2,'ttft'],[3,'tpot'],[6,'e2el']]) {
     const units=key==='tpot'?{'ms/token':1,'s/token':1000}:{ms:1,s:1000};
     extreme(index,usable.flatMap(record=>{
       const m=servingMetric(record.c)?.values?.request_view?.[key];
@@ -226,11 +234,11 @@ function performanceOverviewCards(records,bestMode=true) {
         [{...record,value}]:[];
     }),true);
   }
-  extreme(3,completed.flatMap(record=>{
+  extreme(4,completed.flatMap(record=>{
     const counts=savedRequestCounts(record.c);
     return counts.valid && counts.total>0?[{...record,value:counts.success/counts.total}]:[];
   }));
-  extreme(4,completed.flatMap(record=>{
+  extreme(5,completed.flatMap(record=>{
     const p=record.c.parameters?.max_concurrency,metric=servingMetric(record.c);
     const service=metric?.values?.service_view;
     return Number.isSafeInteger(p) && p>0 && service?.total_requests?.unit==='request' &&
@@ -240,8 +248,8 @@ function performanceOverviewCards(records,bestMode=true) {
   if(!bestMode) {
     const record=records[0],concurrency=record.c.parameters?.max_concurrency;
     if(Number.isSafeInteger(concurrency) && concurrency>0) {
-      cards[4].value=concurrency;cards[4].source=record.c.id+' · 配置并发上限';
-      cards[4].href='#summary-'+record.ti+'-'+record.ci;
+      cards[5].value=concurrency;cards[5].source=record.c.id+' · 配置并发上限';
+      cards[5].href='#summary-'+record.ti+'-'+record.ci;
     }
   }
   return cards;
@@ -537,7 +545,8 @@ function renderOverviewModels() {
     const row=el('dl',undefined,'overview-model');
     for(const [label,value] of [['模型名',model],['模型地址',address]]) {
       const field=el('div');
-      field.append(el('dt',label),el('dd',value||'未采集'));row.append(field);
+      field.append(el('dt',label),el('dd',value||'未采集',
+        label==='模型名'?'model-name':undefined));row.append(field);
     }
     $('overview-models').append(row);
   }

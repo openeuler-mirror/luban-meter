@@ -179,6 +179,124 @@ def test_missing_usage_preserves_latencies_and_request_counts():
     assert "usage" in throughput["reason"]
 
 
+def _with_queue_time(values):
+    responses = [response(i) for i in range(len(values))]
+    for item, queue_ms in zip(responses, values):
+        if queue_ms is not None:
+            item["server_queue_time_ms"] = queue_ms
+    return streaming(formal_facts(responses, multi_turn=True))
+
+
+def test_queue_time_waited_mean_averages_only_waited_requests():
+    metric = _with_queue_time([12.3, 0.0, 5.0])
+
+    distribution = metric["values"]["request_view"]["queue_time_ms"]
+    assert distribution["count"] == 2
+    assert distribution["mean"] == pytest.approx(8.65)
+    assert distribution["min"] == pytest.approx(5.0)
+    assert distribution["max"] == pytest.approx(12.3)
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean == {"value": pytest.approx(8.65), "unit": "ms"}
+    assert "reason" not in mean
+    assert "condition" not in mean
+    coverage = metric["values"]["service_view"]
+    assert coverage["queue_time_reported_requests"]["value"] == 3
+    assert coverage["queue_time_missing_requests"]["value"] == 0
+
+
+def test_queue_time_reported_zero_waits_is_a_real_observation():
+    metric = _with_queue_time([0.0, 0.0])
+
+    distribution = metric["values"]["request_view"]["queue_time_ms"]
+    assert distribution["count"] == 0
+    assert distribution["mean"] is None
+    assert distribution["reason"] == "no request waited in the server queue"
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] is None
+    assert mean["reason"] == "no request waited in the server queue"
+
+
+def test_queue_time_zero_wait_with_missing_is_not_no_wait():
+    # One request reported a real zero; the other is unknown. That is
+    # not "no request waited in the server queue".
+    metric = _with_queue_time([0.0, None])
+
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] is None
+    assert mean["reason"] == (
+        "no request with reported timing waited; 1 of 2 requests did "
+        "not report timing"
+    )
+    coverage = metric["values"]["service_view"]
+    assert coverage["queue_time_reported_requests"]["value"] == 1
+    assert coverage["queue_time_missing_requests"]["value"] == 1
+
+
+def test_queue_time_partial_coverage_keeps_subset_with_scope():
+    # The subset mean stays, with an explicit incomplete-coverage mark;
+    # missing requests are not read as zero waits.
+    metric = _with_queue_time([12.3, None, None])
+
+    distribution = metric["values"]["request_view"]["queue_time_ms"]
+    assert distribution["count"] == 1
+    assert distribution["mean"] == pytest.approx(12.3)
+    assert "partial timing coverage: 1 of 3" in distribution["condition"]
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] == pytest.approx(12.3)
+    assert "partial timing coverage: 1 of 3" in mean["condition"]
+    assert "reason" not in mean
+    coverage = metric["values"]["service_view"]
+    assert coverage["queue_time_reported_requests"]["value"] == 1
+    assert coverage["queue_time_missing_requests"]["value"] == 2
+
+
+def test_queue_time_nonfinite_record_value_is_ignored_not_fatal():
+    # A replayed or legacy record can carry an infinite timing; the
+    # aggregation must drop it as missing instead of failing the whole
+    # streaming_performance metric (TTFT, throughput stay available).
+    metric = _with_queue_time([12.3, float("inf")])
+
+    assert metric["status"] == "success"
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] == pytest.approx(12.3)
+    assert "partial timing coverage: 1 of 2" in mean["condition"]
+    coverage = metric["values"]["service_view"]
+    assert coverage["queue_time_reported_requests"]["value"] == 1
+    assert coverage["queue_time_missing_requests"]["value"] == 1
+    ttft = metric["values"]["request_view"]["ttft"]
+    assert ttft["count"] == 2
+
+
+def test_queue_time_absent_metrics_marked_unavailable():
+    metric = _with_queue_time([None, None])
+
+    distribution = metric["values"]["request_view"]["queue_time_ms"]
+    assert distribution["count"] == 0
+    reason = "service did not report per-request queue time metrics"
+    assert distribution["reason"] == reason
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] is None
+    assert mean["reason"] == reason
+    coverage = metric["values"]["service_view"]
+    assert coverage["queue_time_reported_requests"]["value"] == 0
+    assert coverage["queue_time_missing_requests"]["value"] == 2
+
+
+def test_queue_time_raw_precision_is_not_rounded_away():
+    metric = _with_queue_time([0.0004, 0.0])
+
+    # 0.4 microseconds is a real positive wait: the distribution, the
+    # standalone mean and the waited count must stay consistent.
+    distribution = metric["values"]["request_view"]["queue_time_ms"]
+    assert distribution["count"] == 1
+    for field in ("mean", "min", "max", "p50", "p95"):
+        assert distribution[field] == pytest.approx(0.0004), field
+    mean = metric["values"]["service_view"]["queue_time_waited_mean"]
+    assert mean["value"] == pytest.approx(0.0004)
+    assert mean["value"] == pytest.approx(distribution["mean"])
+    assert mean["value"] > 0
+
+
 def test_sample_facts_cannot_replace_missing_formal_requests():
     metric = streaming(formal_facts([]))
     assert metric["status"] == "unavailable"

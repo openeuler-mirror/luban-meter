@@ -77,6 +77,52 @@ def test_one_event_with_both_channels_and_duplicate_aliases_counts_once():
     assert observation.output_tokens is None
 
 
+@pytest.mark.parametrize("reported", [
+    {"queue_time_ms": 12.3},
+    {"queue_time_ms": 0},
+    {"queue_time_ms": 0.0004},
+])
+def test_stream_records_per_request_queue_time(reported):
+    # vLLM sends metrics together with the final usage chunk.
+    chunks = [
+        sse({"content": "答案：B"}),
+        sse(usage={"prompt_tokens": 10, "completion_tokens": 8},
+            metrics=reported),
+        b'data: [DONE]\n',
+    ]
+    observation = collect_chat_stream(io.BytesIO(b"".join(chunks)))
+    record = online_serving._build_request_record(
+        request_index=0, started=10.0, ended=15.0,
+        benchmark_start=10.0, scheduled_time=10.0,
+        observation=observation, error=None,
+    )
+    assert record["server_queue_time_ms"] == float(reported["queue_time_ms"])
+
+
+@pytest.mark.parametrize("reported", [
+    None,
+    {"queue_time_ms": None},
+    {"queue_time_ms": "12.3"},
+    {"queue_time_ms": True},
+    {"queue_time_ms": -1.0},
+    {"other_field": 5},
+    # Non-finite timings are unusable, not zero waits; the JSON number
+    # 1e309 parses to float infinity.
+    {"queue_time_ms": 1e309},
+    {"queue_time_ms": float("inf")},
+    {"queue_time_ms": float("nan")},
+])
+def test_stream_without_valid_queue_time_keeps_none(reported):
+    chunks = [
+        sse({"content": "答案：B"}),
+        sse(usage={"prompt_tokens": 10, "completion_tokens": 8},
+            metrics=reported),
+        b'data: [DONE]\n',
+    ]
+    observation = collect_chat_stream(io.BytesIO(b"".join(chunks)))
+    assert observation.server_queue_time_ms is None
+
+
 @pytest.mark.parametrize("body, message", [
     (sse({"reasoning": "a", "reasoning_content": "b"}), "conflicting"),
     (sse({"reasoning": 5}), "reasoning must be"),

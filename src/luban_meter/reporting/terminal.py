@@ -199,6 +199,16 @@ def metric_lines(entries, width, verbose=False):
             ),
             "total_input_tokens": "Total Input Tokens 输入Token总数",
             "total_output_tokens": "Total Output Tokens 输出Token总数",
+            "queue_time_ms": "Queue Time 服务端排队等待分布",
+            "queue_time_waited_mean": (
+                "Queue Time Mean 平均排队等待（等待过的请求）"
+            ),
+            "queue_time_reported_requests": (
+                "Queue Timing Reported 上报计时请求数"
+            ),
+            "queue_time_missing_requests": (
+                "Queue Timing Missing 缺失计时请求数"
+            ),
             "accuracy": "Accuracy 准确率",
             "exact_match": "Exact Match 完全匹配",
             "token_f1": "Token F1", "pass_at_1": "pass@1",

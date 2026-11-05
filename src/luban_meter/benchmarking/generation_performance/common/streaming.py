@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from luban_meter.runtime.thinking import reasoning_text, reasoning_token_count
 
@@ -26,6 +28,29 @@ class StreamObservation:
     reasoning_tokens: int | None = None
     finish_reason: str | None = None
     usage: Mapping | None = None
+    server_queue_time_ms: float | None = None
+
+
+def server_queue_time_ms(value: Any) -> float | None:
+    """Read the per-request queue wait from a response ``metrics`` object.
+
+    vLLM reports ``metrics.queue_time_ms`` per request when the serving
+    deployment enables per-request metrics; it travels with the final
+    usage chunk. Missing, ``null``, non-numeric, negative or non-finite
+    values (infinity, NaN) mean the timing was not usable and must not
+    be read as a zero wait nor crash later aggregation.
+    """
+    if not isinstance(value, Mapping):
+        return None
+    milliseconds = value.get("queue_time_ms")
+    if (
+        isinstance(milliseconds, bool)
+        or not isinstance(milliseconds, (int, float))
+        or not math.isfinite(milliseconds)
+        or milliseconds < 0
+    ):
+        return None
+    return float(milliseconds)
 
 
 def collect_completion_stream(
@@ -38,6 +63,7 @@ def collect_completion_stream(
     event_times: list[float] = []
     generated_parts: list[str] = []
     usage: tuple[int, int] | None = None
+    queue_time_ms: float | None = None
 
     for raw_line in stream:
         line = raw_line.decode("utf-8").strip()
@@ -56,6 +82,9 @@ def collect_completion_stream(
         parsed_usage = token_usage(payload.get("usage"))
         if parsed_usage is not None:
             usage = parsed_usage
+        parsed_queue_time = server_queue_time_ms(payload.get("metrics"))
+        if parsed_queue_time is not None:
+            queue_time_ms = parsed_queue_time
 
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -80,6 +109,7 @@ def collect_completion_stream(
         event_times=tuple(event_times),
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        server_queue_time_ms=queue_time_ms,
     )
 
 
@@ -100,6 +130,7 @@ def collect_chat_stream(
     usage: tuple[int, int] | None = None
     raw_usage = None
     finish_reason = None
+    queue_time_ms: float | None = None
 
     for raw_line in stream:
         line = raw_line.decode("utf-8").strip()
@@ -119,6 +150,9 @@ def collect_chat_stream(
         if parsed_usage is not None:
             usage = parsed_usage
             raw_usage = payload["usage"]
+        parsed_queue_time = server_queue_time_ms(payload.get("metrics"))
+        if parsed_queue_time is not None:
+            queue_time_ms = parsed_queue_time
 
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -163,4 +197,5 @@ def collect_chat_stream(
         reasoning_tokens=reasoning_token_count(raw_usage),
         finish_reason=finish_reason,
         usage=raw_usage,
+        server_queue_time_ms=queue_time_ms,
     )
