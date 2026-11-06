@@ -4,6 +4,29 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const context = vm.createContext({taskDisplayName:name=>name});
+// Minimal DOM stubs so renderSessionTurns can be exercised headless:
+// created nodes record text/title/class for later assertions.
+const domNodes=[];
+const domNode=()=>{
+  const node={append(){},replaceChildren(){},setAttribute(){},
+    addEventListener(){},focus(){},classList:{add(){},remove(){}},
+    style:{},dataset:{},textContent:'',className:'',title:'',href:'',
+    type:'',tabIndex:0,disabled:false,onclick:null,onkeydown:null};
+  domNodes.push(node);return node;
+};
+context.document={createElement:domNode,createElementNS:domNode};
+// el() lives in the template's inline script; stub it here so the
+// render functions under test resolve it from the sandbox globals.
+context.el=(tag,text,cls)=>{
+  const node=domNode();
+  if(text!==undefined)node.textContent=text;
+  if(cls)node.className=cls;
+  return node;
+};
+// svgElement() is another template-inline helper used by barChart.
+context.svgElement=domNode;
+const domTexts=()=>domNodes.map(node=>
+  [node.textContent,node.title,node.className].join(' ')).join('\n');
 const source = path.join(__dirname,'../src/luban_meter/reporting');
 const html=process.argv[3]?fs.readFileSync(process.argv[3],'utf8'):null;
 for(const file of ['case_analysis.js','summary_cards.js','report_overview.js']) {
@@ -379,11 +402,54 @@ assert.equal(sessionSummary.groups[0].maximum,120);
 assert.equal(call('savedRequestCounts',sessionCase).valid,false);
 // A metric without per-turn facts is not treated as a session metric.
 assert.equal(call('sessionValues',qualityCase('q','accuracy',.5)),null);
+// Headless render smoke: the participation ledger, abort reasons and
+// summary survive a case with no success turns, while the latency
+// statistics are marked empty instead of hiding the whole section.
+const failedTurnCase={status:'success',metrics:{streaming_performance:{
+  status:'success',values:{
+    turn_view:{turns_observed:0,ttft_ms_by_turn:[],itl_ms_by_turn:[],
+      turn_participation:[{turn_index:0,planned_sessions:3,succeeded:0,
+        sent_failed:3,not_started:0}]},
+    session_view:{not_started_turns:{value:0,unit:'turn'},
+      sent_failed_turns:{value:3,unit:'turn'},
+      sessions_finished:{value:0,unit:'session'},
+      abort_reasons:{turn_failed:3}}}}}};
+domNodes.length=0;
+context.input=JSON.stringify(failedTurnCase);
+context.PARENT=domNode();
+vm.runInContext('renderSessionTurns(PARENT,JSON.parse(input))',context);
+let texts=domTexts();
+assert.ok(texts.includes('已发送失败'),'participation columns render');
+assert.ok(texts.includes('没有已保存的成功轮次延迟统计'),
+  'empty latency statistics are stated, not hidden');
+assert.ok(texts.includes('会话中止原因'),'abort reasons survive');
+assert.ok(!texts.includes('没有已保存的成功轮次。'),
+  'the section is not the generic empty placeholder');
+// A successful session still renders the metric table with both ITL
+// metrics: request-level ITL and the stream-event interval series.
+sessionCase.metrics.multi_turn_performance.values.turn_view={
+  turns_observed:1,
+  ttft_ms_by_turn:[{turn_index:0,count:2,mean:10,unit:'ms'}],
+  itl_ms_by_turn:[{turn_index:0,count:2,mean:3,weight_sum:2,unit:'ms/token'}],
+  stream_event_itl_ms_by_turn:[{turn_index:0,count:4,mean:100,unit:'ms'}],
+  turn_participation:[{turn_index:0,planned_sessions:1,succeeded:1,
+    sent_failed:0,not_started:0}]};
+domNodes.length=0;
+context.PARENT=domNode();
+context.input=JSON.stringify(sessionCase);
+vm.runInContext('renderSessionTurns(PARENT,JSON.parse(input))',context);
+texts=domTexts();
+assert.ok(texts.includes('ITL 均值'),'per-turn ITL renders');
+assert.ok(texts.includes('Stream Event ITL 均值'),'stream-event ITL renders');
+assert.ok(texts.includes('Stream Event ITL / E2EL'),'sample-count header names it');
+assert.ok(!texts.includes('没有已保存的成功轮次延迟统计'),
+  'latency statistics are present for a successful session');
 console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '+
   'zero/missing data, observed trends, subject scores and scoring denominators; '+
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+
   'quality optimization directions, comparable datasets and summary-row links; '+
-  'session metrics resolved by view, per-turn sample counts preserved');
+  'session metrics resolved by view, per-turn participation, ITL and all-failed '+
+  'rendering preserved');
 
 
 // Provider selection must survive actual sorted JSON persistence.

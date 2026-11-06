@@ -52,6 +52,7 @@ from luban_meter.runtime.request_params import (
     append_request_params,
     validate_request_params,
 )
+from luban_meter.runtime.request_scheduler import AdmissionStopped
 
 from .common.lengths import assess_lengths
 from .common.reasoning_tokens import prepare_reasoning_counter
@@ -169,14 +170,14 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             raise ValueError(
                 "multi_think_time_std requires a positive multi_think_time"
             )
-        outputs = LengthSampler.from_parameters(parameters, "output")
-        turns = parameters["multi_max_turns"]
-        limit = parameters["max_model_len"]
-        if limit and outputs.upper * turns > limit:
-            raise ValueError(
-                f"{turns} turns of up to {outputs.upper} output tokens "
-                f"exceed max_model_len {limit} before any user text"
-            )
+        # Still validates the output-length configuration itself, but no
+        # "worst-case turns × max output" precheck: max turns is an upper
+        # bound that shorter sessions never reach, natural EOS keeps
+        # replies under the budget, and the per-turn real-history check
+        # in evaluate() stops a session only when its actual context
+        # would overflow.  Rejecting the worst case would turn away legal
+        # short-session workloads.
+        LengthSampler.from_parameters(parameters, "output")
         # A request budget below one full pass is legitimate: it admits
         # fewer calls and sessions stay partially complete, which the
         # facts record.  Rejecting it would force callers to guess the
@@ -476,8 +477,11 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
         think_total = 0.0
         abort_reason = None
         overflow_tokens = None
-        # AdmissionStopped propagates to collect_sample, which records
-        # the interruption; completed turns stay in the request facts.
+        # A normal admission stop is caught here so the session summary
+        # below stays recomputable: budget, duration and interrupt stops
+        # leave completed facts and an explicit abort reason instead of
+        # an empty sample. The incomplete marker is already set by
+        # RunContext.request before the exception surfaces.
         for turn in range(planned):
             if self._session_expired(started):
                 abort_reason = "session_timeout"
@@ -491,19 +495,31 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             if overflow_tokens is not None:
                 abort_reason = "context_overflow"
                 break
-            record = context.request(
-                lambda ticket: self._send_turn(
-                    ticket,
-                    self._payload(history, budget),
-                    sample,
-                    turn,
-                    context,
-                ),
-                metadata={
-                    "turn_index": turn,
-                    "session_turns": planned,
-                },
-            )
+            try:
+                record = context.request(
+                    lambda ticket: self._send_turn(
+                        ticket,
+                        self._payload(history, budget),
+                        sample,
+                        turn,
+                        context,
+                    ),
+                    metadata={
+                        "turn_index": turn,
+                        "session_turns": planned,
+                    },
+                )
+            except AdmissionStopped as exc:
+                # The turn never reached the service: it counts as not
+                # started, never as a sent failure, and the scheduler's
+                # reason (num_requests, max_duration, user_interrupt)
+                # explains why the session stopped.
+                logger.debug(
+                    "Session %s admission stopped at turn %s: %s",
+                    sample["session_index"], turn, exc,
+                )
+                abort_reason = str(exc) or "request budget"
+                break
             if record.get("status") != "success":
                 abort_reason = "turn_failed"
                 break
