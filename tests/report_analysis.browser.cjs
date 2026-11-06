@@ -90,7 +90,7 @@ const {chromium} = require('playwright');
           !['count','weight_sum','unit'].includes(k) && (typeof v==='number'||v===null));
         assert.equal(rows.length,stats.length);
         for(const [k,v] of stats) {
-          const row=rows.find(r=>r.name.toLowerCase().startsWith(k==='stddev'?'std':k==='p999'?'p99.9':k));
+          const row=rows.find(r=>r.name===({mean:'均值',median:'中位数',min:'最小值',max:'最大值',stddev:'标准差',p999:'P99.9'}[k]||k.toUpperCase()));
           assert.ok(row,`missing ${ci}/${name}/${k}`);
           assert.ok(row.title.includes(String(v)),`wrong ${ci}/${name}/${k}`);
         }
@@ -167,7 +167,7 @@ const {chromium} = require('playwright');
     await page.setViewportSize({width:1440,height:1000});
     await navigate('summary-section');
     const firstTable=page.locator('#case-summaries table').first();
-    await firstTable.getByRole('button',{name:/TTFT.*Mean/}).click();
+    await firstTable.getByRole('button',{name:/TTFT.*均值/}).click();
     const expectedFirst=real.tasks[0].cases.map((c,i)=>({i,value:c.metrics.streaming_performance.values.request_view.ttft.mean}))
       .sort((a,b)=>a.value-b.value)[0].i;
     assert.equal(await firstTable.locator('tbody tr').first().getAttribute('id'),'summary-0-'+expectedFirst);

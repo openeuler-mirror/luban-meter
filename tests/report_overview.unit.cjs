@@ -18,6 +18,68 @@ const call = (name,value,...extra) => {
     extra.map(v=>','+JSON.stringify(v)).join('')+'))',context));
 };
 const scalar=(value,unit='token/s')=>({value,unit});
+// Phase metrics are selectable even at zero or unavailable; they never
+// replace the provider of whole-request throughput and latency metrics.
+const phaseKeys=['reasoning_duration','content_duration','first_content_latency'];
+const phases={status:'success',values:{request_view:{
+  reasoning_duration:{mean:0,p95:0,count:1,unit:'ms'},
+  content_duration:{mean:null,p95:null,count:0,unit:'ms'},
+  first_content_latency:{mean:12,p95:12,count:1,unit:'ms'}},
+  phase_counts:{truncated_requests:scalar(0,'request'),
+    excluded_requests:scalar(1,'request')}}};
+const phaseCase={status:'success',metrics:{streaming_phase_timing:phases,
+  original:{status:'success',values:{request_view:{ttft:{mean:2,unit:'ms'}}}}}};
+const phaseBefore=JSON.stringify(phaseCase);
+assert.deepEqual(call('corePerformanceMetrics',phaseCase).map(m=>m.key),
+  ['ttft',...phaseKeys]);
+assert.equal(call('metricsFor',phaseCase).find(m=>m.key==='reasoning_duration').raw.mean,0);
+assert.equal(call('metricsFor',phaseCase).find(m=>m.key==='content_duration').count,0);
+assert.deepEqual(call('servingMetric',phaseCase),phaseCase.metrics.original);
+assert.deepEqual(call('summaryMetrics',{
+  category:'generation_performance',cases:[phaseCase]}).map(m=>m.key),
+  ['ttft',...phaseKeys,'truncated_requests','excluded_requests']);
+assert.equal(JSON.stringify(phaseCase),phaseBefore);
+const thinkingCase=JSON.parse(phaseBefore);
+Object.assign(thinkingCase.metrics.streaming_phase_timing.values.request_view,{
+  reasoning_ttft:{mean:100,count:3,unit:'ms'},
+  reasoning_tpot:{mean:200,count:2,weight_sum:5,unit:'ms/token',weight_unit:'token'},
+  reasoning_itl:{mean:0,count:1,weight_sum:3,unit:'ms/token',weight_unit:'token_interval'},
+  reasoning_stream_event_itl:{mean:10,count:2,unit:'ms',sample_unit:'event_interval'}
+});
+const thinkingKeys=['reasoning_ttft','reasoning_tpot','reasoning_itl','reasoning_stream_event_itl'];
+assert.deepEqual(call('corePerformanceMetrics',thinkingCase).map(m=>m.key),
+  ['ttft',...thinkingKeys,...phaseKeys]);
+assert.deepEqual(call('summaryMetrics',{
+  category:'generation_performance',cases:[thinkingCase]}).map(m=>m.key),
+  ['ttft',...thinkingKeys,...phaseKeys,'truncated_requests','excluded_requests']);
+assert.deepEqual(call('servingMetric',thinkingCase),phaseCase.metrics.original);
+const thinkingItl=call('metricsFor',thinkingCase).find(m=>m.key==='reasoning_itl');
+assert.equal(thinkingItl.count,1);
+assert.equal(thinkingItl.raw.weight_sum,3);
+assert.equal(thinkingItl.stats.some(([key])=>key==='weight_sum'),false);
+// Upstream Case throughput and independent thinking metrics coexist;
+// unrelated run-level throughput still must not enter the Case views.
+const combinedCase=JSON.parse(JSON.stringify(thinkingCase));
+combinedCase.metrics.original.values.service_view={
+  output_token_throughput:scalar(20),total_token_throughput:scalar(60)};
+combinedCase.metrics.token_throughput={values:{service_view:{
+  total_token_throughput:scalar(999)}}};
+const combinedBefore=JSON.stringify(combinedCase);
+for(const candidate of [combinedCase,{...combinedCase,metrics:
+  Object.fromEntries(Object.entries(combinedCase.metrics).reverse())}]) {
+  for(const selected of [call('corePerformanceMetrics',candidate),
+    call('summaryMetrics',{category:'generation_performance',cases:[candidate]})]) {
+    assert.equal(selected.filter(m=>m.key==='total_token_throughput').length,1);
+    assert.equal(selected.find(m=>m.key==='total_token_throughput').value,60);
+    assert.ok(thinkingKeys.every(key=>selected.some(m=>m.key===key)));
+    assert.ok(!selected.some(m=>m.parts[0]==='token_throughput'));
+  }
+  assert.deepEqual(call('servingMetric',candidate),combinedCase.metrics.original);
+  const summary=call('summaryMetrics',{category:'generation_performance',cases:[candidate]});
+  assert.ok(summary.some(m=>m.key==='truncated_requests' && m.value===0));
+  assert.ok(summary.some(m=>m.key==='excluded_requests' && m.value===1));
+}
+assert.equal(JSON.stringify(combinedCase),combinedBefore);
 // Categories, not arbitrary task names, determine summary/diagnostic parents.
 const grouped=call('reportTaskGroups',[
   {name:'ceval',category:'model_service_quality'},

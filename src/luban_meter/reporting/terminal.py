@@ -160,6 +160,21 @@ def table_rows(cells, sizes):
 
 
 def metric_lines(entries, width, verbose=False):
+    averages = [(path, item) for path, item in entries
+                if "mean" in item and not any(
+                    key in item for key in (
+                        "median", "p50", "p90", "p95", "p99", "p999",
+                        "min", "max", "stddev", "std", "variance",
+                        "percentiles",
+                    )
+                )]
+    entries = [(path, item) for path, item in entries
+               if path not in {p for p, _ in averages}]
+    for path, item in averages:
+        mean, _, _, unit, count = distribution_values(item)
+        yield from boxed([
+            safe_text(path), f"Mean={mean} {unit} N={count}",
+        ], width)
     context = []
     if not verbose:
         # Counts/durations are context, not distributions. Keep all saved
@@ -256,7 +271,8 @@ def metric_lines(entries, width, verbose=False):
                 lines.extend((
                     f"mean/value={value}", f"P50={p50}", f"P95={p95}",
                 ))
-        yield from boxed(lines, width)
+        if lines:
+            yield from boxed(lines, width)
     if context:
         by_view = {}
         for path, item in context:
@@ -268,7 +284,7 @@ def metric_lines(entries, width, verbose=False):
             by_view.setdefault(view, []).append(value)
         for view, values in by_view.items():
             yield "计数/窗口 " + safe_text(view) + ": " + "  ".join(values)
-    for path, item in [*entries, *context]:
+    for path, item in [*entries, *averages, *context]:
         notes = []
         keys = ("condition", "reason")
         if verbose:
@@ -359,6 +375,64 @@ def case_lines(task, case, width, verbose=False):
         yield f"指标 {safe_text(name)}: status=" + safe_text(
             metric.get("status")
         ) + "  boundary=" + safe_text(metric.get("observation_boundary"))
+        values = metric.get("values")
+        phase_counts = (
+            values.get("phase_counts") if isinstance(values, dict) else None
+        )
+        if phase_counts is not None and not verbose:
+            view = metric["values"]["request_view"]
+            for key, label in (
+                ("reasoning_ttft", "thinking TTFT"),
+                ("reasoning_tpot", "thinking TPOT"),
+                ("reasoning_itl", "thinking ITL"),
+                ("reasoning_stream_event_itl", "thinking 流事件间隔"),
+                ("reasoning_duration", "thinking 输出时长"),
+                ("content_duration", "正式回答输出时长"),
+                ("first_content_latency", "首个正式回答延迟"),
+            ):
+                if key not in view:
+                    continue
+                item = view[key]
+                mean, _, p95, unit, count = distribution_values(item)
+                weight = ""
+                if "weight_sum" in item:
+                    weight_unit = (
+                        "Token间隔" if key == "reasoning_itl" else "Token"
+                    )
+                    weight = (
+                        f" 权重总数={number(item['weight_sum'])} {weight_unit}"
+                    )
+                if not item["count"]:
+                    yield f"{label}: 不可用 (N=0){weight}"
+                else:
+                    sample_unit = (
+                        "（事件间隔）"
+                        if item.get("sample_unit") == "event_interval"
+                        else ""
+                    )
+                    percentile = (
+                        f" P95={p95} {unit}" if "p95" in item else ""
+                    )
+                    yield (
+                        f"{label}: Mean={mean} {unit}{percentile} "
+                        f"N={count}{sample_unit}{weight}"
+                    )
+            if "reasoning_tpot" in view:
+                yield (
+                    "thinking TPOT含首输出等待；ITL为单请求平均Token间隔；"
+                    "TPOT/ITL仅按上述权重计算平均值。"
+                )
+            yield "分阶段样本: " + "  ".join(
+                f"{label}={number(phase_counts[key]['value'])}"
+                for key, label in (
+                    ("eligible_requests", "符合统计条件"),
+                    ("excluded_requests", "排除"),
+                    ("truncated_requests", "截断"),
+                    ("interleaved_requests", "通道交错"),
+                )
+                if key in phase_counts
+            )
+            continue
         if metric.get("condition"):
             yield "condition=" + safe_text(metric["condition"])
         entries = metric_entries(metric)
@@ -421,7 +495,7 @@ def case_lines(task, case, width, verbose=False):
                 details.append(f"{key}={number(value)}{unit}")
             if details:
                 yield "  ".join(details)
-        if verbose and any(
+        if verbose and phase_counts is None and any(
             path.startswith("request_view/") for path, _ in entries
         ):
             yield "请求分布: 正式成功请求；ITL/TPOT 的 N 为请求数。"

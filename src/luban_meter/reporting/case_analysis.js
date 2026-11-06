@@ -2,6 +2,18 @@
 const metricNames = {
   ttft:'首 Token 延迟（TTFT）', itl:'Token 间延迟（ITL）',
   tpot:'每输出 Token 耗时（TPOT）', e2el:'端到端延迟（E2EL）',
+  reasoning_duration:'思考输出时长', content_duration:'正式回答输出时长',
+  reasoning_ttft:'思考首Token延迟（TTFT）', reasoning_tpot:'思考每Token耗时（TPOT）',
+  reasoning_itl:'思考Token间延迟（ITL）', reasoning_stream_event_itl:'思考流事件间隔',
+  first_content_latency:'首个正式回答延迟', phase_counts:'分阶段样本',
+  eligible_requests:'符合统计条件的请求', excluded_requests:'排除请求',
+  truncated_requests:'输出截断请求', missing_finish_requests:'缺少结束原因',
+  other_finish_requests:'其他结束原因',
+  interleaved_requests:'通道交错请求（全部已观察请求）',
+  reasoning_single_event_requests:'思考单事件样本（符合统计条件）',
+  content_single_event_requests:'正文单事件样本（符合统计条件）',
+  missing_reasoning_requests:'缺少思考通道（符合统计条件）',
+  missing_content_requests:'缺少正文通道（符合统计条件）',
   request_throughput:'请求吞吐量', output_token_throughput:'输出 Token 吞吐量',
   input_token_throughput:'输入 Token 吞吐量', total_token_throughput:'总 Token 吞吐量',
   input_tokens:'实际输入 Token', output_tokens:'实际输出 Token',
@@ -54,9 +66,10 @@ const metricNames = {
   turn_context_tokens:'单轮上下文 Token', total_prefill_tokens:'Prefill Token 合计',
   prefill_token_rate:'Prefill Token 速率', peak_turn_context_tokens:'单轮上下文峰值'
 };
-const statNames = {mean:'Mean · 均值', median:'Median · 中位数',
-  min:'Min · 最小值', max:'Max · 最大值', stddev:'Std · 标准差',
-  std:'Std · 标准差', p999:'P99.9'};
+const statNames = {mean:'均值', median:'中位数',
+  min:'最小值', max:'最大值', stddev:'标准差',
+  std:'标准差', p999:'P99.9'};
+const reasoningWeightUnits = {reasoning_tpot:'Token',reasoning_itl:'Token间隔'};
 const statisticKey = key => /^(mean|median|min|max|stddev|std|variance|p\d+(?:\.\d+)?)$/.test(key);
 const numeric = value => typeof value === 'number' && Number.isFinite(value);
 const displayUnit = unit => ({ratio:'%',sample:'样本',token:'token'}[unit] || unit || '未注明单位');
@@ -203,17 +216,21 @@ function summaryMetrics(task) {
     // Run-level throughput metrics saved under other providers must not
     // leak into per-Case summary columns.
     const provider = providers.get(c);
-    if (provider !== null && m.parts[0] !== provider) return;
+    const phase=phasePerformanceViews.some(([view,key])=>
+      m.key===key && m.parts.at(-2)===view) || m.parts.at(-2)==='phase_counts';
+    if (provider !== null && m.parts[0] !== provider && !phase) return;
     all.set(JSON.stringify([m.path,m.unit]),m);
   }));
   const available = [...all.values()];
   if (task.category !== 'generation_performance')
     return available.filter(m=>!isDimension(m));
   const core = available.filter(m =>
-    /\/request_view\/(ttft|tpot)$|\/service_view\/(output_token_throughput|total_token_throughput)$/.test(m.path));
+    /\/request_view\/(ttft|tpot|reasoning_duration|content_duration|first_content_latency|reasoning_ttft|reasoning_tpot|reasoning_itl|reasoning_stream_event_itl)$|\/service_view\/(output_token_throughput|total_token_throughput)$|\/phase_counts\/(truncated_requests|excluded_requests)$/.test(m.path));
+  const order=['ttft','tpot','output_token_throughput','total_token_throughput','reasoning_ttft',
+    'reasoning_tpot','reasoning_itl','reasoning_stream_event_itl','reasoning_duration',
+    'content_duration','first_content_latency','truncated_requests','excluded_requests'];
   return core.length ? core.sort((a,b)=>
-    ['ttft','tpot','output_token_throughput','total_token_throughput'].indexOf(a.key)-
-    ['ttft','tpot','output_token_throughput','total_token_throughput'].indexOf(b.key)) : available.slice(0,4);
+    order.indexOf(a.key)-order.indexOf(b.key)) : available.slice(0,4);
 }
 const taskCategoryNames = {generation_performance:'推理性能评测',
   model_service_quality:'模型能力评测'};
@@ -276,10 +293,20 @@ function renderSummaries() {
       get:r=>r.c.parameters?.[key]});
     for (const metric of summaryMetrics(task)) {
       const key = JSON.stringify([metric.path,metric.unit]);
-      columns.push({title:({ttft:'TTFT',tpot:'TPOT'}[metric.key] || readable(metric.key))+(metric.kind==='statistics'?' Mean':'')+
+      columns.push({title:({ttft:'TTFT',tpot:'TPOT'}[metric.key] || readable(metric.key))+(metric.kind==='statistics'?' 均值':'')+
         '（'+displayUnit(metric.unit)+'）',numeric:true,sortable:true,unit:metric.unit,
         get:r=>{const m=r.metrics.get(key);return m?.kind==='statistics'?
           m.stats.find(([k])=>k==='mean')?.[1]:m?.value;}});
+      if(task.category==='generation_performance' &&
+        phasePerformanceViews.some(([view,name])=>
+          metric.key===name && metric.parts.at(-2)===view))
+        columns.push({title:readable(metric.key)+
+          (metric.raw.sample_unit==='event_interval'?' 有效间隔数（N）':' 有效样本数（N）'),
+          numeric:true,sortable:true,get:r=>r.metrics.get(key)?.count});
+      if(Object.hasOwn(reasoningWeightUnits,metric.key))
+        columns.push({title:readable(metric.key)+' 权重总数（'+
+          reasoningWeightUnits[metric.key]+'）',numeric:true,sortable:true,
+          get:r=>r.metrics.get(key)?.raw.weight_sum});
     }
     for (const [a,b,title] of [['complete','failed','完成 / 失败'],
       ['incomplete','not_started','未完成 / 未开始']])
@@ -357,9 +384,21 @@ function barChart(parent,points,unit,title,horizontal=false) {
 function renderPerformance(parent,metric) {
   if (!metric) {parent.append(el('p','当前 Case 没有可展示的指标','empty'));return;}
   parent.append(el('h3',metricTitle(metric)));
-  parent.append(el('p','已保存样本数 / count：'+valueText(metric.count)+
-    (metric.raw?.weight_sum!=null?' · 权重总和：'+valueText(metric.raw.weight_sum):''),
+  if(metric.count===0 && phasePerformanceViews.some(([,key])=>key===metric.key))
+    parent.append(el('p','不可用：没有可计算该指标的有效样本。','empty'));
+  const sampleLabel=metric.raw?.sample_unit==='event_interval'?
+    '有效事件间隔数（N）：':'已保存样本数（N）：';
+  parent.append(el('p',sampleLabel+valueText(metric.count)+
+    (metric.raw?.weight_sum!=null?' · 权重总和：'+valueText(metric.raw.weight_sum)+
+      (reasoningWeightUnits[metric.key]?' '+reasoningWeightUnits[metric.key]:''):''),
     'analysis-note'));
+  const thinkingNotes={
+    reasoning_ttft:'从请求开始到首个思考输出；请求等权统计。',
+    reasoning_tpot:'从请求开始到最后一个思考输出，除以思考Token数（服务上报优先，缺失时可由Token ID补充）；包含首输出等待，仅按Token数加权计算平均值。缺少有效计数时不可用。',
+    reasoning_itl:'每个请求的思考输出跨度除以R−1（R为服务上报或Token ID补充的思考Token数，须大于1）。仅按R−1加权计算平均值，并非逐Token实测间隔。',
+    reasoning_stream_event_itl:'同一请求内相邻思考流事件的时间差，每个间隔等权，不跨请求相减。一个事件可能包含多个Token；单事件没有间隔样本。'
+  };
+  if(thinkingNotes[metric.key])parent.append(el('p',thinkingNotes[metric.key],'analysis-note'));
   const grid=el('div',undefined,'analysis-grid'),tableBox=el('div');
   const rows=metric.kind==='statistics'?statsFor(metric):[{key:'value',value:metric.value}];
   dataTable(tableBox,[{title:'统计量',get:r=>r.key==='value'?'聚合值':statLabel(r.key)},
@@ -389,6 +428,12 @@ const calculatorViews = [
 const corePerformanceViews = [
   ...calculatorViews, ['service_view','total_token_throughput']
 ];
+const phasePerformanceViews = [
+  ['request_view','reasoning_ttft'], ['request_view','reasoning_tpot'],
+  ['request_view','reasoning_itl'], ['request_view','reasoning_stream_event_itl'],
+  ['request_view','reasoning_duration'], ['request_view','content_duration'],
+  ['request_view','first_content_latency']
+];
 function calculatorProviderName(c) {
   for (const [name, metric] of Object.entries(c?.metrics||{})) {
     const values=metric?.values;
@@ -400,9 +445,11 @@ function calculatorProviderName(c) {
 function corePerformanceMetrics(c) {
   const available=metricsFor(c);
   const provider=calculatorProviderName(c);
-  return corePerformanceViews.flatMap(([view,key])=>
+  const core=corePerformanceViews.flatMap(([view,key])=>
     available.filter(m=>m.key===key && m.parts.at(-2)===view &&
       (provider===null || m.parts[0]===provider)));
+  return core.concat(phasePerformanceViews.flatMap(([view,key])=>
+    available.filter(m=>m.key===key && m.parts.at(-2)===view)));
 }
 // Saved request/service fields identify the online calculator independently;
 // missing distributions do not hide available service statistics.
@@ -449,7 +496,7 @@ function renderSessionTurns(parent,c) {
           turnSeries.map(([,title])=>title).join('、')+' 样本数';
       }},
     ...turnSeries.flatMap(([key,title])=>[
-      {title:title+' Mean',numeric:true,sortable:true,
+      {title:title+' 均值',numeric:true,sortable:true,
         unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.mean},
       {title:title+' P99',numeric:true,sortable:true,
         unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.p99}])],
@@ -457,15 +504,15 @@ function renderSessionTurns(parent,c) {
   barChart(section,indexes.map(index=>({label:'第 '+index+' 轮',
     value:at('ttft_ms_by_turn',index)?.mean,
     count:at('ttft_ms_by_turn',index)?.count})),
-    at('ttft_ms_by_turn',indexes[0])?.unit||'ms','各轮 TTFT Mean');
+    at('ttft_ms_by_turn',indexes[0])?.unit||'ms','各轮TTFT均值');
   const scalarValue=key=>session[key]?.value;
   const statsValue=key=>session[key]?.mean;
   const summary=[['已结束会话',scalarValue('sessions_finished')],
-    ['计划轮次 Mean',statsValue('planned_turns')],
-    ['完成轮次 Mean',statsValue('completed_turns')],
+    ['计划轮次均值',statsValue('planned_turns')],
+    ['完成轮次均值',statsValue('completed_turns')],
     ['未开始轮次',scalarValue('not_started_turns')],
     ['发送失败轮次',scalarValue('sent_failed_turns')],
-    ['会话耗时 Mean（ms）',statsValue('session_latency')]]
+    ['会话耗时均值（ms）',statsValue('session_latency')]]
     .filter(([,value])=>value!=null)
     .map(([label,value])=>label+'：'+valueText(value));
   if (summary.length)
@@ -519,6 +566,18 @@ function renderQuality(parent,metrics) {
     section.append(raw);parent.append(section);
   }
 }
+function renderPhaseCounts(parent,c) {
+  const counts=metricsFor(c).filter(m=>m.parts.at(-2)==='phase_counts');
+  if(!counts.length)return;
+  const section=el('div',undefined,'analysis-group');
+  section.append(el('h3','分阶段统计口径与样本数量'));
+  section.append(el('p','仅成功且 finish_reason=stop 的请求进入分布；缺失阶段不计入该阶段样本数。'+
+    '输出时长为客户端收到本通道首尾事件的时间差，单事件为 0；通道跨度可能重叠，相加不等于总耗时。'+
+    '截断和其他排除请求的观察时长仅保留在请求明细中。','analysis-note'));
+  dataTable(section,[{title:'样本范围',get:m=>readable(m.key)},
+    {title:'请求数',numeric:true,get:m=>m.value}],counts,'stat-table');
+  parent.append(section);
+}
 function renderAnalysis() {
   const ti=Number($('analysis-task').value),ci=Number($('analysis-case').value);
   const task=tasks[ti],c=task?.cases[ci],context=$('analysis-context'),content=$('analysis-content');
@@ -540,6 +599,7 @@ function renderAnalysis() {
     context.append(el('p','结果存在异常或未完成状态，请结合指标状态、覆盖率与诊断阅读。','analysis-note'));
   if(task.category==='generation_performance') {
     renderPerformance(content,metrics.find(m=>m.path===$('analysis-metric').value));
+    renderPhaseCounts(content,c);
     renderSessionTurns(content,c);
   } else {
     context.append(el('p','完成样本、答案解析和参与评分是不同口径；下表仅展示已保存字段。样本/计数可能按样本、Token 或字节统计，请结合原始口径阅读。','analysis-note'));

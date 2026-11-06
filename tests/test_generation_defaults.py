@@ -8,7 +8,46 @@ import pytest
 from luban_meter.benchmarking.model_service_quality.common.client import (
     OpenAIClient,
 )
+from luban_meter.cli import _build_parser
 from luban_meter.core.planning import build_plan
+
+
+@pytest.mark.parametrize("command", ["plan", "run"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_thinking_metrics_cli_boolean_flags(command, enabled):
+    flag = "--thinking-metrics" if enabled else "--no-thinking-metrics"
+    parser, _ = _build_parser()
+    parsed = parser.parse_args([command, flag])
+    assert parsed.thinking_metrics is enabled
+
+
+@pytest.mark.parametrize("scenario", ["online_serving", "multi_turn_serving"])
+@pytest.mark.parametrize("enabled", [None, False, True])
+def test_thinking_metrics_opt_in_preserves_explicit_metric_selection(
+    tmp_path, scenario, enabled,
+):
+    dataset = tmp_path / "data.json"
+    dataset.write_text('[]')
+    parameters = {
+        "scenario": scenario, "model": "mock",
+        "dataset_path": str(dataset), "metrics": ["streaming_performance"],
+    }
+    if enabled is not None:
+        parameters["thinking_metrics"] = enabled
+    plan = build_plan(parameters)
+    saved = plan["tasks"][0]["cases"][0]["parameters"]
+    assert saved["thinking_metrics"] is (enabled is True)
+    assert saved["metrics"] == ["streaming_performance"]
+    assert saved["request_params"] == {}
+
+
+@pytest.mark.parametrize("enabled", ["true", 1, None])
+def test_thinking_metrics_requires_boolean(enabled):
+    with pytest.raises(ValueError, match="thinking_metrics"):
+        build_plan({
+            "scenario": "online_serving", "model": "mock",
+            "thinking_metrics": enabled,
+        })
 
 
 @pytest.mark.parametrize(

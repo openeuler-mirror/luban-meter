@@ -435,7 +435,9 @@ def test_real_cli_pipeline_preserves_saved_results(
     raw_before = raw.read_bytes()
     assert len(json.loads(raw_before)["requests"]) == 3
     assert (path.parent / "report.html").is_file()
-    assert set(case["metrics"]) == {"streaming_performance"}
+    assert set(case["metrics"]) == {
+        "streaming_performance", "streaming_phase_timing",
+    }
     metric = case["metrics"]["streaming_performance"]
     case_path = raw.with_name(raw.stem + ".result.json")
     assert json.loads(case_path.read_text())["metrics"][

@@ -201,7 +201,10 @@ const names={success:'成功',partial_failed:'部分失败',failed:'失败',inte
 const fmt=v=>v==null?'—':typeof v==='number'?Number(v.toPrecision(7)).toLocaleString('zh-CN',{maximumFractionDigits:7}):String(v);
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
 function taskDisplayName(name) {
-  const labels={performance:'推理性能评测',knowledge_accuracy:'模型能力评测'};
+  const labels={performance:'推理性能评测',knowledge_accuracy:'模型能力评测',
+    thinking_smoke:'思考能力冒烟验证',thinking_single:'单轮思考验证',
+    thinking_multi:'多轮思考验证',thinking_truncated:'思考输出截断验证',
+    content_only:'仅正文输出验证',invalid_model:'无效模型失败验证'};
   return Object.hasOwn(labels,name)?labels[name]:name;
 }
 function scenarioDisplayName(name) {

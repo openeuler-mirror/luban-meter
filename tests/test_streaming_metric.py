@@ -76,17 +76,17 @@ def streaming(facts):
 
 
 @pytest.mark.parametrize("scenario", ["online_serving", "multi_turn_serving"])
-def test_both_benchmarks_plan_one_streaming_metric(tmp_path, scenario):
+def test_both_benchmarks_plan_default_streaming_metrics(tmp_path, scenario):
     dataset = tmp_path / "conversations.jsonl"
     dataset.write_text('{}\n')
     task = build_plan({
         "scenario": scenario, "model": "mock", "dataset_path": str(dataset),
     })["tasks"][0]
     assert benchmarks.get(scenario).default_metrics == (
-        "streaming_performance",
+        "streaming_performance", "streaming_phase_timing",
     )
     assert task["cases"][0]["parameters"]["metrics"] == [
-        "streaming_performance"
+        "streaming_performance", "streaming_phase_timing",
     ]
 
 

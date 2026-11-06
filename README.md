@@ -233,12 +233,213 @@ TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事�
   相对请求开始的事件时间，单位毫秒；
 - `first_content_latency_ms`：首个非空正文延迟，无正文时为`null`；
 - `has_content`、`finish_reason`及服务返回的`usage`；
-- `reasoning_tokens`：仅保存服务`completion_tokens_details.reasoning_tokens`，
-  未提供时为`null`。
+- `reasoning_tokens`：优先保存服务`usage.completion_tokens_details.reasoning_tokens`；
+  开启思考指标后，服务计数缺失/null时可按下述Token ID规则补充，否则为`null`。
 
 只有思考的性能响应仍视为成功，并标记`has_content=false`；完全没有有效输出仍失败。
 输出Token总数沿用服务`usage.completion_tokens`，不再额外累加思考Token，
 也不按字符或事件估算缺失计数；需确认被测服务的总数包含思考，才能按全部输出比较吞吐。
+
+### thinking与正式回答的分阶段计时
+
+单轮及多轮在线Chat性能默认启用独立指标`streaming_phase_timing`。
+该指标复用原始流事件时间，不增加模型调用；普通Completions接口返回不可用。
+显式设置`metrics`会覆盖默认列表，需要保留此指标才能生成分阶段汇总。
+
+思考补充指标需显式设置`thinking_metrics=true`，默认`false`；CLI对应
+`--thinking-metrics`和`--no-thinking-metrics`。关闭时仍计算正式回答输出时长和
+首个正式回答延迟，但不计算或保存thinking派生指标、思考通道计数与交错计数，
+终端和HTML也不展示这些内容。原始思考文本、事件时间、服务用量及原有校验保持不变。
+该开关仅控制客户端统计，不控制模型是否思考，不自动添加服务请求参数，
+也不覆盖显式`metrics`选择。例如，任务JSON中可设置：
+
+```json
+{
+  "name": "thinking_test",
+  "scenario": "online_serving",
+  "model": "served-model",
+  "thinking_metrics": true
+}
+```
+
+下表中`reasoning_`指标及下文对应统计规则仅在开启该开关时生效。
+
+| 指标（`values.request_view`） | 计算方法 | 单位 |
+|---|---|---|
+| `reasoning_duration` | 最后一个thinking事件时间减第一个thinking事件时间 | ms |
+| `content_duration` | 最后一个正文事件时间减第一个正文事件时间 | ms |
+| `first_content_latency` | 第一个正文事件时间减请求开始时间 | ms |
+| `reasoning_ttft` | 第一个thinking事件时间减请求开始时间 | ms |
+| `reasoning_tpot` | `(最后一个thinking事件时间−请求开始时间)/R`，R>0 | ms/token |
+| `reasoning_itl` | `(最后一个thinking事件时间−第一个thinking事件时间)/(R−1)`，R>1 | ms/token |
+| `reasoning_stream_event_itl` | 同一请求内相邻thinking流事件的时间差 | ms |
+
+`R`为请求记录中的`reasoning_tokens`，优先使用服务上报值，缺失/null时才尝试
+Token ID补充计数；不使用事件数、字符数、正文Token数或对文本重新分词估算。
+thinking TTFT和TPOT包含首个thinking事件前的等待；thinking ITL排除这段等待。
+在请求成功且符合分阶段统计条件的前提下，补充计数后`reasoning_tokens`仍缺失、为`null`
+或为0时，thinking TPOT/ITL不可用，时间类补充指标仍可计算；R=1时只有ITL不可用。
+服务返回负值、布尔值、小数或字符串等非法`reasoning_tokens`，或非null且非对象的
+`completion_tokens_details`时，沿用既有解析校验：整个请求失败，全部分阶段指标
+被排除，也不进入整体指标的成功请求分布；不将非法值转换为缺失计数。
+只有一个thinking事件时，没有流事件间隔样本；若R>1，Token ITL的观察值为0，
+但不能解释为引擎内部各Token生成耗时为0。
+这些thinking指标仅作补充，整体`streaming_performance`的TTFT、TPOT、ITL、
+E2EL等仍按原公式和原样本范围计算，覆盖thinking与正文；不新增正文TPOT/ITL。
+
+**如何判断是否需要Token ID补充计数**
+
+原生返回`usage.completion_tokens_details.reasoning_tokens`的服务，只需开启
+`thinking_metrics`即可使用其原生思考Token计数，无需为此配置`return_token_ids`
+和`tokenizer`。输入生成、上下文检查等其他功能对tokenizer的要求仍按原规则处理。
+`completion_tokens`和`total_tokens`是整体计数，不能代替思考Token数。
+
+| 服务返回情况 | 思考指标配置 |
+|---|---|
+| `reasoning_tokens`为合法非负整数 | 只需`thinking_metrics=true`；合法0也采用服务值，不触发补充计数 |
+| `reasoning_tokens`缺失或为`null` | 如需思考TPOT、ITL均值，还需显式设置`request_params.return_token_ids=true`并配置匹配模型的`tokenizer`；服务须支持返回原始Token ID，格式须满足下述计数条件 |
+| 没有原生计数，也无法可靠使用Token ID补充 | 只开启`thinking_metrics`仍可按独立思考事件计算思考TTFT、时长等时间类指标；思考TPOT、ITL保留缺失及原因 |
+
+尚不清楚服务能力时，建议先用curl发一次小样本流式请求；这不是每次压测前的必需
+步骤，LuBan-Meter也不会自动探测。地址、模型、鉴权、思考模式及其他影响响应的
+参数应与压测配置一致。`thinking_metrics`只控制指标计算，不开启模型的思考模式。
+以下为原生计数检查示例；如服务要求鉴权或额外的思考参数，需按实际配置补充：
+
+```bash
+curl -sS -N http://localhost:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "served-model",
+    "messages": [
+      {"role": "user", "content": "请计算1+1，简短回答。"}
+    ],
+    "stream": true,
+    "stream_options": {"include_usage": true},
+    "max_tokens": 1024
+  }'
+```
+
+检查末尾携带`usage`的SSE事件，计数可能与文本分属不同事件。例如以下响应摘录
+表示服务原生上报了100个思考Token，无需请求Token ID：
+
+```json
+{
+  "usage": {
+    "completion_tokens": 120,
+    "completion_tokens_details": {"reasoning_tokens": 100}
+  }
+}
+```
+
+检查时应确认模型实际输出了独立的`delta.reasoning`或`delta.reasoning_content`
+事件，且请求以`finish_reason=stop`正常结束；因长度限制截断时，应调整输出上限
+后再检查。单次响应缺少计数，只能说明该次请求没有可用原生计数，不能据此断言
+服务在所有配置下都不支持。服务或模型版本、思考配置变化后应重新确认。
+
+当上述字段缺失或为`null`，且服务支持返回原始Token ID时，可在任务中增加以下
+配置。服务同时返回合法原生计数时，仍优先采用原生值：
+
+```json
+{
+  "thinking_metrics": true,
+  "request_params": {"return_token_ids": true},
+  "tokenizer": "/models/matching-model"
+}
+```
+
+`tokenizer`必须与被测模型匹配，并且可由运行LuBan-Meter的进程访问。
+工具优先复用输入准备时已加载的tokenizer；否则仅按显式`tokenizer`加载，
+不会把服务端模型别名当作补充计数的下载地址。资源每个Case准备一次，加载失败
+仅使补充计数不可用，原有输入生成或上下文检查必需的tokenizer错误处理保持不变。
+`return_token_ids`必须在原请求发送前设置，不自动添加、不探测或重发模型请求；
+不支持此字段的服务应省略它，服务拒绝请求时仍按原有HTTP失败规则处理。
+
+首版读取响应首块的`prompt_token_ids`和各`choices[0].token_ids`，拼接生成ID，
+要求ID有效且总数等于服务`usage.completion_tokens`；提供了提示词ID时，其数量
+也须等于`usage.prompt_tokens`。仅支持tokenizer中各自为一个Token的
+`<think>`、`</think>`以及一个完整、非嵌套的思考块，边界标记本身不计入R。
+支持生成内容以`<think>`开始（之前只允许空白），也支持提示词以未闭合的
+`<think>`加可选空白结束。提示词中的ID不计入生成Token数。
+未知标记、多块/嵌套、未闭合、ID缺失或数量不一致等情况保留缺失原因，不猜测数量，
+不因此新增请求失败。合法服务计数包括0，均优先使用；非法服务计数仍令请求失败。
+
+补充计数在原有请求结束时间固定后执行。只有ID、没有文本的SSE事件不增加输出
+事件或时间戳；同事件内多个Token不拆成虚构的Token时间线，ITL仅计算平均值。
+该功能不从正文`<think>`文本拆分时间通道，时间指标仍依赖独立reasoning通道。
+原始`usage`和整体输入/输出Token计数不被改写；额外ID传输、保存和计数会增加
+客户端开销，Case窗口仍包含实际发生的工作，实际性能数值可能随之变化。
+
+开启开关后，请求记录另保存以下诊断字段：
+
+- `reasoning_tokens_source`：`service_usage`、`token_ids`或`null`；
+- `reasoning_tokens_reason`：不可用原因，例如`token_ids_not_requested`、
+  `tokenizer_not_configured`、`missing_output_token_ids`、
+  `output_token_ids_count_mismatch`、`thinking_start_unavailable`、
+  `incomplete_thinking_block`；成功取得计数时为`null`；
+- `token_id_observation`：实际收到的提示词ID、原始生成ID块和冲突诊断；
+- `reasoning_token_counting`：补充计数使用的tokenizer、边界ID和初始思考状态。
+
+异常Unicode、NaN/Infinity等非法ID诊断采用ASCII JSON转义文本保存，不参与计数。
+正常整数ID数组保持原值；原始请求JSON及包含请求明细的完整HTML仍可正常读取。
+
+Case的`streaming_phase_timing.metadata`按符合正常stop条件的请求汇总计数来源和
+缺失原因；该数量不替代TPOT、ITL各自的有效样本数。统一日志记录资源准备、来源、
+缺失原因及异常堆栈，不输出提示词、回答或Token ID列表。
+
+这些是客户端观察跨度，包含输出期间的客户端可见等待，不是引擎内部纯计算耗时。
+两个输出跨度不包含各自首事件之前的等待；首个正式回答延迟则包含请求开始到正文
+出现的全部等待。两个跨度不要求相加等于E2EL，通道交错时甚至可能重叠。
+同一流事件含两个通道时共用时间戳；只有一个事件的阶段跨度为0，不表示计算耗时为0。
+缺失阶段为`null`，不计入该阶段分母，不把缺失当成0，也不据此断言模型没有思考。
+仅依据独立`reasoning`/`reasoning_content`与`content`字段识别通道，正文中的
+`<think>`标签不拆分；此时正文通道跨度包含标签内文本，不应解读为纯正式回答耗时。
+
+开启`thinking_metrics`时，每个Chat请求的`response.phase_timing`保存时长、首正文延迟，
+thinking TTFT/TPOT/ITL对应的`_ms`字段（TPOT/ITL单位实际为ms/token），以及
+`reasoning_stream_event_itl_samples_ms`间隔列表、
+`reasoning_event_count`、`content_event_count`、`interleaved`和统计资格`status`。
+`interleaved`表示首个正文事件早于最后一个thinking事件；两者同一时间不算交错。
+关闭时该对象仅保存正文时长、首正文延迟、`content_event_count`及统计资格`status`。
+原始`finish_reason`和请求成功失败状态不变，统计资格如下：
+
+| `phase_timing.status` | 含义 | 进入主要分布 |
+|---|---|---|
+| `eligible` | 成功、`finish_reason=stop`且有通道时间记录 | 存在的阶段参与 |
+| `truncated` | `finish_reason=length` | 否，保留观察时长 |
+| `missing_finish` / `other_finish` | 结束原因缺失或其他结束原因 | 否，保留观察时长 |
+| `failed` | 请求失败或超时 | 否，阶段值为`null` |
+
+排除作用于整个请求，即使thinking已经结束而正文才截断，也同时排除两个阶段。
+成功返回但没有结束原因的EOF不作为正常结束。失败流不额外保存部分输出。
+除thinking TPOT/ITL只计算平均值外，每项分布独立保存`count`、均值、中位数、
+P50/P90/P95/P99/P999、最小值、最大值和标准差；无有效样本时`count=0`，统计值为`null`。
+thinking TTFT和已有时长按请求等权，分位数线性插值。
+thinking TPOT按R加权，ITL按R−1加权，仅保存平均值，不计算或展示分位数、
+中位数、最小值、最大值或标准差；
+其`count`为有效请求数，`weight_sum`分别为thinking Token数及Token间隔数。
+Case平均TPOT为有效请求的末思考事件延迟之和除以这些请求的R之和；
+平均ITL为有效请求的思考跨度之和除以这些请求的R−1之和。
+两项分别筛选有效样本，不对单请求均值再作简单平均，也不代表逐Token实测间隔。
+仅计算平均值仍需要思考Token数量；计数缺失时不按字符或事件数估算。
+thinking流事件间隔合并符合条件请求内部的间隔样本，每个间隔等权，分位数线性
+插值，`count`为事件间隔数；不跨请求相减，也不把它解释为Token间隔。
+`values.phase_counts`保存总请求、符合条件、排除总数及各排除原因的请求数，
+另保存交错请求数（全部可观察请求）以及单事件和缺失通道数（仅符合统计条件请求）。
+多轮按实际请求汇总，不按会话数计数，也不包含轮间人为等待。
+
+HTML的Case摘要在各补充指标均值旁分别显示有效样本数N，并同时显示每个Case的截断
+和排除请求数；这些数量独立于整体完成/失败数，真实0保留为0。
+thinking TPOT/ITL还显示权重总数；流事件间隔的N标注为有效间隔数。
+Case分析按保存内容提供统计值和样本、权重数量；终端简要显示均值、P95和有效样本数，
+其中thinking TPOT/ITL只显示均值、有效请求数和权重总数，事件指标注明计数单位。
+HTML以“思考首Token延迟（TTFT）”“思考每Token耗时（TPOT）”和
+“思考Token间延迟（ITL）”显示相应指标；中文显示名不改变原始指标键。
+详细统计用`report --format text --verbose`查看。分阶段统计和展示仅支持当前字段结构，
+不提供旧结果适配；需要这些指标时，应使用当前版本重新运行测试。
+统一实例日志按任务、Case和metrics阶段记录有效样本及排除数量，不逐事件记录日志。
+
+### 质量评测的最终输出处理
+
 质量任务保留独立的`reasoning_text`，不从该字段提取答案。生成式能力评测
 （CMMLU/C-Eval、GSM8K、SQuAD、LCSTS、HumanEval）在解析/评分前统一过滤
 回答中内嵌的`<think>...</think>`，不区分标签大小写：
@@ -333,7 +534,9 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 不同会话并行，同一会话同时最多一个在途请求。
 
 `online_serving`和`multi_turn_serving`保留各自的执行方式，默认都使用
-`streaming_performance`计算指标。是否执行多轮由场景决定，不由Metric名称决定。
+`streaming_performance`计算整体指标，同时默认启用`streaming_phase_timing`
+计算Chat分阶段计时。是否执行多轮由场景决定，不由Metric名称决定。
+两种场景都需设置`thinking_metrics=true`才能计算和展示思考补充指标。
 旧任务若显式配置`"metrics": ["multi_turn_performance"]`，需改为
 `"metrics": ["streaming_performance"]`；旧名称已移除，不保留配置别名。
 未指定`metrics`时直接使用场景默认值。已保存结果中的历史

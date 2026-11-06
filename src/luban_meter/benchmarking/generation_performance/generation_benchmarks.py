@@ -25,6 +25,7 @@ from luban_meter.runtime.request_params import (
 )
 
 from .common.lengths import assess_lengths
+from .common.reasoning_tokens import prepare_reasoning_counter
 from .common.tokenization import (
     LENGTH_PARAMETERS,
     LengthSampler,
@@ -61,7 +62,7 @@ def thresholds(entries, allowed):
 class OnlineServingBenchmark(GenerationPerformanceBenchmark):
     profile_modes = frozenset({"requests", "trace"})
     capabilities = frozenset({"client_stream_timing"})
-    default_metrics = ("streaming_performance",)
+    default_metrics = ("streaming_performance", "streaming_phase_timing")
     parameters = {
         **HTTP,
         **DATA,
@@ -72,6 +73,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         **LENGTH_PARAMETERS,
         "num_requests": Parameter(int, 100, minimum=1),
         "tokenizer": Parameter(str, ""),
+        "thinking_metrics": Parameter(bool, False),
         "prompt_field": Parameter(str, "prompt"),
         "input_template": Parameter(str, "prompt_record"),
         "input_format": Parameter(str, ""),
@@ -153,6 +155,9 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             )
         from .online_serving import ActiveRequestTracker
 
+        self.reasoning_token_counter = prepare_reasoning_counter(
+            self.p, self.tokenizer,
+        )
         self.tracker = ActiveRequestTracker()
         self.http_settings = http_settings(self.p)
         self.client = create_http_client(
@@ -261,6 +266,8 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
                     if self.p["endpoint"] == "/v1/chat/completions"
                     else collect_completion_stream
                 ),
+                thinking_metrics=self.p["thinking_metrics"],
+                reasoning_token_counter=self.reasoning_token_counter,
             )
             record["lengths"] = assess_lengths(
                 sample,
