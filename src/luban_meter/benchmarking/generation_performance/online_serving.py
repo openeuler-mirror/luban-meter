@@ -14,6 +14,8 @@ import httpx
 
 from luban_meter.benchmarking.generation_performance.common import (
     http_client,
+    phase_timing,
+    reasoning_tokens,
 )
 from luban_meter.benchmarking.generation_performance.common.statistics import (
     scalar,
@@ -146,6 +148,8 @@ def execute_request(
     scheduled_time: float,
     tracker: ActiveRequestTracker,
     stream_collector: Callable[[Any], Any],
+    thinking_metrics: bool = False,
+    reasoning_token_counter: Any = None,
 ) -> dict[str, Any]:
     """Execute a streaming HTTP request and return a result record.
 
@@ -211,6 +215,14 @@ def execute_request(
         observation=observation,
         error=error,
     )
+    if endpoint == "/v1/chat/completions":
+        if thinking_metrics:
+            reasoning_tokens.supplement_reasoning_tokens(
+                record, observation, reasoning_token_counter,
+            )
+        record["phase_timing"] = phase_timing.request_phase_timing(
+            record, thinking_metrics=thinking_metrics,
+        )
     if response is not None:
         record["http_version"] = response.http_version
     if failure_info is not None:

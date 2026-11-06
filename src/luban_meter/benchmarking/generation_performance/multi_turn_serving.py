@@ -54,6 +54,7 @@ from luban_meter.runtime.request_params import (
 )
 
 from .common.lengths import assess_lengths
+from .common.reasoning_tokens import prepare_reasoning_counter
 from .common.tokenization import LengthSampler, derived_seed, load_tokenizer
 
 logger = get_logger(__name__)
@@ -116,7 +117,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
 
     profile_modes = frozenset({"requests"})
     capabilities = frozenset({"client_stream_timing", "multi_turn_timing"})
-    default_metrics = ("streaming_performance",)
+    default_metrics = ("streaming_performance", "streaming_phase_timing")
     summary_fields = GenerationPerformanceBenchmark.summary_fields + (
         "multi_max_turns",
         "multi_num_sessions",
@@ -148,6 +149,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
         ),
         "max_model_len": Parameter(int, None, minimum=1),
         "tokenizer": Parameter(str, ""),
+        "thinking_metrics": Parameter(bool, False),
         "data_seed": Parameter(int, None, minimum=0),
         "goodput": Parameter(list, [], item_type=str),
         "circuit_breaker": Parameter(float, None, minimum=0.001),
@@ -299,6 +301,9 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
         self.tokenizer = (
             load_tokenizer(self.p) if self.p["max_model_len"] else None
         )
+        self.reasoning_token_counter = prepare_reasoning_counter(
+            self.p, self.tokenizer,
+        )
         self.outputs = LengthSampler.from_parameters(self.p, "output")
         self.seed = seed
         from .online_serving import ActiveRequestTracker
@@ -437,6 +442,8 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             scheduled_time=ticket.scheduled,
             tracker=self.tracker,
             stream_collector=collect_chat_stream,
+            thinking_metrics=self.p["thinking_metrics"],
+            reasoning_token_counter=self.reasoning_token_counter,
         )
         record["lengths"] = assess_lengths(
             {"target_output_tokens": sample["output_budgets"][turn]},

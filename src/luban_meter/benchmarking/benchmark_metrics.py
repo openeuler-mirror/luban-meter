@@ -152,6 +152,20 @@ class StreamingPerformance(Metric):
         }
 
 
+@metrics.register("streaming_phase_timing")
+class StreamingPhaseTiming(Metric):
+    """Thinking/content spans with explicit completion eligibility."""
+
+    requires = frozenset({"client_stream_timing"})
+
+    def compute(self, facts):
+        from .generation_performance.common.phase_timing import (
+            phase_timing_metric,
+        )
+
+        return phase_timing_metric(facts)
+
+
 @metrics.register("engine_performance")
 class EnginePerformance(Metric):
     requires = frozenset({"engine_timing"})
