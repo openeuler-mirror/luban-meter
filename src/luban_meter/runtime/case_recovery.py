@@ -11,10 +11,89 @@ from luban_meter.utils.json_io import write_json_atomic
 logger = get_logger(__name__)
 
 
+def safe_setup_diagnostic(value):
+    """Allow only bounded setup states and integer counts in tombstones."""
+    if not isinstance(value, dict):
+        return {}
+    allowed = {
+        "status": {
+            "pending", "running", "success", "failed", "not_applicable",
+            "observed_mismatch",
+        },
+        "phase": {"seed", "probe", "verify", "capability"},
+        "warmup_policy": {"strict", "observe"},
+        "reason": {
+            "interrupted", "transport_error", "ReadTimeout", "HTTPStatusError",
+            "RuntimeError", "ValueError", "JSONDecodeError",
+            "missing", "invalid", "input_length", "completion",
+            "cache_mismatch",
+        },
+    }
+    result = {
+        key: val for key, val in value.items()
+        if key in allowed and isinstance(val, str) and val in allowed[key]
+    }
+    for key in ("prefix_id", "expected_cached_tokens", "cached_tokens",
+                "prompt_tokens", "seed_completed", "probe_completed",
+                "verify_completed", "warmup_under_hit_prefixes"):
+        val = value.get(key)
+        if type(val) is int and val >= 0:
+            result[key] = val
+    for key in ("warmup_completed", "warmup_fully_matched"):
+        if type(value.get(key)) is bool:
+            result[key] = value[key]
+    summary = value.get("warmup_summary")
+    if isinstance(summary, dict):
+        result["warmup_summary"] = {}
+        for phase in ("probe", "verify", "capability"):
+            rows = summary.get(phase)
+            if not isinstance(rows, list):
+                continue
+            result["warmup_summary"][phase] = [
+                safe_warmup_observation(row) for row in rows
+                if isinstance(row, dict)
+            ]
+    return result
+
+
+def safe_warmup_observation(row):
+    """Retain only numeric cache facts and known observation states."""
+    result = {}
+    for key in ("prefix_id", "expected_cached_tokens",
+                "actual_cached_tokens", "deviation_tokens"):
+        val = row.get(key)
+        if val is None or (type(val) is int and (
+            val >= 0 or key == "deviation_tokens"
+        )):
+            result[key] = val
+    state = row.get("validation_state")
+    if isinstance(state, str) and state in {
+        "matched", "under_hit", "over_hit",
+        "missing", "invalid", "unavailable",
+    }:
+        result["validation_state"] = state
+    return result
+
+
+def save_setup_diagnostic(directory, case_id, value):
+    write_json_atomic(
+        directory / "raw" / f"{case_id}.setup.json",
+        safe_setup_diagnostic(value),
+    )
+
+
 def discard_case(case, directory, reason):
     """Remove sample/request evidence, retaining only an audit tombstone."""
     raw = directory / "raw"
-    for suffix in (".json", ".result.json", ".prepared.json", ".prepared.ack"):
+    setup_path = raw / f"{case['id']}.setup.json"
+    try:
+        setup = safe_setup_diagnostic(json.loads(setup_path.read_text()))
+    except (OSError, ValueError):
+        setup = {}
+    if setup.get("status") == "running":
+        setup.update(status="failed", reason="interrupted")
+    for suffix in (".json", ".result.json", ".prepared.json",
+                   ".prepared.ack", ".setup.json"):
         (raw / f"{case['id']}{suffix}").unlink(missing_ok=True)
     for temporary in raw.glob(f".{case['id']}.*.tmp"):
         temporary.unlink()
@@ -38,6 +117,7 @@ def discard_case(case, directory, reason):
         "status": "discarded",
         "parameters": case["parameters"],
         "reason": reason,
+        **({"setup_diagnostic": setup} if setup else {}),
     }
 
 
@@ -91,7 +171,8 @@ def recover_cases(task, directory, outcome, status):
             write_json_atomic(result_path, row)
         elif saved.get("status") in ("discarded", "skipped"):
             row = saved
-        elif name in started or facts or saved:
+        elif (name in started or facts or saved
+              or (raw / f"{name}.setup.json").exists()):
             p = case["parameters"]
             public = public_parameters(p, schema_for(scenario, p))
             row = discard_case(

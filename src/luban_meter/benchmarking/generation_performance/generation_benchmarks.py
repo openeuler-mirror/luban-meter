@@ -111,16 +111,31 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
     def prepare(self, context):
         self.p = context.parameters
+        self._prepare_inputs(context)
+        from .online_serving import ActiveRequestTracker
+
+        self.reasoning_token_counter = prepare_reasoning_counter(
+            self.p, self.tokenizer,
+        )
+        self.tracker = ActiveRequestTracker()
+        self.http_settings = http_settings(self.p)
+        self.client = create_http_client(
+            self.p["request_timeout"],
+            max_connections=self.http_settings["max_connections"],
+            keepalive_expiry=self.http_settings["keepalive_expiry"],
+        )
+
+    def _prepare_inputs(self, context):
         self.records = None
         self.tokenizer = None
         self.generator = None
-        self.trace_metadata = {}
+        self.input_metadata = {}
         self.input_template = input_templates.get(self.p["input_template"])()
         if self.p["data"] in ("random_token", "burstgpt"):
             self.tokenizer = load_tokenizer(self.p)
             self.generator = TextGenerator(self.tokenizer, self.p)
             if self.p["data"] == "burstgpt":
-                self.generated, self.trace_metadata = prepare_trace(
+                self.generated, self.input_metadata = prepare_trace(
                     context, self.generator
                 )
             else:
@@ -153,18 +168,6 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
                 if self.p["repeat_data"]
                 else min(len(self.records), self.p["num_requests"])
             )
-        from .online_serving import ActiveRequestTracker
-
-        self.reasoning_token_counter = prepare_reasoning_counter(
-            self.p, self.tokenizer,
-        )
-        self.tracker = ActiveRequestTracker()
-        self.http_settings = http_settings(self.p)
-        self.client = create_http_client(
-            self.p["request_timeout"],
-            max_connections=self.http_settings["max_connections"],
-            keepalive_expiry=self.http_settings["keepalive_expiry"],
-        )
 
     def close(self):
         if getattr(self, "client", None) is not None:
@@ -223,7 +226,6 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             collect_chat_stream,
             collect_completion_stream,
         )
-        from .online_serving import execute_request
 
         if self.records is None:
             text = sample["prompt"]
@@ -249,8 +251,10 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         if self.records is not None:
             self.check_input(text, sample)
 
+        payload = self._request_payload(payload, context)
+
         def send(ticket):
-            record = execute_request(
+            record = self._execute_request(
                 client=self.client,
                 request_index=ticket.index,
                 payload=payload,
@@ -275,9 +279,20 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
                 record.get("output_tokens"),
                 self.p,
             )
-            return record
+            return self._decorate_record(record, sample, context)
 
         return context.request(send)
+
+    def _decorate_record(self, record, sample, context):
+        return record
+
+    def _request_payload(self, payload, context):
+        return payload
+
+    def _execute_request(self, **kwargs):
+        from .online_serving import execute_request
+
+        return execute_request(**kwargs)
 
     def stop_after(self, facts):
         from .common.circuit_breaker import (
@@ -302,7 +317,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
                 if hasattr(self, "generated")
                 else {}
             ),
-            **self.trace_metadata,
+            **self.input_metadata,
             "model": self.p["model"],
             "slo_config": {
                 f"{name}_ms": value

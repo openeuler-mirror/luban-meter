@@ -72,7 +72,7 @@ const statNames = {mean:'均值', median:'中位数',
 const reasoningWeightUnits = {reasoning_tpot:'Token',reasoning_itl:'Token间隔'};
 const statisticKey = key => /^(mean|median|min|max|stddev|std|variance|p\d+(?:\.\d+)?)$/.test(key);
 const numeric = value => typeof value === 'number' && Number.isFinite(value);
-const displayUnit = unit => ({ratio:'%',sample:'样本',token:'token'}[unit] || unit || '未注明单位');
+const displayUnit = unit => ({ratio:'%',cache_ratio:'%',ratio_pp:'pp',sample:'样本',token:'token'}[unit] || unit || '未注明单位');
 const readable = key => metricNames[key] ||
   (/^pass_at_\d+$/.test(key) ? 'Pass@' + key.slice(8) : key);
 const metricCache = new WeakMap();
@@ -84,9 +84,14 @@ function metricsFor(c) {
     'environment','error','reason','condition','status','aggregation',
     'percentile_method','observation_boundary']);
   function visit(node, parts, unit='', count=null, boundary='') {
+    if (parts.length===1 && parts[0]==='prefix_cache_hit_rate') {
+      visit(node?.values||{}, [...parts,'values']);return;
+    }
     const path = '/' + parts.map(p => p.replace(/~/g,'~0').replace(/\//g,'~1')).join('/');
     if (node && typeof node === 'object' && !Array.isArray(node)) {
       unit = node.unit ?? unit;
+      if (parts[0]==='prefix_cache_hit_rate' && unit==='ratio')
+        unit = parts.at(-1).endsWith('_deviation')?'ratio_pp':'cache_ratio';
       if (Object.hasOwn(node,'sample_count'))
         count = numeric(node.sample_count) ? node.sample_count : null;
       else if (Object.hasOwn(node,'count') &&
@@ -133,14 +138,14 @@ function valueText(value, unit='', exact=false) {
     return '未采集';
   if (!numeric(value)) return value === '' ? '未采集' : String(value);
   if (exact) return value === '' ? '未采集' : String(value);
-  const scaled = unit === 'ratio' ? value * 100 : value;
+  const scaled = ['ratio','cache_ratio','ratio_pp'].includes(unit) ? value * 100 : value;
   if (scaled !== 0 && Math.abs(scaled) < 0.001) return scaled.toExponential(3);
-  return scaled.toLocaleString('zh-CN', {maximumFractionDigits:unit==='ratio'?2:3});
+  return scaled.toLocaleString('zh-CN', {maximumFractionDigits:['cache_ratio','ratio_pp'].includes(unit)?4:unit==='ratio'?2:3});
 }
 function valueCell(value, unit='') {
   const cell = el('td',valueText(value,unit),'num');
   if (value != null) cell.title = '原始值：' + valueText(value,'',true) +
-    (unit ? ' ' + unit : '');
+    (unit ? ' ' + (['cache_ratio','ratio_pp'].includes(unit)?'ratio':unit) : '');
   return cell;
 }
 function dataTable(parent, columns, records, className='') {
@@ -218,7 +223,7 @@ function summaryMetrics(task) {
     const provider = providers.get(c);
     const phase=phasePerformanceViews.some(([view,key])=>
       m.key===key && m.parts.at(-2)===view) || m.parts.at(-2)==='phase_counts';
-    if (provider !== null && m.parts[0] !== provider && !phase) return;
+    if (provider !== null && m.parts[0] !== provider && !phase && m.parts[0]!=='prefix_cache_hit_rate') return;
     all.set(JSON.stringify([m.path,m.unit]),m);
   }));
   const available = [...all.values()];
@@ -229,8 +234,9 @@ function summaryMetrics(task) {
   const order=['ttft','tpot','output_token_throughput','total_token_throughput','reasoning_ttft',
     'reasoning_tpot','reasoning_itl','reasoning_stream_event_itl','reasoning_duration',
     'content_duration','first_content_latency','truncated_requests','excluded_requests'];
-  return core.length ? core.sort((a,b)=>
-    order.indexOf(a.key)-order.indexOf(b.key)) : available.slice(0,4);
+  const cache=available.filter(m=>m.parts[0]==='prefix_cache_hit_rate' && cacheSummaryKeys.includes(m.key));
+  return [...cache,...(core.length ? core.sort((a,b)=>
+    order.indexOf(a.key)-order.indexOf(b.key)) : available.slice(0,4))];
 }
 const taskCategoryNames = {generation_performance:'推理性能评测',
   model_service_quality:'模型能力评测'};
@@ -245,7 +251,18 @@ function reportTaskGroups(taskList) {
   });
   return [...groups.values()];
 }
+function cacheTarget(c) {
+  return cacheValue(c,'target_rate') ?? c.parameters?.prefix_cache_target;
+}
+function targetHeading(c) {
+  const target=cacheTarget(c);
+  return numeric(target)?'前缀缓存评测 · '+valueText(target,'cache_ratio')+'%':'前缀缓存评测';
+}
 function taskSectionTitle(task) {
+  if(task.scenario==='prefix_cache') {
+    const targets=new Set(task.cases.map(cacheTarget));
+    return targets.size===1?targetHeading(task.cases[0]):'前缀缓存评测';
+  }
   const scenario = scenarioDisplayName(task.scenario || task.category) || '未采集场景';
   const name = taskDisplayName(task.name);
   return !name || task.name === task.scenario || name === scenario ||
@@ -273,6 +290,12 @@ function renderSummaries() {
     const context = shared.map(key=>(parameterNames[key]||key)+'：'+
       valueText(task.cases[0].parameters?.[key]));
     group.append(el('p',context.join(' · '),'muted metric-context'));
+    if(task.scenario==='prefix_cache' && task.cases.length) {
+      task.cases.forEach((c,ci)=>renderCacheSummary(group,task,c,ti,ci));
+      renderCacheComparison(group,task);
+      parents.get(ti).append(group);
+      return;
+    }
     const conditions = new Set(task.category==='generation_performance' ?
       ['max_concurrency','input_tokens','output_tokens'] : []);
     commonKeys.filter(key=>!shared.includes(key)).forEach(key=>conditions.add(key));
@@ -290,6 +313,7 @@ function renderSummaries() {
     const columns = [{title:'Case',get:r=>r.c.id}];
     for (const key of conditions) columns.push({title:parameterNames[key]||key,
       numeric:records.some(r=>numeric(r.c.parameters?.[key])),sortable:true,
+      unit:key==='prefix_cache_target'?'cache_ratio':'',
       get:r=>r.c.parameters?.[key]});
     for (const metric of summaryMetrics(task)) {
       const key = JSON.stringify([metric.path,metric.unit]);
@@ -308,6 +332,7 @@ function renderSummaries() {
           reasoningWeightUnits[metric.key]+'）',numeric:true,sortable:true,
           get:r=>r.metrics.get(key)?.raw.weight_sum});
     }
+    if (task.cases.some(isPrefixCache)) columns.push(...cacheStatusColumns());
     for (const [a,b,title] of [['complete','failed','完成 / 失败'],
       ['incomplete','not_started','未完成 / 未开始']])
       columns.push({title,numeric:true,sortable:true,get:r=>r.c.coverage?.[a],
@@ -318,6 +343,7 @@ function renderSummaries() {
       {title:'详情',get:()=>'',render:(cell,r)=>
         cell.append(link('分析','analysis-'+ti+'-'+r.ci))});
     dataTable(group,columns,records,'summary-table');
+    renderCacheComparison(group,task);
     if (!task.cases.length) group.append(link('任务诊断','task-'+ti));
     parents.get(ti).append(group);
   });
@@ -343,8 +369,8 @@ function rawMetric(parent,metric) {
 function barChart(parent,points,unit,title,horizontal=false) {
   points = points.filter(p=>numeric(p.value));
   if (!points.length) return;
-  const isRatio = unit==='ratio';
-  const values = points.map(p=>isRatio?p.value*100:p.value);
+  const isRatio = unit==='ratio'||unit==='cache_ratio';
+  const values = points.map(p=>isRatio||unit==='ratio_pp'?p.value*100:p.value);
   const lo=Math.min(0,...values),hi=Math.max(isRatio?100:0,...values);
   const span=hi-lo||1;
   const width=760,height=horizontal?Math.max(150,points.length*32+50):260;
@@ -372,7 +398,7 @@ function barChart(parent,points,unit,title,horizontal=false) {
       {x:px-20,y:Math.min(y(v),y(0)),width:40,height:Math.abs(y(v)-y(0))};
     const mark=svgElement('rect',{...attrs,rx:3,fill:'var(--accent)'});
     const tip=svgElement('title',{});
-    tip.textContent=p.label+': '+valueText(p.value,unit)+' '+displayUnit(unit)+
+    tip.textContent=(p.detail||p.label)+': '+valueText(p.value,unit)+' '+displayUnit(unit)+
       (p.count!=null?' · 样本/计数：'+p.count:'');
     mark.append(tip);svg.append(mark);
     text(horizontal?padLeft-10:px,horizontal?py+14:height-12,p.label,horizontal?'end':'middle');
@@ -592,6 +618,7 @@ function renderAnalysis() {
   const navigation=el('p');
   navigation.append(link('测试条件、覆盖率与诊断',id),document.createTextNode(' · '),
     link('返回结果摘要','summary-'+ti+'-'+ci));context.append(navigation);
+  renderCacheDetails(content,c);
   if(c.status==='discarded') {content.append(el('p','已丢弃，不展示有效指标。请查看诊断。','empty'));return;}
   const metrics=metricsFor(c);
   const failedMetrics=Object.entries(c.metrics||{}).filter(([,m])=>m?.error||m?.status==='failed');
@@ -615,8 +642,17 @@ function updateAnalysisMetrics() {
   $('analysis-metric-field').hidden=!performance;
   $('analysis-toolbar').classList.toggle('quality',!performance);
   if(performance) {
-    const metrics=corePerformanceMetrics(c);
-    for(const m of metrics)option(select,m.path,readable(m.key));
+    const performanceMetrics=corePerformanceMetrics(c);
+    const cacheMetrics=metricsFor(c).filter(m=>
+      m.parts[0]==='prefix_cache_hit_rate' && cacheAnalysisKeys.includes(m.key));
+    const metrics=[...performanceMetrics,...cacheMetrics];
+    if (cacheMetrics.length) {
+      for (const [label,items] of [['性能指标',performanceMetrics],['Prefix Cache',cacheMetrics]]) {
+        const group=el('optgroup');group.label=label;
+        items.forEach(m=>option(group,m.path,readable(m.key)));
+        select.append(group);
+      }
+    } else for(const m of metrics)option(select,m.path,readable(m.key));
     select.value=metrics.some(m=>m.path===previous)?previous:(metrics[0]?.path||'');
     select.disabled=!metrics.length;
   }
@@ -627,6 +663,8 @@ function updateAnalysisCases() {
   select.replaceChildren();
   for(const [ci,c] of (task?.cases||[]).entries()) {
     const p=c.parameters||{},conditions=[];
+    if(p.prefix_cache_target!=null)
+      conditions.push('目标命中率 '+valueText(p.prefix_cache_target,'cache_ratio')+'%');
     if(p.max_concurrency!=null)conditions.push('并发 '+p.max_concurrency);
     if(p.input_tokens!=null)conditions.push('输入 '+p.input_tokens);
     if(p.output_tokens!=null)conditions.push('输出上限 '+p.output_tokens);
@@ -675,4 +713,226 @@ function initReportNavigation() {
   });
   links.forEach(a=>a.addEventListener('click',closeMenu));
   window.addEventListener('hashchange',closeMenu);
+}
+
+// Prefix Cache presentation reads saved values and judgments only.
+const cacheLabels = {
+  target_rate:'目标命中率', theoretical_shared_ratio:'理论共享比例',
+  actual_hit_rate:'实际缓存命中率', runtime_deviation:'运行偏差',
+  construction_deviation:'构造偏差', target_deviation:'总体目标偏差',
+  request_coverage:'请求统计覆盖率', token_coverage:'Token 统计覆盖率',
+  successful_request_coverage:'成功集合请求覆盖率',
+  successful_token_coverage:'成功集合 Token 覆盖率',
+  success_rate:'正式请求成功率', input_length_conformance_rate:'输入长度符合率',
+  total_prompt_tokens:'成功请求输入 Token 总数（S）',
+  measured_prompt_tokens:'已测子集输入 Token 总数（M）',
+  total_cached_tokens:'已测子集缓存命中 Token 总数（M）',
+  observed_subset_hit_rate:'已测子集命中率（非完整 Case）'
+};
+Object.assign(metricNames,cacheLabels);
+parameterNames.prefix_cache_target='目标命中率（%）';
+const cacheSummaryKeys=['target_rate','theoretical_shared_ratio','actual_hit_rate',
+  'runtime_deviation','request_coverage','token_coverage'];
+const cacheAnalysisKeys=[...cacheSummaryKeys,'target_deviation'];
+const cacheMetric=c=>c?.metrics?.prefix_cache_hit_rate;
+const isPrefixCache=c=>!!cacheMetric(c) || Object.hasOwn(c?.parameters||{},'prefix_cache_target');
+const cacheValue=(c,key)=>c?.status==='discarded'?null:cacheMetric(c)?.values?.[key]?.value;
+const cacheStates={observed_mismatch:'已完成但命中不符',matched:'符合',under_hit:'命中不足',over_hit:'高于预期',missing:'缺失',valid:'有效',partial:'部分覆盖',unavailable:'不可测',invalid:'无效',
+  passed:'符合',failed:'未通过',unknown:'未知',success:'完成',
+  not_applicable:'不适用',construction_limited:'受构造上限限制'};
+const cacheState=s=>(cacheStates[s||'unknown']||s)+' / '+(s||'unknown');
+function cacheEligible(c) {
+  if (!isPrefixCache(c)) return true;
+  const m=cacheMetric(c);
+  const planned=c.parameters?.num_requests, rate=cacheValue(c,'actual_hit_rate');
+  return c.status==='success' && m?.status==='success' && !m.error &&
+    m.measurement?.status==='valid' && numeric(rate) && rate>=0 && rate<=1 &&
+    Number.isSafeInteger(planned) && planned>0 &&
+    ['submitted_requests','successful_requests','reporting_requests'].every(k=>cacheValue(c,k)===planned);
+}
+const cacheWarmup=c=>c?.setup_diagnostic||cacheMetric(c)?.warmup||{};
+const warmupBool=value=>value===true?'是':value===false?'否':'未采集';
+function renderCacheSummary(parent,task,c,ti,ci) {
+  const panel=el('section',undefined,'cache-summary-case'), p=c.parameters||{};
+  panel.id='summary-'+ti+'-'+ci;
+  panel.tabIndex=-1;
+  const header=el('div',undefined,'cache-summary-header');
+  const title=taskSectionTitle(task)==='前缀缓存评测'?
+    targetHeading(c)+' · '+c.id:c.id;
+  header.append(el('strong',title),el('span',names[c.status]||c.status,'muted'),
+    link('查看分析','analysis-'+ti+'-'+ci));
+  panel.append(header);
+  const grid=el('div',undefined,'cache-summary-grid');
+  function quantity(value,unit,suffix) {
+    return numeric(value)?valueText(value,unit)+suffix:'未采集';
+  }
+  function table(title,rows) {
+    dataTable(grid,[{title,get:r=>r[0]},{title:'结果',get:r=>r[1]}],rows);
+  }
+  table('缓存命中',[
+    ['目标命中率',quantity(cacheTarget(c),'cache_ratio','%')],
+    ...[['实际命中率','actual_hit_rate'],['理论共享比例','theoretical_shared_ratio'],
+      ['请求覆盖率','request_coverage'],['Token 覆盖率','token_coverage']].map(
+      ([label,key])=>[label,quantity(cacheValue(c,key),'cache_ratio','%')]),
+    ['运行偏差',quantity(cacheValue(c,'runtime_deviation'),'ratio_pp',' pp')]
+  ]);
+  const warmup=cacheWarmup(c), metric=cacheMetric(c);
+  const reasons=metric?.measurement?.reasons||[];
+  if(reasons.length)panel.append(el('p',
+    '测量诊断：'+reasons.map(r=>r==='formal_observation_incomplete'?
+      '完整正式请求范围观测不足':r).join('、'),'analysis-note'));
+  table('负载与状态',[
+    ['并发上限',p.max_concurrency],['输入长度',quantity(p.input_tokens,'',' token')],
+    ['输出上限',quantity(p.output_tokens,'',' token')],
+    ['预热',[(warmup.warmup_policy||p.prefix_cache_warmup_policy||'strict'),
+      cacheState(warmup.warmup_status||warmup.status).split(' / ')[0]].join(' · ')],
+    ['测量有效性',cacheState(metric?.measurement?.status).split(' / ')[0]],
+    ['目标达标',cacheState(metric?.target_attainment?.status).split(' / ')[0]]
+  ]);
+  const v=servingMetric(c)?.values||{};
+  const rows=[['完成请求',c.coverage?.complete],['失败请求',c.coverage?.failed]];
+  for(const [label,node,field] of [
+    ['TTFT 均值',v.request_view?.ttft,'mean'],['TPOT 均值',v.request_view?.tpot,'mean'],
+    ['输出吞吐',v.service_view?.output_token_throughput,'value'],
+    ['总吞吐',v.service_view?.total_token_throughput,'value']])
+    rows.push([label,quantity(node?.[field],node?.unit,' '+(node?.unit||''))]);
+  table('请求与性能',rows);
+  panel.append(grid);parent.append(panel);
+}
+function cacheStatusColumns() {
+  return [
+    {title:'预热模式',get:r=>cacheWarmup(r.c).warmup_policy||
+      r.c.parameters?.prefix_cache_warmup_policy||'strict'},
+    {title:'预热完成 / 完全符合',get:r=>warmupBool(cacheWarmup(r.c).warmup_completed)+
+      ' / '+warmupBool(cacheWarmup(r.c).warmup_fully_matched)},
+    {title:'预热不足前缀数',get:r=>cacheWarmup(r.c).warmup_under_hit_prefixes},
+    {title:'三阶段预热',get:r=>cacheState(r.c.setup_diagnostic?.status ||
+      cacheWarmup(r.c).warmup_status)},
+    ...[['measurement','测量有效性'],
+      ['target_attainment','目标达标']].map(([key,title])=>({
+        title,get:r=>cacheState(r.c.status==='discarded'?null:cacheMetric(r.c)?.[key]?.status)}))
+  ];
+}
+function renderCacheDetails(parent,c) {
+  if (!isPrefixCache(c) && !c.setup_diagnostic) return;
+  const section=el('div',undefined,'analysis-group prefix-cache-details');
+  section.append(el('h3','Prefix Cache · 已保存的正式请求统计'));
+  const m=c.status==='discarded'?null:cacheMetric(c);
+  dataTable(section,[{title:'指标',get:r=>cacheLabels[r.key]},
+    {title:'保存值',get:r=>valueText(r.node?.value,r.unit)+
+      (numeric(r.node?.value)?' '+displayUnit(r.unit):'')}],
+    Object.keys(cacheLabels).map(key=>({key,node:m?.values?.[key],
+      unit:key.endsWith('_deviation')?'ratio_pp':m?.values?.[key]?.unit==='ratio'?'cache_ratio':m?.values?.[key]?.unit})));
+  dataTable(section,cacheStatusColumns(),[{c}]);
+  const warmup=cacheWarmup(c);
+  const observations=Object.entries(warmup.warmup_summary||{}).flatMap(
+    ([phase,rows])=>rows.map(row=>({phase,...row})));
+  if (observations.length) {
+    section.append(el('h4','预热 Probe / Verify 与能力检查实测'));
+    dataTable(section,[
+      {title:'阶段',get:r=>r.phase},
+      {title:'prefix_id',numeric:true,get:r=>r.prefix_id},
+      {title:'预期命中 Token',numeric:true,get:r=>r.expected_cached_tokens},
+      {title:'实际命中 Token',numeric:true,get:r=>r.actual_cached_tokens},
+      {title:'偏差 Token',numeric:true,get:r=>r.deviation_tokens},
+      {title:'校验状态',get:r=>cacheState(r.validation_state)}
+    ],observations);
+  }
+  const warmupReasons=warmup.reasons||[];
+  if (warmupReasons.length)
+    section.append(el('p','预热条件异常：'+warmupReasons.join('、'),'analysis-note'));
+  section.append(el('p','预热顺序：全部种入 → 全部探测 → 完整验证。'+
+    'R=已提交正式请求；S=成功请求；M=成功集合中的有效缓存观测。'+
+    '新结果的请求覆盖率使用 R，历史结果的口径见统计范围。'+
+    '缺失实测值显示未采集；子集命中率不能代替整 Case 实际命中率。','analysis-note'));
+  const diagnostics=el('details');
+  diagnostics.append(el('summary','已保存的诊断与统计范围'),
+    el('pre',JSON.stringify({measurement:m?.measurement,warmup:m?.warmup,
+      target:m?.target_attainment,diagnostics:m?.diagnostics,metadata:m?.metadata,
+      setup:c.setup_diagnostic},null,2)));
+  section.append(diagnostics);parent.append(section);
+}
+function cacheComparisonGroups(task) {
+  const groups=new Map();
+  for (const c of task.cases||[]) {
+    if (!isPrefixCache(c)) continue;
+    // Conservative: every recorded parameter except the swept target must match.
+    const parameters=Object.fromEntries(Object.entries(c.parameters||{})
+      .filter(([key])=>key!=='prefix_cache_target' && key!=='prefix_cache_environment'));
+    const key=JSON.stringify(stableConfig(parameters));
+    if (!groups.has(key)) groups.set(key,{parameters,cases:[]});
+    groups.get(key).cases.push(c);
+  }
+  return [...groups.values()];
+}
+function renderCacheComparison(parent,task) {
+  const groups=cacheComparisonGroups(task);
+  if (!groups.length) return;
+  const section=el('div',undefined,'analysis-group prefix-cache-comparison');
+  section.append(el('h3','不同目标命中率的性能对比'),
+    el('p','横轴：目标缓存命中率（%）。其余负载与服务配置相同的 Case 才归为一组。'+
+      '预热符合情况与目标达标状态见表格。'+
+      '* 表示正式统计不可用；Case 编号见柱形悬浮提示和明细。异常 Case 保留诊断，不参加最佳结果推荐。','analysis-note'));
+  const controls=el('div',undefined,'toolbar'),select=el('select'),metric=el('select');
+  select.setAttribute('aria-label','缓存对比条件组');
+  metric.setAttribute('aria-label','缓存对比指标');
+  groups.forEach((g,i)=>option(select,String(i),'条件组 '+(i+1)+' · '+g.cases.length+' Case'));
+  const specs=[['actual_hit_rate','实际缓存命中率','cache_ratio'],
+    ...corePerformanceViews.map(([view,key])=>[key,readable(key),null,view])];
+  specs.forEach(([key,label])=>option(metric,key,label));
+  controls.append(select,metric);section.append(controls);
+  const context=el('details'),chart=el('div'),table=el('div');
+  context.append(el('summary','本组完整测试条件'),el('pre'));
+  section.append(context,chart,table);
+  function draw() {
+    chart.replaceChildren();table.replaceChildren();
+    const g=groups[Number(select.value)];
+    context.querySelector('pre').textContent=JSON.stringify(g.parameters,null,2);
+    const spec=specs.find(([key])=>key===metric.value);
+    const rows=g.cases.map(c=>{
+      const selected=corePerformanceMetrics(c).find(m=>m.key===spec[0]&&m.parts.at(-2)===spec[3]);
+      return {c,target:cacheValue(c,'target_rate')??c.parameters?.prefix_cache_target,
+        value:spec[0]==='actual_hit_rate'?cacheValue(c,spec[0]):
+          selected?.kind==='statistics'?selected.stats.find(([k])=>k==='mean')?.[1]:selected?.value,
+        unit:spec[2]||selected?.unit};
+    }).sort((a,b)=>(a.target??Infinity)-(b.target??Infinity));
+    const units=[...new Set(rows.filter(r=>numeric(r.value)).map(r=>r.unit))];
+    if (units.length<=1) barChart(chart,rows.map(r=>({
+      label:valueText(r.target,'cache_ratio')+'%'+(cacheEligible(r.c)?'':' *'),
+      detail:r.c.id+(cacheEligible(r.c)?'':' [正式统计不可用]'),value:r.value})),units[0]||spec[2],
+      '横轴：目标命中率（%）；纵轴：'+spec[1]+(spec[3]==='request_view'?' Mean':''));
+    else chart.append(el('p','保存单位不一致，仅展示明细，不混合绘图。','analysis-note'));
+    dataTable(table,[{title:'Case',get:r=>r.c.id},
+      ...['target_rate','theoretical_shared_ratio','actual_hit_rate'].map(key=>({
+        title:cacheLabels[key]+'（%）',numeric:true,unit:'cache_ratio',get:r=>cacheValue(r.c,key)})),
+      ...(spec[0]==='actual_hit_rate'?[]:[{title:spec[1],
+        get:r=>valueText(r.value,r.unit)+(numeric(r.value)?' '+displayUnit(r.unit):'')}]),
+      ...cacheStatusColumns(),
+      {title:'推荐资格',get:r=>usablePerformanceResult(r.c)?'可参与':'排除（统计或执行不完整）'}],rows);
+  }
+  select.onchange=metric.onchange=draw;draw();parent.append(section);
+}
+function renderCacheRequest(parent,response) {
+  const c=response.prefix_cache;
+  if (!c) return;
+  parent.append(el('h4','Prefix Cache 请求事实'));
+  const rows=[
+    ['prefix_id',c.prefix_id],['共享前缀长度',c.shared_prefix_tokens],
+    ['完整输入 Token 数（服务端）',c.prompt_tokens],
+    ['实际缓存 Token 数',c.cached_tokens],
+    ['单请求实际命中率',valueText(c.hit_rate,'cache_ratio')+(numeric(c.hit_rate)?' %':'')],
+    ['缓存统计状态',cacheState(c.usage_state)],
+    ['输入长度符合状态',response.lengths?.condition||'unknown'],
+    ['异常原因',c.reason||'未记录']
+  ];
+  dataTable(parent,[{title:'字段',get:r=>r[0]},{title:'保存值',get:r=>r[1]}],rows);
+}
+
+function reportRowText(row,key) {
+  if (row.metric.startsWith('/prefix_cache_hit_rate/values/') && row.unit==='ratio') {
+    const unit=row.metric.endsWith('_deviation')?'ratio_pp':'cache_ratio';
+    if (key==='value') return valueText(row.value,unit);
+    if (key==='unit') return displayUnit(unit);
+  }
+  return fmt(key==='task'?taskDisplayName(row.task):row[key]);
 }

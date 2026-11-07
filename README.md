@@ -527,6 +527,124 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 原始请求结构和指标公式保持兼容；底层网络错误的`error.type`可能改为HTTPX异常类型。
 连接复用会改变真实客户端开销，新旧结果数值不要求相同，比较时应注明客户端与连接条件。
 
+Completions流式响应在原始请求的`usage`中保存`[DONE]`之前最后一个非null
+usage对象，包括`prompt_tokens_details.cached_tokens`和服务返回的其他字段。
+usage-only尾事件不计为输出事件；重复usage整体替换，不累加，也不从较早事件补字段。
+未收到`[DONE]`便结束、读取中断或收到服务端错误事件时，请求失败，不将部分usage
+作为成功请求事实。此完整性检查仅针对Completions；Chat处理保持不变。
+收到`[DONE]`但没有usage时，仍保留延迟，Token计数为null。
+
+生成性能公共解析器`common.cache_usage.parse_cache_usage`返回`CacheUsage`：
+`state`为`valid`、`missing`或`invalid`，另含`prompt_tokens`、
+`cached_tokens`及诊断`reason`。只读取嵌套的
+`usage.prompt_tokens_details.cached_tokens`；缺失/null不等于零。
+两个计数必须为非负整数（不接受bool或浮点数），且缓存数不得大于输入数；
+非法字段优先于缺失字段判定。不完整或非法计数对的`cached_tokens`为null，
+不估算、不截断；原始usage保留证据。0/0是合法计数对，但不定义命中率。
+解析器不计算命中率、不判断请求成功状态，也未接入多轮统计；非法缓存明细本身
+不改变已有HTTP请求成功状态。输入/输出基础Token计数沿用既有严格校验。
+
+## Prefix Cache 受控 Token ID 输入
+
+`prefix_cache` 按固定长度准备 Completions 输入。规划示例可离线执行：
+
+```bash
+luban-meter plan --config examples/tasks-prefix-cache.json
+```
+
+运行时用 `--tokenizer /path/to/local/tokenizer` 指定与服务一致的本地快照。
+示例中输入 1024 Token，目标 0.5，块长 16，5 组共 100 条。每组重复
+512 个前缀 ID，另有 512 个独立后缀 ID。序号从 0 开始按组轮转。
+请求的 `prompt` 是整数列表，`add_special_tokens=false`。每条样本的
+`source` 保留输入列表及 `prefix_id`。Case 的 `metadata.prefix_cache`
+记录目标、理论共享比例、两者之差（比例单位）和前后缀长度。
+
+设完整长度为 T、块长为 B、目标为 r。默认 `floor` 模式取
+`L = B * floor(min(r*T, T-1)/B)`，`strict` 要求 L 精确等于 r*T。
+正目标若量化为零，配置会被拒绝。100% 目标受最后一个 Token 和整块复用
+限制。0% 使用空前缀，各请求的首块（短输入则整条）互异。
+`prefix_count` 取 1 到正式请求数之间的整数，`kv_cache_block_size`
+应填写服务实配值。`prefix_cache_target` 可作为 Case 矩阵变量。
+
+种子、Tokenizer 词表和输入配置固定时，调度参数不影响正式输入。
+生成器从基础词表的有效非特殊 ID 中抽样，为每组预留不同首块，
+为每条后缀预留不同首块（短后缀则预留全部 ID）。同一位置的冲突
+最多尝试 64 次，仍冲突时准备失败。内存用量随请求数与输入长度的乘积增长。
+本阶段输出的是输入构造条件，真实复用情况需要服务端逐请求缓存计数。
+
+Prefix Cache 的缓存预热在普通 `num_warmups` 完成后执行。运行器调用
+`after_warmup(context)`，随后才启动正式观察窗口和正式调度器。
+普通场景的该钩子默认为空。
+
+缓存预热按“全部种入 → 全部探测 → 完整验证轮”串行执行，每条请求生成
+1 个 Token 并等待 SSE 完成。种入使用共享前缀本身，探测和验证使用独立
+后缀，首块与正式后缀互异。所有响应都要求有效缓存计数、准确输入长度、
+成功结束状态及 1 个输出 Token。种入允许合法的实际命中数，探测和验证
+要求 `cached_tokens == shared_prefix_tokens`。任一失败终止 Case。
+缓存准备允许空可见文本，通过完成状态和 usage 判断请求是否完成。
+
+每个 Case 使用安全随机 Salt，种入、探测、验证和正式请求共用同一个值，
+普通预热使用第二个值。0% 使用第三个 Salt 执行一次独立能力检查，要求
+显式零缓存计数，并记录 `not_applicable`。Salt 仅保存在内存与请求体中，
+响应回显会在写入请求事实之前脱敏。服务端自身的请求体日志仍需负责人管理。
+Salt 隔离缓存复用关系，物理 KV 容量和其他流量干扰仍需控制。
+
+缓存预热标记为 `cache_warmup`，正式请求配额和正式吞吐窗口单独启动。
+成功后的摘要位于 `metadata.cache_warmup`。失败 Case 的
+`setup_diagnostic` 保留阶段、前缀编号、完成数量、预期及有效实际计数、
+原因类别。进程被终止时，恢复逻辑读取逐请求前写入的白名单检查点。
+缓存诊断仅保存结构化字段。缺失计数保持缺失，禁止自动重试补造命中。
+取消会在发请求前、收到流式行时及请求完成后检查。等待网络数据时由
+`request_timeout` 限定读取等待，任务总时限继续由任务子进程管理。
+
+Prefix Cache 场景默认组合 `streaming_performance` 和独立的
+`prefix_cache_hit_rate` Metric。缓存 Metric 只读取正式
+`facts.requests[*].response.usage`，单请求前缀编号与派生值存入
+`response.prefix_cache`。每个 Case 的结果沿用
+`metrics.prefix_cache_hit_rate` JSON 结构，由现有任务和运行结果携带。
+
+集合 R 为实际提交的正式请求，分母取正式调度器的 admitted_requests。
+S 为 R 中成功完成的请求，M 为 S 中具有合法且一致的缓存计数对的请求。
+计划请求数单独记录为 planned_requests。已完成请求数包含成功和失败，
+incomplete_requests 为已提交但缺少终态的数量。
+仅当采集完成、请求身份明确且已提交请求都有终态、S 非空且 M=S=R、
+输入 Token 总分母大于零时，提供 actual_hit_rate。
+observed_subset_hit_rate 始终按 M 的缓存 Token 总数除以输入 Token 总数。
+失败请求不进入 S，缺失和非法计数不进入 M，显式零计数进入 M。
+旧事实缺少请求级前缀编号时，各组诊断归入 unknown。
+
+request_coverage=|M|/|R|，success_rate=|S|/|R|。
+token_coverage 以完整正式请求输入 Token 为分母；存在失败请求或未闭合记录时，
+完整 Token 分母无法保证，返回 null，不使用配置输入长度补造分母。
+successful_request_coverage 与 successful_token_coverage 保留成功集合 S 的
+请求和 Token 覆盖率。输入长度符合率以 S 为分母，任一输入计数未知时为 null。
+total_prompt_tokens 覆盖 S，total_cached_tokens 和 measured_prompt_tokens
+覆盖 M。失败请求缺少计数时，actual_hit_rate=null、目标状态 unknown；
+observed_subset_hit_rate 保留已测子集的真实比例，测量为 partial 或 unavailable。
+旧结果的 request_coverage/token_coverage 仍按历史 S 口径读取，范围见 metadata。
+
+
+构造偏差=理论共享比例−目标，运行偏差=actual_hit_rate−理论共享比例，
+总体目标偏差=actual_hit_rate−目标，均采用 ratio 单位。
+actual_hit_rate 缺失时，后两项为 null。Token 加权比例保留计算精度。
+
+`prefix_cache_runtime_tolerance` 默认 0，允许 0～1，比较实际比例与理论
+比例的绝对差。target_attainment.status 在运行超差时为 failed，
+在构造精确且运行容差内时为 passed，构造有量化误差但运行容差内时为
+construction_limited，缺少实际比例时为 unknown。
+exact_target_reached 单独表示是否精确达到原始目标，因此 100% 的块级
+上限命中可得到 construction_limited，而 exact_target_reached=false。
+
+缓存结论分别保存在 measurement 和 target_attainment。measurement 使用
+valid/partial/unavailable/invalid。预热事实保存在 warmup。旧配置的
+prefix_cache_environment 仍可读取，仅作历史注记。报告读取旧结果时
+从 experimental_conditions 提取预热事实，不使用其中的评分。
+
+正式命中不足、超出理论数量、零命中和各前缀组统计保存在 diagnostics。
+预热通过后的下降可标为 suspected，缓存淘汰确认仍需要服务端直接证据。
+指标只计算已有事实，缺失、低命中和高命中结果全部保留。
+阶段 0 的真实服务缓存明细契约与最终 GPU 验收仍需独立完成。
+
 ## 多轮会话性能
 
 `multi_turn_serving`按会话评测在线Chat服务：一个样本是一整个会话，会话内
@@ -1326,3 +1444,104 @@ Chrome；`NODE_PATH` 需包含 Playwright。总览回归额外检查分组峰值
 `sample_count`或`count`。总Token吞吐优先读取当前性能指标中的已保存字段，
 历史`token_throughput`仅作旧布局回退；当前来源缺值或失败时不从旧来源补值。
 所有择优仅读取保存值，不重新计算吞吐量、分位数或准确率。
+
+### Prefix Cache 报告（阶段 5）
+
+终端及离线 HTML 直接展示已保存的 `prefix_cache_hit_rate` 指标。目标、
+理论共享比例、实际命中率、请求/Token 覆盖率和成功率显示为百分比；
+构造、运行和总体目标偏差显示为百分点（pp）。真实的零显示为 0%，缺失值
+显示“不可测”或“未采集”。已测子集命中率单独标记，不能替代完整 Case 的
+实际命中率。成功请求输入总数属于 S，缓存命中总数及已测输入总数属于 M，
+报告不把不同请求集合的总数相除。
+
+HTML 的结果摘要保留性能指标，并展示预热事实、测量有效性和目标达标状态；100% 目标的 `construction_limited` 单独显示。
+单档摘要标题使用“前缀缓存评测 · 50%”中的目标档位，多档任务在各 Case 标出目标。
+缓存命中、负载与状态、请求与性能分表展示，窄屏纵向排列。
+Case 分析的指标菜单按性能与 Prefix Cache 分组。请求详情使用已有原始记录，
+展示前缀编号、长度、缓存计数、单请求命中率、字段与长度状态，不复制 Token ID。
+报告导出删除 `cache_salt` 字段及已知值的回显；原始结果文件不被改写。
+
+多命中率对比位于结果摘要，横轴明确为**目标命中率**，纵轴可选择实际命中率、
+TTFT、ITL、TPOT、E2EL（延迟使用保存均值）或吞吐量。
+同一任务中除目标比例与历史环境注记外的已保存参数必须相同才归入一组；单位不一致时
+只展示表格。不声明未保存的服务条件相同，Salt 也不隔离物理 KV Cache。
+缓存测量有效、正式请求全部成功完成且性能指标有效时，各指标独立择优。
+预热偏差和未达标仍在对应 Case 中展示。
+
+旧的无 Prefix Cache Metric 的无版本号 JSON 行为保持不变；此前已不支持的
+带协议版本旧格式仍拒绝读取，不进行隐式迁移。请求详情仍需
+`--include-requests`，以及可访问的原始文件。
+
+本地 Mock 示例（不连接服务、不下载模型）：
+
+```bash
+HF_HUB_OFFLINE=1 python -m tests.test_prefix_cache_reporting /tmp/prefix-cache-mock
+luban-meter report --input /tmp/prefix-cache-mock/result.json --format text --all
+luban-meter report --input /tmp/prefix-cache-mock/result.json --include-requests
+node tests/prefix_cache_report.unit.cjs /tmp/prefix-cache-mock/result.json
+node tests/prefix_cache_report.browser.cjs /tmp/prefix-cache-mock/report.html \
+  /tmp/prefix-cache-mock/screenshots
+```
+
+浏览器检查复用现有 Playwright/Edge 环境，`NODE_PATH` 和可选的
+`LUBAN_BROWSER_CHANNEL` 用法与上述报告测试相同。示例明确标记 Mock；
+当前目标 vLLM 尚未返回 `cached_tokens`，真实缓存与最终服务验收仍待验证。
+
+### Prefix Cache 预热策略
+
+可在任务 JSON 中设置 `"prefix_cache_warmup_policy": "observe"`；
+默认值为 `observe`，允许合法命中偏差继续正式评测。CLI 对应 `--prefix-cache-warmup-policy`。
+任务 JSON 的值仍优先于 CLI 基础参数。两种模式都按全部种入、全部探测、
+完整验证轮执行，不补发请求、不重复预热以追求达标，也不剔除低命中样本。
+
+Strict 保持原行为：Probe / Verify 的有效命中计数必须等于共享前缀长度。
+Observe 只放宽这项相等条件：合法的零值、低于预期或高于预期均被记录，
+随后允许正式请求继续。HTTP 失败、超时、SSE 不完整、输入长度不符、
+缓存字段缺失或非法、取消和中断仍为失败，不受 Observe 放宽。
+缓存字段仍为必需数据；缺失不能解释为 0。
+
+0% 不种入非空前缀，仍使用独立 Salt 做能力检查。若能力检查合法但非零，
+Strict 失败；Observe 记录 `over_hit` 并继续。此时预热状态为
+`observed_mismatch`，不能标记为零命中校验通过或 `not_applicable`。
+
+原始 metadata 的 `cache_warmup` 及脱敏恢复诊断新增：
+
+- `warmup_policy`、`warmup_completed`、`warmup_fully_matched`。
+- `warmup_under_hit_prefixes`：Probe / Verify 中出现不足的不同前缀数；
+  同一前缀多轮不足仅计一次。
+- `warmup_summary`：按 `probe`、`verify`（0% 时为 `capability`）保存
+  `prefix_id`、`expected_cached_tokens`、`actual_cached_tokens`、
+  `deviation_tokens` 和 `validation_state`。
+  偏差为实际减预期，状态为 `matched/under_hit/over_hit`；
+  数据不可用时记录 `missing/invalid/unavailable` 并终止。
+
+最终缓存 Metric 在 `warmup` 中透传这些字段和预热原因。
+Observe 预热不符时，正式数据仍可产生有效的实际命中率，测量可为 `valid`，
+预热诊断含 `warmup_cache_mismatch`；
+目标达标由正式命中率与既有容差规则独立判定。预热命中不进入正式分子分母。
+淘汰仍只可能是疑似或未知，不因命中不足直接确认为淘汰。
+
+终端和 HTML 显示预热模式、完成与符合情况、不足前缀数和逐阶段实测。
+预热不符的 Case 保留正式性能和缓存数据，并展示预热偏差。
+旧结果没有新字段时仍可读取；其新增诊断显示未采集，策略按历史 Strict 解释。
+这些扩展不改变 TTFT、ITL、TPOT、E2EL 或吞吐量公式。
+
+### Prefix Cache 终端摘要
+
+默认终端报告将缓存指标精简为目标命中率、实际命中率、目标偏差（pp）、
+预热模式、预热完成及符合情况、请求统计覆盖率和测量与目标两个结论。
+新结果覆盖率使用已提交正式请求，例如 `85.7143% (6/7)`；
+若正式请求有失败，另外显示成功率，避免误读覆盖率分母。
+
+正常结果不展开理论比例、S/M Token 总量或逐前缀 Probe/Verify。
+预热不足、统计缺失/非法、输入长度不符、实际偏离理论、100% 构造上限等仍显示必要诊断。完整 Case 不可测时保留“不可测”，已测子集
+命中率仅以明确的子集标签补充，不替代完整实测值。
+`--format text --verbose` 展开全部已有缓存字段、阶段记录及完整指标上下文；
+`--details requests/errors` 仍用于请求和错误明细，不是新的缓存开关。
+
+Prefix Cache 使用固定长度合成 Token ID，暂不支持 ShareGPT 前缀比例。
+ShareGPT 继续沿用原有在线评测路径。
+
+终端进度及结果标题采用“前缀缓存评测（目标 25%）”等数字名称；
+任务 ID、CLI 选择器、文件路径、JSON 和本轮 HTML 展示均保持原值。
+新名称取目标参数或保存的目标 Metric，不用实测值生成任务标题。

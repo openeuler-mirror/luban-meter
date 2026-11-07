@@ -7,6 +7,12 @@ function stableConfig(value) {
 }
 function usablePerformanceResult(c) {
   const metric=servingMetric(c);
+  if(isPrefixCache(c)) {
+    const counts=savedRequestCounts(c);
+    if(!cacheEligible(c) || metric?.status!=='success' || !counts.valid ||
+      counts.total!==counts.success || counts.total!==c.parameters.num_requests ||
+      c.coverage?.not_started>0)return false;
+  }
   return c.status==='success' && c.collection_complete===true &&
     (!c.metrics_status || c.metrics_status==='complete') &&
     (!metric?.status || metric.status==='success') && !metric?.error &&
@@ -30,7 +36,7 @@ function performanceSummary(taskList) {
       // Keep task/environment and every recorded parameter except concurrency
       // fixed. Object key order is not a change in test conditions.
       const fixed=Object.fromEntries(Object.entries(p)
-        .filter(([key])=>key!=='max_concurrency'));
+        .filter(([key])=>key!=='max_concurrency' && (!isPrefixCache(c)||key!=='prefix_cache_environment')));
       const key=JSON.stringify([ti,stableConfig(fixed)]);
       if(!groups.has(key))groups.set(key,{task,ti,fixed,points:[]});
       groups.get(key).points.push({c,ci,concurrency:p.max_concurrency,
@@ -143,7 +149,7 @@ function summaryScopeGroups(taskList,summary=performanceSummary(taskList)) {
       const p=c.parameters||{};
       if(c.collection_complete!==true || c.status==='discarded' || !p.model ||
         !p.profile || !Number.isSafeInteger(p.max_concurrency) || p.max_concurrency<1)return;
-      const fixed=Object.fromEntries(Object.entries(p).filter(([name])=>name!=='max_concurrency'));
+      const fixed=Object.fromEntries(Object.entries(p).filter(([name])=>name!=='max_concurrency' && (!isPrefixCache(c)||name!=='prefix_cache_environment')));
       const identity=key(ti,fixed);
       if(!scopes.has(identity))scopes.set(identity,available.get(identity)||
         {task,ti,fixed,points:[],maximum:null,peaks:[]});
@@ -156,7 +162,7 @@ function summaryGroupRecords(group) {
   const fixed=JSON.stringify(stableConfig(group.fixed));
   return group.task.cases.map((c,ci)=>({c,ci})).filter(({c})=>
     JSON.stringify(stableConfig(Object.fromEntries(Object.entries(c.parameters||{})
-      .filter(([key])=>key!=='max_concurrency'))))===fixed);
+      .filter(([key])=>key!=='max_concurrency' && (!isPrefixCache(c)||key!=='prefix_cache_environment')))))===fixed);
 }
 function savedRequestCounts(c) {
   const metric=servingMetric(c),service=metric?.values?.service_view;
@@ -234,11 +240,12 @@ function performanceOverviewCards(records,bestMode=true) {
         [{...record,value}]:[];
     }),true);
   }
-  extreme(4,completed.flatMap(record=>{
+  const countCandidates=bestMode?completed.filter(({c})=>!isPrefixCache(c)||usablePerformanceResult(c)):completed;
+  extreme(4,countCandidates.flatMap(record=>{
     const counts=savedRequestCounts(record.c);
     return counts.valid && counts.total>0?[{...record,value:counts.success/counts.total}]:[];
   }));
-  extreme(5,completed.flatMap(record=>{
+  extreme(5,countCandidates.flatMap(record=>{
     const p=record.c.parameters?.max_concurrency,metric=servingMetric(record.c);
     const service=metric?.values?.service_view;
     return Number.isSafeInteger(p) && p>0 && service?.total_requests?.unit==='request' &&

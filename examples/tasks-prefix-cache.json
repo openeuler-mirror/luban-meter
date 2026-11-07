@@ -1,0 +1,21 @@
+{
+  "tasks": [
+    {
+      "name": "prefix-half",
+      "scenario": "prefix_cache",
+      "model": "Qwen2.5-3B",
+      "endpoint": "/v1/completions",
+      "profile": "concurrent",
+      "max_concurrency": 4,
+      "input_tokens": 1024,
+      "output_tokens": 16,
+      "prefix_cache_target": 0.5,
+      "prefix_cache_warmup_policy": "observe",
+      "kv_cache_block_size": 16,
+      "prefix_cache_alignment": "floor",
+      "prefix_count": 5,
+      "num_requests": 100,
+      "seed": 42
+    }
+  ]
+}

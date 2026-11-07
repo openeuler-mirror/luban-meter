@@ -71,6 +71,9 @@ class Benchmark(ABC):
     def evaluate(self, sample: Mapping[str, Any], context) -> Mapping:
         """Collect facts; model calls must pass through context.request."""
 
+    def after_warmup(self, context) -> None:
+        """Finish setup before formal scheduling and observation."""
+
     def metadata(self, context) -> Mapping[str, Any]:
         return {}
 

@@ -275,3 +275,141 @@ def test_response_lines_yield_at_cr_without_reading_next_chunk():
     lines = http_client.iter_response_lines(response)
     assert next(lines) == b"data: first\n"
     lines.close()
+
+
+def completion_usage_event(usage):
+    return (
+        "data: " + json.dumps({"choices": [], "usage": usage}) + "\n\n"
+    ).encode()
+
+
+@pytest.mark.parametrize("details, state", [
+    (None, "missing"),
+    ({}, "missing"),
+    ({"cached_tokens": None}, "missing"),
+    ({"cached_tokens": 0}, "valid"),
+    ({"cached_tokens": 2}, "valid"),
+    ({"cached_tokens": -1}, "invalid"),
+    ({"cached_tokens": True}, "invalid"),
+    ({"cached_tokens": 1.5}, "invalid"),
+    ({"cached_tokens": 5}, "invalid"),
+])
+def test_completion_usage_tail_preserves_evidence_and_timing(
+    monkeypatch, details, state
+):
+    from luban_meter.benchmarking.generation_performance.common import (
+        cache_usage,
+    )
+
+    usage = {
+        "prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7,
+        "prompt_tokens_details": details,
+        "completion_tokens_details": {"vendor_count": 1},
+        "vendor": {"items": [1, None, "unchanged"]},
+    }
+    record = run_stream(monkeypatch, [
+        (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
+        (22.0, b'data: {"choices":[{"text":"BC"}]}\n'),
+        (22.5, b'data: {"choices":[{"text":"",'
+         b'"finish_reason":"length"}]}\n'),
+        (23.0, completion_usage_event(usage)),
+        (24.0, b'data: [DONE]\n'),
+        (29.0, completion_usage_event({
+            "prompt_tokens": 999, "completion_tokens": 999,
+        })),
+    ])
+    assert record["status"] == "success"
+    assert record["usage"] == usage
+    assert json.loads(json.dumps(record))["usage"] == usage
+    assert record["finish_reason"] == "length"
+    assert cache_usage.parse_cache_usage(record["usage"]).state == state
+    assert record["input_tokens"] == 4
+    assert record["output_tokens"] == 3
+    assert record["generated_text"] == "ABC"
+    assert record["ttft_ms"] == 1000
+    assert record["last_output_latency_ms"] == 2000
+    assert record["itl_samples_ms"] == [1000]
+    assert record["stream_event_count"] == 2
+    assert record["e2el_ms"] == record["duration_ms"] == 4000
+    assert online_serving.guidellm_token_latencies(record) == (
+        2000 / 3, 500,
+    )
+
+
+@pytest.mark.parametrize("final_usage", [
+    {"prompt_tokens": 8, "completion_tokens": 3},
+    {"prompt_tokens": 8, "completion_tokens": 3,
+     "prompt_tokens_details": None},
+    {"prompt_tokens": 8, "completion_tokens": 3,
+     "prompt_tokens_details": {"cached_tokens": 0}},
+])
+def test_completion_final_usage_replaces_instead_of_merging_or_summing(
+    monkeypatch, final_usage
+):
+    record = run_stream(monkeypatch, [
+        (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
+        (22.0, completion_usage_event({
+            "prompt_tokens": 4, "completion_tokens": 2,
+            "prompt_tokens_details": {"cached_tokens": 4},
+            "earlier_only": True,
+        })),
+        (23.0, completion_usage_event(final_usage)),
+        (23.5, completion_usage_event(final_usage)),
+        (23.75, completion_usage_event(None)),
+        (24.0, b'data: [DONE]\n'),
+    ])
+    assert record["status"] == "success"
+    assert record["usage"] == final_usage
+    assert record["input_tokens"] == 8
+    assert record["output_tokens"] == 3
+    assert record["stream_event_count"] == 1
+    assert record["e2el_ms"] == 4000
+
+
+@pytest.mark.parametrize("bad_usage", [
+    {},
+    {"prompt_tokens": True, "completion_tokens": 3},
+    {"prompt_tokens": 4, "completion_tokens": -1},
+    [],
+])
+def test_completion_invalid_final_usage_does_not_fall_back(
+    monkeypatch, bad_usage
+):
+    record = run_stream(monkeypatch, [
+        (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
+        (22.0, completion_usage_event({
+            "prompt_tokens": 4, "completion_tokens": 3,
+            "prompt_tokens_details": {"cached_tokens": 0},
+        })),
+        (23.0, completion_usage_event(bad_usage)),
+        (24.0, b'data: [DONE]\n'),
+    ])
+    assert record["status"] == "failed"
+    assert "usage" not in record
+    assert "input_tokens" not in record
+
+
+@pytest.mark.parametrize("tail, failure, error_type", [
+    (b"", None, "RuntimeError"),
+    (b'data: {"choices":[{"text":"","finish_reason":"stop"}]}\n',
+     None, "RuntimeError"),
+    (b'data: {"usage":', None, "JSONDecodeError"),
+    (b"", httpx.ReadTimeout("before DONE"), "ReadTimeout"),
+    (b'data: {"error":{"message":"failed"}}\ndata: [DONE]\n',
+     None, "RuntimeError"),
+])
+def test_completion_incomplete_response_never_exposes_partial_usage(
+    monkeypatch, tail, failure, error_type
+):
+    record = run_stream(monkeypatch, [
+        (21.0, b'data: {"choices":[{"text":"A"}]}\n'),
+        (22.0, completion_usage_event({
+            "prompt_tokens": 4, "completion_tokens": 3,
+            "prompt_tokens_details": {"cached_tokens": 2},
+        })),
+        (23.0, tail),
+    ], failure=failure)
+    assert record["status"] == "failed"
+    assert record["error"]["type"] == error_type
+    assert "usage" not in record
+    assert "ttft_ms" not in record

@@ -15,6 +15,7 @@ from luban_meter.log.logging import (
     log_parameters,
     logged_script,
     redact_text,
+    redacted_exception_info,
     relay_console,
     resolve_log_dir,
     resolve_log_level,
@@ -26,6 +27,7 @@ __all__ = [
     "add_log_secrets", "instance_filename", "log_command", "log_parameters",
     "logged_script",
     "configure_logging", "get_log_file_path", "get_logger", "log_context",
-    "redact_text", "resolve_log_dir", "resolve_log_level", "task_secrets",
+    "redact_text", "redacted_exception_info", "resolve_log_dir",
+    "resolve_log_level", "task_secrets",
     "console_progress", "relay_console",
 ]

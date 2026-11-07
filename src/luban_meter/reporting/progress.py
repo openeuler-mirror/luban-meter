@@ -13,6 +13,8 @@ from pathlib import Path
 
 from luban_meter.log import get_logger
 
+from .prefix_cache import cache_case_label, cache_task_label
+
 logger = get_logger(__name__)
 
 
@@ -293,7 +295,9 @@ class TerminalProgress:
 
     def _task_title(self, index):
         if index not in self.titled_tasks:
-            self._history(f"当前任务：{self.plan['tasks'][index]['name']}")
+            self._history(
+                "当前任务：" + cache_task_label(self.plan["tasks"][index])
+            )
             self.titled_tasks.add(index)
 
     def _case_line(self, index, case_id, status=None):
@@ -323,8 +327,9 @@ class TerminalProgress:
         def sample_count(key):
             return samples[key] if known else "未知"
 
+        label = cache_case_label(task, task["cases"][position - 1])
         line = (
-            f"{task['name']} case{position}/{len(ids)}："
+            f"{label} case{position}/{len(ids)}："
             f"{_bar(done, total)} 样本 {sample_amount} "
             f"请求 {request_amount} "
             f"请求失败 {requests['failed'] if state else '未知'} "

@@ -150,6 +150,7 @@ def execute_request(
     stream_collector: Callable[[Any], Any],
     thinking_metrics: bool = False,
     reasoning_token_counter: Any = None,
+    exception_log_info: Callable[[Exception], tuple] | None = None,
 ) -> dict[str, Any]:
     """Execute a streaming HTTP request and return a result record.
 
@@ -157,6 +158,11 @@ def execute_request(
     ``stream_collector`` is ``collect_completion_stream`` or
     ``collect_chat_stream``.
     """
+    def failure_details(error):
+        if exception_log_info is not None:
+            return exception_log_info(error)
+        return type(error), error, error.__traceback__
+
     url = f"{service_url.rstrip('/')}/{endpoint.lstrip('/')}"
     http_request = client.build_request(
         "POST",
@@ -186,18 +192,19 @@ def execute_request(
             drain_error = exc
     except httpx.HTTPStatusError as exc:
         ended = time.perf_counter()
-        failure_info = (type(exc), exc, exc.__traceback__)
+        failure_info = failure_details(exc)
         response = exc.response
         try:
             detail = response.read().decode("utf-8", errors="replace")
         except httpx.HTTPError as read_error:
-            logger.warning("HTTP error body unavailable", exc_info=True)
+            logger.warning("HTTP error body unavailable",
+                           exc_info=failure_details(read_error))
             detail = str(read_error)
         error = RuntimeError(f"HTTP {response.status_code}: {detail}")
     except Exception as exc:  # noqa: BLE001
         ended = time.perf_counter()
         error = exc
-        failure_info = (type(exc), exc, exc.__traceback__)
+        failure_info = failure_details(exc)
     finally:
         try:
             if response is not None:
@@ -233,8 +240,7 @@ def execute_request(
             continue
         logger.warning(
             "HTTP connection cleanup failed: index=%s", request_index,
-            exc_info=(type(cleanup_error), cleanup_error,
-                      cleanup_error.__traceback__),
+            exc_info=failure_details(cleanup_error),
         )
         record.setdefault("connection_cleanup_error", {
             "type": type(cleanup_error).__name__,
