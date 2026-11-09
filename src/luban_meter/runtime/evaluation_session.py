@@ -274,6 +274,11 @@ def _run_case(
                     f"warmup failed: {row.get('error', row['facts'])}"
                 )
         logger.info("Warmup finished", extra={"phase": "warmup"})
+        if context.stopped():
+            raise InterruptedError("setup interrupted")
+        scenario.after_warmup(context)
+        if context.stopped():
+            raise InterruptedError("setup interrupted")
         if p["device_exporter_url"]:
             device_monitor = DeviceMonitorDaemon(
                 p["device_exporter_url"], p["device_sample_interval"]

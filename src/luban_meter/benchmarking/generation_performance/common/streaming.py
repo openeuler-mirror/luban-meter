@@ -59,14 +59,21 @@ def server_queue_time_ms(value: Any) -> float | None:
 def collect_completion_stream(
     stream: Iterable[bytes],
     clock: Callable[[], float] = time.perf_counter,
+    *,
+    require_output: bool = True,
 ) -> StreamObservation:
-    """Consume an SSE stream and retain only valid, non-empty output
-    events.
+    """Retain output times and the last non-null usage before [DONE].
+
+    Usage-only events never count as output events. Repeated usage objects
+    replace one another in full; missing fields are not backfilled.
     """
     event_times: list[float] = []
     generated_parts: list[str] = []
     usage: tuple[int, int] | None = None
     queue_time_ms: float | None = None
+    raw_usage = None
+    finish_reason = None
+    done = False
 
     for raw_line in stream:
         line = raw_line.decode("utf-8").strip()
@@ -76,15 +83,19 @@ def collect_completion_stream(
         if not data:
             continue
         if data == "[DONE]":
+            done = True
             break
 
         payload = json.loads(data)
         if not isinstance(payload, Mapping):
             raise TypeError("stream event must contain a JSON object")
+        if payload.get("error") is not None:
+            raise RuntimeError("stream reported an error")
 
         parsed_usage = token_usage(payload.get("usage"))
         if parsed_usage is not None:
             usage = parsed_usage
+            raw_usage = payload["usage"]
         parsed_queue_time = server_queue_time_ms(payload.get("metrics"))
         if parsed_queue_time is not None:
             queue_time_ms = parsed_queue_time
@@ -95,15 +106,19 @@ def collect_completion_stream(
         choice = choices[0]
         if not isinstance(choice, Mapping):
             continue
+        if choice.get("finish_reason") is not None:
+            finish_reason = choice["finish_reason"]
         text = choice.get("text")
         if isinstance(text, str) and text:
             event_times.append(clock())
             generated_parts.append(text)
 
-    if not event_times:
+    if require_output and not event_times:
         raise RuntimeError(
             "stream ended before the first non-empty generated output"
         )
+    if not done:
+        raise RuntimeError("stream ended before [DONE]")
     input_tokens, output_tokens = usage if usage is not None else (None, None)
     if output_tokens is not None and output_tokens <= 0:
         raise RuntimeError("stream reported no output tokens")
@@ -113,6 +128,8 @@ def collect_completion_stream(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         server_queue_time_ms=queue_time_ms,
+        finish_reason=finish_reason,
+        usage=raw_usage,
     )
 
 

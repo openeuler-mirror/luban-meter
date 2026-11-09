@@ -6,6 +6,7 @@ import math
 from luban_meter.core.token_totals import saved_throughput_metric
 
 from .data import format_number, metric_groups
+from .prefix_cache import METRIC, cache_case_label, cache_eligible
 
 QUALITY_DIRECTIONS = {
     "accuracy": 1, "exact_match": 1, "pass_at_1": 1, "token_f1": 1,
@@ -59,7 +60,7 @@ def best_line(label, points, unit, minimum=False):
     value = (min if minimum else max)(point[0] for point in points)
     winners = [point for point in points if point[0] == value]
     _, task, case = winners[0]
-    source = f"{task['name']}/{case['id']}"
+    source = f"{cache_case_label(task, case)}/{case['id']}"
     concurrency = case.get("parameters", {}).get("max_concurrency")
     if concurrency is not None:
         source += f" · C{concurrency}"
@@ -85,7 +86,7 @@ def performance_lines(records):
         metric = serving_metric(case)
         values = metric.get("values", {})
         service = values.get("service_view") or {}
-        if not completed(case):
+        if not completed(case) or not cache_eligible(case):
             continue
 
         def add(index, value):
@@ -101,6 +102,13 @@ def performance_lines(records):
             and ("failed_requests" not in service or
                  (type(failed) is int and failed + success == total))
         )
+        if METRIC in case.get("metrics", {}) and (
+            not valid_counts or success != case["parameters"]["num_requests"]
+            or total != success or metric.get("status") != "success"
+            or any(case.get("coverage", {}).get(key, 0)
+                   for key in ("failed", "incomplete", "not_started"))
+        ):
+            continue
         if valid_counts:
             add(5, success / total)
         concurrency = case.get("parameters", {}).get("max_concurrency")

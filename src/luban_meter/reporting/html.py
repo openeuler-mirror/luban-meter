@@ -9,11 +9,23 @@ from pathlib import Path
 
 from .data import format_number, metric_rows, validate_result
 from .data import load_result as load_result
+from .prefix_cache import METRIC, cache_report_metric, redact_cache_salts
 from .request_details import load_details
+
+
+def report_case(case):
+    metrics = case.get("metrics", {})
+    if METRIC not in metrics:
+        return case
+    return {**case, "metrics": {
+        **metrics, METRIC: cache_report_metric(metrics[METRIC]),
+    }}
 
 
 def report_data(payload, *, include_requests=False, raw_root=None):
     tasks = validate_result(payload)
+    tasks = [{**task, "cases": [report_case(c) for c in task["cases"]]}
+             for task in tasks]
     rows = []
     observations = []
     for task_index, task in enumerate(tasks):
@@ -173,7 +185,7 @@ def report_data(payload, *, include_requests=False, raw_root=None):
              for case in task["cases"]]
             for task in tasks
         ]
-    return data
+    return redact_cache_salts(data)
 
 
 def run_summary_html(payload):
@@ -246,7 +258,7 @@ def write_html(payload, destination, *, include_requests=False, raw_root=None):
     data = data.replace("<", "\\u003c").replace("&", "\\u0026")
     replacements = {
         "__REPORT_DATA__": data,
-        "__RUN_SUMMARY__": run_summary_html(payload),
+        "__RUN_SUMMARY__": run_summary_html(redact_cache_salts(payload)),
     }
     html = re.sub(
         r"__REPORT_DATA__|__RUN_SUMMARY__",

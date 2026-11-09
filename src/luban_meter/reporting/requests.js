@@ -81,6 +81,7 @@ function requestPanel(parent, summary, id, data) {
       data.requests[row.request_index];
     if (request) {
       const response = request.response || {};
+      renderCacheRequest(cell,response);
       const text = response.text ?? response.output_text;
       lazyJson(cell, '请求输出正文（未采集时不会补造）', text);
       lazyJson(cell, '请求错误', request.error ?? response.error);

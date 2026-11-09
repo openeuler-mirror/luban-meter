@@ -22,6 +22,14 @@ h3{margin:4px 0}
 .analysis-toolbar select{width:100%;height:42px;min-width:0;color:var(--ink)}
 .analysis-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(0,2fr);gap:20px;align-items:start}
 .analysis-grid svg{min-height:200px;min-width:600px}.analysis-group .chart{max-height:540px}.analysis-group svg{min-width:650px}.analysis-group{margin:20px 0}
+.cache-summary-case{margin:12px 0 20px}
+.cache-summary-header{display:flex;align-items:baseline;gap:12px;margin-bottom:10px}
+.cache-summary-header a{margin-left:auto}
+.cache-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,235px),1fr));gap:12px}
+.cache-summary-grid table{width:100%;min-width:0}
+.cache-summary-grid td:last-child,.cache-summary-grid th:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.cache-summary-grid th{color:var(--muted);font-weight:600}
+.cache-summary-grid tbody tr:last-child td{border-bottom:0}
 .summary-table{white-space:nowrap}.summary-table td,.summary-table th{padding:9px}
 .summary-table th:last-child,.summary-table td:last-child{position:sticky;right:0;background:var(--panel)}
 .summary-table th:last-child{z-index:2}.summary-table td:first-child{font-weight:600}
@@ -208,7 +216,7 @@ function taskDisplayName(name) {
   return Object.hasOwn(labels,name)?labels[name]:name;
 }
 function scenarioDisplayName(name) {
-  const labels={online_serving:'在线服务',multi_turn_serving:'多轮在线服务',cmmlu:'CMMLU',ceval:'C-Eval',gsm8k:'GSM8K',humaneval:'HumanEval'};
+  const labels={prefix_cache:'前缀缓存评测',online_serving:'在线服务',multi_turn_serving:'多轮在线服务',cmmlu:'CMMLU',ceval:'C-Eval',gsm8k:'GSM8K',humaneval:'HumanEval'};
   return Object.hasOwn(labels,name)?labels[name]:name;
 }
 $('subtitle').textContent=(R.id||taskDisplayName(R.name))+' · '+(names[R.status]||R.status);
@@ -234,7 +242,7 @@ function updateRowCases(){
 }
 let sort='metric',ascending=true;
 function visibleRows(){const q=$('search').value.toLowerCase();return D.rows.filter(r=>(!$('task').value||String(r.task_index)===$('task').value)&&(!$('case').value||r.task_index+':'+r.case_index===$('case').value)&&[r.metric,r.task,taskDisplayName(r.task),r.case].join(' ').toLowerCase().includes(q))}
-function render(){let rows=visibleRows();rows.sort((a,b)=>{const x=a[sort],y=b[sort];return(typeof x==='number'&&typeof y==='number'?x-y:String(x??'').localeCompare(String(y??'')))*(ascending?1:-1)});$('rows').replaceChildren();for(const r of rows){const tr=el('tr');for(const key of ['task','case','metric','value','unit','count'])tr.append(el('td',fmt(key==='task'?taskDisplayName(r.task):r[key]),key==='metric'?'metric':['value','count'].includes(key)?'num':''));$('rows').append(tr)}$('rowCount').textContent=rows.length+'项指标'}
+function render(){let rows=visibleRows();rows.sort((a,b)=>{const x=a[sort],y=b[sort];return(typeof x==='number'&&typeof y==='number'?x-y:String(x??'').localeCompare(String(y??'')))*(ascending?1:-1)});$('rows').replaceChildren();for(const r of rows){const tr=el('tr');for(const key of ['task','case','metric','value','unit','count'])tr.append(el('td',reportRowText(r,key),key==='metric'?'metric':['value','count'].includes(key)?'num':''));$('rows').append(tr)}$('rowCount').textContent=rows.length+'项指标'}
 function svgElement(tag,attrs){const n=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);return n}
 // Stable positional anchors do not depend on user-supplied task names.
 function link(text, target) {
@@ -356,8 +364,9 @@ tasks.forEach((task, ti) => {
       const tr = el('tr');
       tr.id = id + '-metric-' + ri;
       tr.tabIndex = -1;
-      for (const value of [row.metric, row.value, row.unit, row.count])
-        tr.append(el('td', recorded(value)));
+      for (const key of ['metric','value','unit','count'])
+        tr.append(el('td', row.metric.startsWith('/prefix_cache_hit_rate/')?
+          reportRowText(row,key):recorded(row[key])));
       body.append(tr);
     });
     table.append(body);

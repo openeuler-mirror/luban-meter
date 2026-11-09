@@ -14,6 +14,10 @@ from luban_meter.core.token_totals import saved_throughput_metric
 from .best_summary import best_summary_lines
 from .data import format_number as number
 from .data import metric_groups, validate_result
+from .prefix_cache import (
+    cache_case_label, cache_lines, cache_task_label,
+    redact_cache_salts, setup_lines,
+)
 
 CASE_LIMIT = 5
 MAX_REPORT_WIDTH = 120
@@ -344,7 +348,8 @@ def saved_token_view(result):
 
 def case_lines(task, case, width, verbose=False):
     yield ""
-    heading = f"[{safe_text(task['name'])}/{safe_text(case['id'])}] " + (
+    display_name = cache_case_label(task, case)
+    heading = f"[{safe_text(display_name)}/{safe_text(case['id'])}] " + (
         f"{safe_text(case['status'])}  "
         f"scenario={safe_text(task.get('scenario'))}"
     )
@@ -354,9 +359,17 @@ def case_lines(task, case, width, verbose=False):
                 or {}).get("value")
     label = f"total_token_throughput={number(rate)} tokens/s"
     labels = [heading, *context_lines(case, verbose)]
+    if verbose and display_name != task["name"]:
+        labels.append("任务 ID: " + safe_text(task["name"]))
     if task.get("category") == "generation_performance":
         labels.append(label)
     yield from boxed(labels, width)
+    if case.get("setup_diagnostic"):
+        yield from boxed([
+            safe_text(line) for line in setup_lines(
+                case["setup_diagnostic"], verbose=verbose,
+            )
+        ], width)
     if case["status"] == "discarded":
         yield "指标: N/A (Case 已丢弃，残留指标不作为有效结果)"
         if case.get("reason") or case.get("error"):
@@ -371,6 +384,14 @@ def case_lines(task, case, width, verbose=False):
             continue
         if not isinstance(metric, dict):
             yield f"{safe_text(name)}: N/A (指标结构不可用)"
+            continue
+        if name == "prefix_cache_hit_rate":
+            yield from boxed([
+                safe_text(line) for line in cache_lines(
+                    metric, verbose=verbose,
+                    parameters=case.get("parameters"),
+                )
+            ], width)
             continue
         yield f"指标 {safe_text(name)}: status=" + safe_text(
             metric.get("status")
@@ -544,6 +565,7 @@ def result_links(result_path, tasks=(), cases=(), failures=()):
 def render_text(payload, *, tasks=(), cases=(), all_cases=False, width=None,
                 verbose=False, result_path=None):
     """Render only saved final results, retaining their units and counts."""
+    payload = redact_cache_salts(payload)
     all_tasks = validate_result(payload)
     selected_tasks, selected = select_cases(all_tasks, tasks, cases)
     # Terminal/COLUMNS may report a very wide SSH or IDE window. Never
@@ -553,9 +575,10 @@ def render_text(payload, *, tasks=(), cases=(), all_cases=False, width=None,
     run = payload["kind"] == "run"
     shown = selected if all_cases else selected[:CASE_LIMIT]
     statuses = Counter(case["status"] for _, case in selected)
+    identity = payload.get("id") if run else cache_task_label(payload)
     lines = [
         "LuBan-Meter 终端结果摘要",
-        f"运行: {safe_text(payload.get('id', payload.get('name')))}  "
+        f"运行: {safe_text(identity)}  "
         f"状态/Status: {safe_text(payload.get('status'))}",
         f"任务: {len(selected_tasks)}/{len(all_tasks)}  "
         f"Case: 匹配 {len(selected)}，展示 {len(shown)}",

@@ -168,6 +168,16 @@ def add_log_secrets(secrets):
             )
 
 
+def redacted_exception_info(error):
+    """Keep failure location and type without exception messages or chains."""
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    label = type(error).__name__
+    if type(status) is int:
+        label += f" HTTP {status}"
+    safe = RuntimeError(label + " (exception details redacted)")
+    return RuntimeError, safe, error.__traceback__
+
+
 class RunFormatter(logging.Formatter):
     def __init__(self, task, secrets):
         super().__init__(DEFAULT_LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
