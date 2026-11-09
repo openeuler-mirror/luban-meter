@@ -685,12 +685,93 @@ def test_request_budget_below_a_full_pass_leaves_partial_sessions(
             - session_facts["completed_turns"]
             - session_facts["sent_failed_turns"]
         )
-    # The session cut off by the budget is incomplete, with no facts of
-    # its own: its completed turns stay in the request records.
+    # The budget-truncated session keeps its partial summary and the
+    # scheduler's stop reason; its completed turns stay in the request
+    # records and the unadmitted turn is not a service failure.
+    stopped = [
+        session_facts for session_facts in recorded
+        if session_facts.get("abort_reason") == "num_requests"
+    ]
+    assert stopped, "the budget stop must explain itself in the facts"
+    assert all(
+        session_facts["sent_failed_turns"] == 0
+        and session_facts["completed_turns"]
+        < session_facts["planned_turns"]
+        for session_facts in stopped
+    )
+    # The session cut off by the budget is incomplete, not failed.
     assert any(
         sample["state"] == "incomplete" for sample in facts["samples"]
     )
     assert case["coverage"]["selected"] == 3
+
+
+class _AdmissionStubContext:
+    """Context whose request() stops admitting on demand."""
+
+    def __init__(self, parameters, stop_after=None, reason="num_requests"):
+        self.parameters = parameters
+        self.phase = "formal"
+        self.stop_after = stop_after
+        self.reason = reason
+        self.admitted = 0
+
+    def stopped(self):
+        return False
+
+    def request(self, operation, metadata=None):
+        if self.stop_after is not None and self.admitted >= self.stop_after:
+            raise mt.AdmissionStopped(self.reason)
+        self.admitted += 1
+        return {
+            "status": "success",
+            "generated_text": "assistant reply",
+        }
+
+
+def _one_session_sample(task):
+    benchmark, context = prepare_benchmark(task)
+    return benchmark, next(benchmark.samples(context))
+
+
+def test_evaluate_records_first_turn_admission_stop_facts():
+    # Budget exhausted before the first turn is admitted: the session
+    # still reports planned turns, zero completions, the stop reason and
+    # no service failure, instead of disappearing into facts={}.
+    benchmark, sample = _one_session_sample(session_task(
+        "http://127.0.0.1:1", multi_max_turns=3, multi_num_sessions=1,
+        max_concurrency=1,
+    ))
+    stub = _AdmissionStubContext(benchmark.p, stop_after=0)
+
+    facts = benchmark.evaluate(sample, stub)
+
+    assert facts["planned_turns"] == 3
+    assert facts["completed_turns"] == 0
+    assert facts["sent_failed_turns"] == 0
+    assert facts["not_started_turns"] == 3
+    assert facts["abort_reason"] == "num_requests"
+    assert facts["status"] == "failed"
+
+
+def test_evaluate_keeps_completed_turns_on_mid_session_stop():
+    # A duration cap that strikes between turns keeps every completed
+    # turn and an explicit reason in the session summary.
+    benchmark, sample = _one_session_sample(session_task(
+        "http://127.0.0.1:1", multi_max_turns=3, multi_num_sessions=1,
+        max_concurrency=1,
+    ))
+    stub = _AdmissionStubContext(
+        benchmark.p, stop_after=1, reason="max_duration"
+    )
+
+    facts = benchmark.evaluate(sample, stub)
+
+    assert facts["completed_turns"] == 1
+    assert facts["abort_reason"] == "max_duration"
+    assert facts["sent_failed_turns"] == 0
+    assert facts["not_started_turns"] == facts["planned_turns"] - 1
+    assert facts["session_latency_ms"] >= 0
 
 
 def test_max_turns_of_one_is_allowed(service, tmp_path):
@@ -844,6 +925,37 @@ def test_context_check_uses_real_role_alternation(
             assert not (
                 roles[position] == "user" and roles[position - 1] == "user"
             ), messages
+
+
+def test_worst_case_turn_budget_no_longer_rejects_short_sessions(
+    service, tmp_path, monkeypatch
+):
+    # 8 turns x 64 output tokens = 512 would have been rejected at
+    # validation against max_model_len=120.  The dataset holds only
+    # natural 1-turn sessions whose real per-turn check fits, so the
+    # task must plan and run to completion.
+    tokenizer = FakeTokenizer()
+    monkeypatch.setattr(mt, "load_tokenizer", lambda p: tokenizer)
+    records = [
+        multi_turn_conversation(0, 1),
+        multi_turn_conversation(1, 1),
+    ]
+    path = write_dataset(tmp_path, records, "short.json")
+    result = run_case_in_process(
+        session_task(
+            service, dataset_path=str(path),
+            multi_max_turns=8, multi_num_sessions=2, max_concurrency=1,
+            max_model_len=120, output_tokens=64, tokenizer="fake",
+        ),
+        tmp_path,
+    )
+    assert result["status"] == "success", result
+    facts = raw_case(tmp_path)
+    assert all(
+        sample["facts"]["planned_turns"] == 1
+        for sample in facts["samples"]
+    )
+    assert len(facts["requests"]) == 2
 
 
 def test_no_tokenizer_means_no_context_check(service, tmp_path):
@@ -1537,6 +1649,85 @@ def test_prefix_cache_ignores_failed_turns(service, tmp_path):
     assert cache["reporting_turns"]["value"] == 0
 
 
+def test_prefix_cache_partial_reporting_rates_the_reporting_subset():
+    # The review's A/B example: A reports 50 of 100 prompt tokens cached,
+    # B (900 prompt tokens) does not report.  The measured rate must
+    # describe the reporting subset (50%), never silently reading B's
+    # unknown coverage as a zero hit over the whole Case (5%).
+    from luban_meter.benchmarking.generation_performance.common import (
+        session_metrics,
+    )
+
+    rows = [
+        {
+            "session": 0, "turn": 0, "status": "success",
+            "response": {
+                "input_tokens": 100, "output_tokens": 30,
+                "usage": {
+                    "prompt_tokens_details": {"cached_tokens": 50}
+                },
+            },
+        },
+        {
+            "session": 0, "turn": 1, "status": "success",
+            "response": {"input_tokens": 900, "output_tokens": 30},
+        },
+    ]
+    cache = session_metrics.prefix_cache_view(rows)
+
+    assert cache["measured_turns"]["value"] == 2
+    assert cache["reporting_turns"]["value"] == 1
+    assert cache["prompt_tokens_total"]["value"] == 1000
+    assert cache["reporting_prompt_tokens_total"]["value"] == 100
+    # The single reporting turn has no eligible prefix, so its saved
+    # denominator is 0; the unknown-coverage turn contributes nothing.
+    assert cache["reporting_eligible_tokens_total"]["value"] == 0
+    assert cache["server_cached_tokens"]["value"] == 50
+    assert cache["server_cache_hit_rate"]["value"] == 0.5
+    # The reporting subset holds no eligible prefix (turn 0 is the only
+    # reporter), so the server-eligible rate stays unknown, not zero.
+    assert cache["server_cache_eligible_rate"]["value"] is None
+    assert "1 of 2" in cache["reason"]
+
+
+def test_prefix_cache_partial_reporting_aligns_eligible_subset():
+    # When a later turn is the reporter, its eligible prefix joins the
+    # same reporting subset as the cached numerator.
+    from luban_meter.benchmarking.generation_performance.common import (
+        session_metrics,
+    )
+
+    rows = [
+        {
+            "session": 0, "turn": 0, "status": "success",
+            "response": {"input_tokens": 100, "output_tokens": 30},
+        },
+        {
+            "session": 0, "turn": 1, "status": "success",
+            "response": {
+                "input_tokens": 200, "output_tokens": 50,
+                "usage": {
+                    "prompt_tokens_details": {"cached_tokens": 60}
+                },
+            },
+        },
+    ]
+    cache = session_metrics.prefix_cache_view(rows)
+
+    assert cache["reporting_turns"]["value"] == 1
+    assert cache["reporting_prompt_tokens_total"]["value"] == 200
+    # The eligible denominator is saved, so 60 / 130 recomputes the
+    # displayed server-eligible rate from persisted fields.
+    assert cache["reporting_eligible_tokens_total"]["value"] == 130
+    # Eligible prefix of the reporting turn: min(200, 100 + 30) = 130.
+    assert cache["server_cache_eligible_rate"]["value"] == pytest.approx(
+        60 / 130, abs=1e-4
+    )
+    # The client-side ceiling still spans all measured turns.
+    assert cache["eligible_prefix_tokens"]["value"] == 130
+    assert cache["prompt_tokens_total"]["value"] == 300
+
+
 def test_metric_keeps_completed_turns_of_failed_sessions(service, tmp_path):
     ChatHandler.fail_turns = {2}
     result, _ = run_task(
@@ -1642,10 +1833,217 @@ def test_think_time_std_requires_a_mean():
 
 
 def test_output_budget_above_model_length_is_rejected():
-    with pytest.raises(ValueError, match="max_model_len"):
-        build_plan(
-            session_task(
-                "http://127.0.0.1:1", multi_max_turns=4,
-                output_tokens=1000, max_model_len=2000,
-            )
+    # Only the per-turn real-history check can stop a session; the
+    # multiplied worst case (4 turns x 1000 tokens) no longer rejects
+    # planning, because natural replies stay far below the budget.
+    plan = build_plan(
+        session_task(
+            "http://127.0.0.1:1", multi_max_turns=4,
+            output_tokens=1000, max_model_len=2000,
         )
+    )
+    case = plan["tasks"][0]["cases"][0]
+    assert case["parameters"]["output_tokens"] == 1000
+
+
+# ── per-turn participation ledger and ITL (issue 4) ────────────────────
+
+
+def _turn_view_of(result):
+    return result["tasks"][0]["cases"][0]["metrics"][
+        "streaming_performance"
+    ]["values"]["turn_view"]
+
+
+def test_turn_participation_and_itl_by_turn(service, tmp_path):
+    result, _ = run_task(
+        session_task(
+            service, dataset_path=str(review_dataset(tmp_path)),
+            multi_max_turns=4, multi_num_sessions=3, max_concurrency=1,
+        ),
+        tmp_path,
+    )
+    turn = _turn_view_of(result)
+    ledger = turn["turn_participation"]
+    # Natural session lengths 1, 3 and 4 (truncated from 7): a natural
+    # short session never appears in later turns' planned counts.
+    assert [row["turn_index"] for row in ledger] == [0, 1, 2, 3]
+    assert [row["planned_sessions"] for row in ledger] == [3, 2, 2, 1]
+    for row in ledger:
+        assert row["succeeded"] == row["planned_sessions"]
+        assert row["sent_failed"] == 0
+        assert row["not_started"] == 0
+    # Request-level ITL: (last output - first output) / (tokens - 1),
+    # one weighted sample per successful request.  The stub streams 3
+    # output tokens, so each request carries 2 token intervals.
+    itl = turn["itl_ms_by_turn"]
+    assert [row["turn_index"] for row in itl] == [0, 1, 2, 3]
+    assert [row["count"] for row in itl] == [
+        row["succeeded"] for row in ledger
+    ]
+    assert [row["weight_sum"] for row in itl] == [
+        row["succeeded"] * 2 for row in ledger
+    ]
+    assert all(row["mean"] is not None for row in itl)
+    # Stream-event ITL is the separate interval metric: the 3-token
+    # stub yields two event gaps per request.
+    event_itl = turn["stream_event_itl_ms_by_turn"]
+    assert [row["count"] for row in event_itl] == [
+        row["succeeded"] * 2 for row in ledger
+    ]
+    assert all(row["mean"] is not None for row in event_itl)
+
+
+def test_request_level_itl_by_turn_weights_token_intervals():
+    # The review's two-request example: 11 tokens and 101 tokens over
+    # the same 100ms output span.  Request-level ITL weights each
+    # request by its token-interval count, so the turn mean is
+    # (10*10 + 1*100) / 110, while the stream-event mean stays 100ms.
+    from luban_meter.benchmarking.generation_performance.common import (
+        session_metrics,
+    )
+
+    def request(output_tokens, itl_samples):
+        return {
+            "status": "success", "ttft_ms": 10, "e2el_ms": 120,
+            "last_output_latency_ms": 110,
+            "output_tokens": output_tokens, "input_tokens": 100,
+            "itl_samples_ms": itl_samples,
+        }
+
+    rows = [
+        {"session": 0, "turn": 0, "status": "success",
+         "response": request(11, [100])},
+        {"session": 1, "turn": 0, "status": "success",
+         "response": request(101, [100])},
+    ]
+    turn = session_metrics.turn_view(rows)
+    itl = turn["itl_ms_by_turn"][0]
+    assert (itl["count"], itl["weight_sum"]) == (2, 110)
+    assert itl["mean"] == pytest.approx(200 / 110, abs=1e-3)
+    events = turn["stream_event_itl_ms_by_turn"][0]
+    assert (events["count"], events["mean"]) == (2, 100)
+    assert events["unit"] == "ms"
+    assert itl["unit"] == "ms/token"
+
+
+def test_request_level_itl_by_turn_covers_packing_and_missing_tokens():
+    # Batching changes event intervals but not the request-level value;
+    # missing token counts keep event intervals while the request-level
+    # series stays empty, following the overall request_view.itl rules.
+    from luban_meter.benchmarking.generation_performance.common import (
+        session_metrics,
+    )
+
+    def request(**overrides):
+        record = {
+            "status": "success", "ttft_ms": 10, "e2el_ms": 120,
+            "last_output_latency_ms": 110, "output_tokens": 11,
+            "input_tokens": 100, "itl_samples_ms": [10] * 10,
+        }
+        record.update(overrides)
+        return record
+
+    # One event per token: both metrics agree at 10ms.
+    dense = request()
+    # A single event carrying all tokens: no event intervals, and the
+    # request-level span collapses to zero.
+    packed = request(last_output_latency_ms=10, itl_samples_ms=[])
+    # No reported token count: the request joins no request-level
+    # sample, its event intervals remain usable.
+    uncounted = request(output_tokens=None, itl_samples_ms=[100])
+    view = session_metrics.turn_view([
+        {"session": 0, "turn": 0, "status": "success", "response": dense},
+        {"session": 1, "turn": 0, "status": "success", "response": packed},
+        {"session": 2, "turn": 0, "status": "success",
+         "response": uncounted},
+    ])
+    itl = view["itl_ms_by_turn"][0]
+    assert itl["count"] == 2
+    assert itl["weight_sum"] == 20
+    # (10*10 + 0*10) / 20: the uncounted request contributes nothing.
+    assert itl["mean"] == pytest.approx(5, abs=1e-6)
+    events = view["stream_event_itl_ms_by_turn"][0]
+    assert events["count"] == 11
+    assert events["mean"] == pytest.approx(200 / 11, abs=1e-3)
+
+
+def test_turn_participation_distinguishes_failure_from_not_started(
+    service, tmp_path
+):
+    ChatHandler.fail_turns = {1}
+    result, _ = run_task(
+        session_task(
+            service, dataset_path=str(review_dataset(tmp_path)),
+            multi_max_turns=4, multi_num_sessions=3, max_concurrency=1,
+        ),
+        tmp_path,
+    )
+    ledger = {
+        row["turn_index"]: row
+        for row in _turn_view_of(result)["turn_participation"]
+    }
+    # Turn 0 succeeds everywhere; the two longer sessions fail the turn
+    # they did send, and their later turns never started.
+    assert ledger[0]["succeeded"] == 3
+    assert ledger[1]["sent_failed"] == 2
+    assert ledger[1]["succeeded"] == 0
+    assert ledger[1]["not_started"] == 0
+    assert ledger[2]["not_started"] == 2
+    assert ledger[2]["sent_failed"] == 0
+    assert ledger[3]["not_started"] == 1
+
+
+def test_turn_participation_records_budget_stop_not_started(
+    service, tmp_path
+):
+    # Budget 5 with sessions of 1, 3 and 4 turns: the third session is
+    # cut after its first turn; its later turns are not started, not
+    # service failures.
+    result, _ = run_task(
+        session_task(
+            service, dataset_path=str(review_dataset(tmp_path)),
+            multi_max_turns=4, multi_num_sessions=3, max_concurrency=1,
+            num_requests=5,
+        ),
+        tmp_path,
+    )
+    ledger = {
+        row["turn_index"]: row
+        for row in _turn_view_of(result)["turn_participation"]
+    }
+    assert ledger[1]["succeeded"] == 1
+    assert ledger[1]["not_started"] == 1
+    assert ledger[1]["sent_failed"] == 0
+    assert ledger[3]["not_started"] == 1
+
+
+def test_all_failed_first_turn_keeps_diagnosable_turn_facts(
+    service, tmp_path
+):
+    ChatHandler.fail_turns = {0}
+    result, _ = run_task(
+        session_task(
+            service, dataset_path=str(review_dataset(tmp_path)),
+            multi_max_turns=4, multi_num_sessions=3, max_concurrency=1,
+        ),
+        tmp_path,
+    )
+    turn = _turn_view_of(result)
+    # No success turns: latency series stay empty, but the ledger and
+    # the abort reasons survive for diagnosis.
+    assert turn["turns_observed"] == 0
+    assert turn["ttft_ms_by_turn"] == []
+    assert turn["itl_ms_by_turn"] == []
+    assert turn["stream_event_itl_ms_by_turn"] == []
+    ledger = {
+        row["turn_index"]: row
+        for row in turn["turn_participation"]
+    }
+    assert ledger[0]["planned_sessions"] == 3
+    assert ledger[0]["sent_failed"] == 3
+    assert ledger[1]["not_started"] == 2
+    session_view = result["tasks"][0]["cases"][0]["metrics"][
+        "streaming_performance"
+    ]["values"]["session_view"]
+    assert session_view["abort_reasons"] == {"turn_failed": 3}

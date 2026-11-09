@@ -491,6 +491,7 @@ function sessionValues(c) {
   return null;
 }
 const turnSeries = [['ttft_ms_by_turn','TTFT'],
+  ['itl_ms_by_turn','ITL'],['stream_event_itl_ms_by_turn','Stream Event ITL'],
   ['e2el_ms_by_turn','E2EL'],['input_tokens_by_turn','输入 Token'],
   ['output_tokens_by_turn','输出 Token']];
 function renderSessionTurns(parent,c) {
@@ -502,35 +503,58 @@ function renderSessionTurns(parent,c) {
   const at=(key,index)=>(turn[key]||[]).find(row=>row.turn_index===index);
   const indexes=[...new Set(turnSeries.flatMap(([key])=>
     (turn[key]||[]).map(row=>row.turn_index)))].sort((a,b)=>a-b);
-  if (!indexes.length) {
-    section.append(el('p','没有已保存的成功轮次。','empty'));
-    parent.append(section);
-    return;
+  // The participation ledger answers why later turns hold fewer
+  // samples: sessions that failed or never started, not a speedup.
+  // It renders even when no success turns exist, so a fully failed
+  // case still shows its losses instead of an empty section.
+  const participation=turn.turn_participation||[];
+  if (participation.length) {
+    section.append(el('p','每轮的计划参与、成功、已发送失败与未开始会话数；'+
+      '未开始轮次没有向服务发送，不计入请求失败。','analysis-note'));
+    dataTable(section,[
+      {title:'轮次',numeric:true,sortable:true,
+        get:r=>r.turn_index},
+      {title:'计划参与会话',numeric:true,sortable:true,
+        get:r=>r.planned_sessions},
+      {title:'成功',numeric:true,sortable:true,get:r=>r.succeeded},
+      {title:'已发送失败',numeric:true,sortable:true,
+        get:r=>r.sent_failed},
+      {title:'未开始',numeric:true,sortable:true,get:r=>r.not_started}],
+      participation,'stat-table');
   }
-  section.append(el('p','已观测轮次数：'+valueText(turn.turns_observed)+
-    '。第 N 轮只包含延续到该轮的会话，样本数减少本身不是性能变化，'+
-    '请与各轮样本数、未开始轮次和中止原因一起阅读。','analysis-note'));
-  const records=indexes.map(index=>({index}));
-  dataTable(section,[
-    {title:'轮次',numeric:true,sortable:true,get:r=>r.index},
-    {title:'各轮样本数（TTFT / E2EL / 输入 / 输出）',numeric:true,sortable:true,
-      get:r=>at('ttft_ms_by_turn',r.index)?.count,
-      render:(cell,r)=>{
-        const counts=turnSeries.map(([key])=>at(key,r.index)?.count);
-        cell.textContent=counts.map(valueText).join(' / ');
-        cell.title='依次为本轮已保存的 '+
-          turnSeries.map(([,title])=>title).join('、')+' 样本数';
-      }},
-    ...turnSeries.flatMap(([key,title])=>[
-      {title:title+' 均值',numeric:true,sortable:true,
-        unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.mean},
-      {title:title+' P99',numeric:true,sortable:true,
-        unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.p99}])],
-    records,'stat-table');
-  barChart(section,indexes.map(index=>({label:'第 '+index+' 轮',
-    value:at('ttft_ms_by_turn',index)?.mean,
-    count:at('ttft_ms_by_turn',index)?.count})),
-    at('ttft_ms_by_turn',indexes[0])?.unit||'ms','各轮TTFT均值');
+  if (indexes.length) {
+    section.append(el('p','已观测轮次数：'+valueText(turn.turns_observed)+
+      '。第 N 轮只包含延续到该轮的会话，样本数减少本身不是性能变化，'+
+      '请与上方参与表、未开始轮次和中止原因一起阅读。ITL为请求级平均：'+
+      '输出跨度除以Token间隔数并按其加权；Stream Event ITL为相邻流事件'+
+      '间隔，一个事件可含多个Token，两者不可互相替代。','analysis-note'));
+    const records=indexes.map(index=>({index}));
+    dataTable(section,[
+      {title:'轮次',numeric:true,sortable:true,get:r=>r.index},
+      {title:'各轮样本数（TTFT / ITL / Stream Event ITL / E2EL / 输入 / 输出）',
+        numeric:true,sortable:true,
+        get:r=>at('ttft_ms_by_turn',r.index)?.count,
+        render:(cell,r)=>{
+          const counts=turnSeries.map(([key])=>at(key,r.index)?.count);
+          cell.textContent=counts.map(valueText).join(' / ');
+          cell.title='依次为本轮已保存的 '+
+            turnSeries.map(([,title])=>title).join('、')+' 样本数';
+        }},
+      ...turnSeries.flatMap(([key,title])=>[
+        {title:title+' 均值',numeric:true,sortable:true,
+          unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.mean},
+        {title:title+' P99',numeric:true,sortable:true,
+          unit:at(key,indexes[0])?.unit,get:r=>at(key,r.index)?.p99}])],
+      records,'stat-table');
+    barChart(section,indexes.map(index=>({label:'第 '+index+' 轮',
+      value:at('ttft_ms_by_turn',index)?.mean,
+      count:at('ttft_ms_by_turn',index)?.count})),
+      at('ttft_ms_by_turn',indexes[0])?.unit||'ms','各轮TTFT均值');
+  } else {
+    // Only the latency statistics depend on success turns; failures
+    // and abort reasons above must survive an all-failed case.
+    section.append(el('p','没有已保存的成功轮次延迟统计。','empty'));
+  }
   const scalarValue=key=>session[key]?.value;
   const statsValue=key=>session[key]?.mean;
   const summary=[['已结束会话',scalarValue('sessions_finished')],
@@ -548,6 +572,9 @@ function renderSessionTurns(parent,c) {
     section.append(el('p','会话中止原因：'+reasons
       .map(([reason,count])=>reason+' '+valueText(count)).join(' · '),
       'analysis-note'));
+  if (!participation.length && !indexes.length && !summary.length
+    && !reasons.length)
+    section.append(el('p','没有已保存的成功轮次。','empty'));
   parent.append(section);
 }
 function isCmmluSubjectAccuracy(metric) {

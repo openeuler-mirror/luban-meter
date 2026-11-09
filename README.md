@@ -724,12 +724,13 @@ assistant消息切分：参考回答只作分隔符，**从不回放**，历史�
 - 任务顺序执行，失败默认继续；`--fail-fast`跳过后续任务。
 - `--num-requests`统计实际模型请求。一个C-Eval PPL样本可能产生多个请求，不能当作一个请求限速。
 - 多轮会话中，请求预算或时长到限后不再准入下一轮，排空已准入请求；已结束的轮次
-  保留，会话记为部分完成，不为凑完整会话继续发送。某轮HTTP失败或超时即结束该会话，
-  该轮计入请求失败，后续轮记为未开始，其他会话继续执行，不做轮级重试；
-  `abort_reason`取值`turn_failed`、`context_overflow`、`session_timeout`、
-  `reasoning_only`、`no_output`；其中`turn_failed`、`reasoning_only`、
-  `no_output`发生在请求发出后，该轮计入`sent_failed_turns`，`session_view`的
-  未开始轮次不再包含它。
+  保留，会话记为部分完成，会话事实保存停止原因（`num_requests`/`max_duration`/
+  `user_interrupt`）与已完成、未开始轮数，未准入的轮次不计入请求失败。某轮HTTP失败
+  或超时即结束该会话，该轮计入请求失败，后续轮记为未开始，其他会话继续执行，不做
+  轮级重试；`abort_reason`取值`turn_failed`、`context_overflow`、`session_timeout`、
+  `num_requests`、`max_duration`、`user_interrupt`、`reasoning_only`、`no_output`；
+  其中`turn_failed`、`reasoning_only`、`no_output`发生在请求发出后，该轮计入
+  `sent_failed_turns`，`session_view`的未开始轮次不再包含它。
   `--max-error-rate`的分母是本Case已结束的全部请求（失败计入），未准入的轮次不算
   服务失败；`--circuit-breaker`只用各会话首轮成功请求的P99 E2EL，因为后续轮prefill
   更长，同一阈值含义不同。
@@ -908,14 +909,15 @@ TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包
 | 视图 | 内容 | 口径 |
 |---|---|---|
 | `request_view`/`service_view` | TTFT、TPOT、ITL、E2EL、吞吐量 | 与在线服务完全相同 |
-| `turn_view` | 各轮TTFT、E2EL、输入与输出Token分布 | 按`turn_index`分组，每组带自己的样本数 |
+| `turn_view` | 各轮TTFT、请求级平均ITL、Stream Event ITL、E2EL、输入与输出Token分布，及每轮计划参与/成功/已发送失败/未开始会话数（`turn_participation`） | 分布按`turn_index`分组，每组带自己的样本数；`itl_ms_by_turn`为请求级平均ITL（`(最后输出时间−首输出时间)/(输出Token数−1)`，按输出Token数−1加权，与整体`request_view.itl`同口径），`stream_event_itl_ms_by_turn`为相邻流事件间隔（每间隔等权，一个事件可含多个Token），两者独立保存不可互相替代；缺输出Token计数、输出不足2Token或缺首末输出时间时请求级ITL留空，事件间隔仍可统计；参与台账来自会话事实，与`session_view`对账，未开始轮次未向服务发送、不计入失败 |
 | `session_view` | 会话耗时、轮间等待合计、计划/完成/未开始/发送失败轮次、已结束会话数、会话吞吐量、中止原因、会话覆盖率 | 样本是会话；`sessions_per_second`分母是Case窗口 |
 | `caching_view` | 首轮与后续轮TTFT均值及比值、每轮和每千Token的TTFT增长 | 只描述延迟随上下文的增长，不作为前缀缓存命中的证据 |
-| `caching_view.prefix_cache` | 客户端可复用前缀Token与占比、服务端上报的命中Token、命中率及上报轮次数 | 客户端估算与服务端实测分开；服务未上报时留空并给出`reason`，不补0，也不推断缓存关闭或驱逐原因 |
+| `caching_view.prefix_cache` | 客户端可复用前缀Token与占比、服务端上报的命中Token、命中率、上报轮次数及上报轮次输入与前缀Token合计（`reporting_prompt_tokens_total`/`reporting_eligible_tokens_total`） | 客户端估算与服务端实测分开；服务端命中率与eligible比率分母仅含上报了缓存Token的轮次（真实上报0纳入分母），缺失轮次不解释为0命中，两分母可与`server_cached_tokens`复算展示比率；服务未上报时留空并给出`reason`，不补0，也不推断缓存关闭或驱逐原因 |
 | `pressure_view` | 单轮上下文Token分布、Prefill Token合计与速率、单轮上下文峰值 | 只统计成功轮次，需结合设备观测判断瓶颈 |
 
-后续轮次只包含延续到该轮的会话，各轮样本数必须与指标一起阅读：样本减少本身
-不是性能变化。会话耗时包含轮间等待，不能与单请求延迟混用。
+后续轮次只包含延续到该轮的会话，各轮样本数必须与参与台账一起阅读：样本减少本身
+不是性能变化，需区分会话失败与从未开始的轮次。会话耗时包含轮间等待，不能与单请求
+延迟混用。
 
 质量指标包括选择题Accuracy、GSM8K数值Exact Match、SQuAD规范化EM/F1、
 HumanEval单次候选pass@1、LCSTS中文ROUGE-1/2/L、WikiText困惑度与Bits-per-Byte。
@@ -1328,9 +1330,12 @@ Case；共同模型、场景和数据来源在表格上方，变化条件与核�
   请求吞吐量、输出 Token 吞吐量、总 Token 吞吐量排序，只显示当前 Case 已保存的核心指标。展示全部
   已保存统计量、单位及 count；有分位数时显示分位数图，标量只显示聚合值。
   Median 和 P50 分别保留，不根据数值相等推定统计定义相同。
-  多轮 Case 在核心指标下方额外展示“按轮次统计”：逐轮列出 TTFT、E2EL、输入与
+  多轮 Case 在核心指标下方额外展示“按轮次统计”：先给出每轮的计划参与、成功、
+  已发送失败与未开始会话数台账，再逐轮列出 TTFT、ITL（请求级平均，按Token间隔
+  加权）、Stream Event ITL（相邻流事件间隔）、E2EL、输入与
   输出 Token 的 Mean 和 P99、各轮已保存样本数、各轮 TTFT Mean 柱状图，以及
-  已结束会话、计划与完成轮次、未开始与发送失败轮次和会话中止原因。Case 选择框同时显示
+  已结束会话、计划与完成轮次、未开始与发送失败轮次和会话中止原因。全部轮次
+  失败时延迟统计留空并说明，参与台账与中止原因仍然展示。Case 选择框同时显示
   会话数与轮数上限。
 - 质量任务：任务 → Case，隐藏第三个选择框。自动展示全部已保存指标，按
   所属维度和单位分表。CMMLU 主分析区隐藏各学科正确率，保留总体指标；

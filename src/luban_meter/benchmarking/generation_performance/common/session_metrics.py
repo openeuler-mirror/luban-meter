@@ -95,9 +95,20 @@ def _successful(rows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     ]
 
 
-def turn_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Per-turn distributions, so growth across a session is visible."""
-    from .statistics import summarize
+def turn_view(
+    rows: Sequence[Mapping[str, Any]],
+    samples: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Per-turn distributions and participation counts.
+
+    Distributions keep their own per-metric sample counts.  The
+    participation ledger comes from the session facts (issue-1 keeps
+    them complete for admission stops), so planned sessions, successes,
+    sent failures and never-started turns reconcile per turn; latency
+    samples alone cannot distinguish a faster turn from one that fewer
+    sessions ever reached.
+    """
+    from .statistics import summarize, summarize_weighted
 
     by_turn: dict[int, list[Mapping[str, Any]]] = {}
     for row in rows:
@@ -130,6 +141,94 @@ def turn_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 {"turn_index": turn, **summarize(values, unit)}
             )
         view[f"{name}_by_turn"] = per_turn
+    # Request-level ITL per turn reuses the single-request definition:
+    # (last output time - first output time) / (output tokens - 1),
+    # weighted by each request's token-interval count, exactly like the
+    # overall request_view.itl.  Requests without an output token count
+    # or with fewer than 2 tokens contribute no request-level sample.
+    def _weighted_itls(
+        responses: Sequence[Mapping[str, Any]],
+    ) -> list[tuple[float, int]]:
+        from ..online_serving import guidellm_token_latencies
+
+        pairs: list[tuple[float, int]] = []
+        for response in responses:
+            output_tokens = response.get("output_tokens")
+            if output_tokens is None:
+                continue
+            _, itl_ms = guidellm_token_latencies(response)
+            if itl_ms is not None:
+                pairs.append((itl_ms, output_tokens - 1))
+        return pairs
+
+    itl_by_turn = []
+    for turn in sorted(by_turn):
+        pairs = _weighted_itls(by_turn[turn])
+        itl_by_turn.append(
+            {"turn_index": turn, **summarize_weighted(pairs, "ms/token")}
+        )
+    view["itl_ms_by_turn"] = itl_by_turn
+
+    # Stream-event ITL per turn is a different metric: the intervals
+    # between adjacent client-observed output events, each interval
+    # equally weighted.  One event may carry several tokens, so it must
+    # not be read as the request-level token interval above.
+    def _event_itl_values(response: Mapping[str, Any]) -> list[float]:
+        raw = response.get("itl_samples_ms")
+        if not isinstance(raw, Sequence) or isinstance(
+            raw, (str, bytes)
+        ):
+            return []
+        return [
+            float(value) for value in raw
+            if isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= 0
+        ]
+
+    event_itl_by_turn = []
+    for turn in sorted(by_turn):
+        event_samples: list[float] = []
+        for response in by_turn[turn]:
+            event_samples.extend(_event_itl_values(response))
+        event_itl_by_turn.append(
+            {"turn_index": turn, **summarize(event_samples, "ms")}
+        )
+    view["stream_event_itl_ms_by_turn"] = event_itl_by_turn
+
+    # Planned participation per turn, derived from session facts so the
+    # arithmetic reconciles with session_view: a turn below the session's
+    # completed count succeeded, the aborting turn itself counts as sent
+    # failed, and later turns never started.
+    counts: dict[int, dict[str, int]] = {}
+    for sample in samples or []:
+        facts = sample.get("facts")
+        if not isinstance(facts, Mapping):
+            continue
+        planned = facts.get("planned_turns")
+        if (
+            not isinstance(planned, int)
+            or isinstance(planned, bool)
+            or planned <= 0
+        ):
+            continue
+        completed = facts.get("completed_turns") or 0
+        sent_failed = facts.get("sent_failed_turns") or 0
+        for turn in range(planned):
+            entry = counts.setdefault(turn, {
+                "planned_sessions": 0, "succeeded": 0,
+                "sent_failed": 0, "not_started": 0,
+            })
+            entry["planned_sessions"] += 1
+            if turn < completed:
+                entry["succeeded"] += 1
+            elif turn < completed + sent_failed:
+                entry["sent_failed"] += 1
+            else:
+                entry["not_started"] += 1
+    view["turn_participation"] = [
+        {"turn_index": turn, **counts[turn]} for turn in sorted(counts)
+    ]
     return view
 
 
@@ -257,6 +356,8 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     prompt_total = 0
     eligible_total = 0
     cached_total = 0
+    reporting_prompt_total = 0
+    reporting_eligible_total = 0
     measured = 0
     reporting = 0
     for session_rows in by_session.values():
@@ -270,19 +371,28 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 continue
             measured += 1
             prompt_total += prompt
+            eligible = None
             if (
                 previous_prompt is not None
                 and previous_completion is not None
             ):
                 # Cap at what this turn actually sent: a truncated or
                 # shorter history must not claim a larger prefix.
-                eligible_total += min(
+                eligible = min(
                     prompt, previous_prompt + previous_completion
                 )
+                eligible_total += eligible
             cached = _reported_cached_tokens(response)
             if cached is not None:
                 reporting += 1
                 cached_total += min(cached, prompt)
+                # Only turns that reported cached tokens join the
+                # measured-rate denominators: mixing in turns whose
+                # coverage is unknown would silently read them as zero
+                # hits.  A real reported zero stays a valid observation.
+                reporting_prompt_total += prompt
+                if eligible is not None:
+                    reporting_eligible_total += eligible
             if (
                 isinstance(completion, int)
                 and not isinstance(completion, bool)
@@ -297,11 +407,11 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
     eligible_ratio = rate(eligible_total, prompt_total)
     server_hit = (
-        rate(cached_total, prompt_total) if reporting else None
+        rate(cached_total, reporting_prompt_total) if reporting else None
     )
     server_eligible = (
-        rate(cached_total, eligible_total)
-        if reporting and eligible_total
+        rate(cached_total, reporting_eligible_total)
+        if reporting and reporting_eligible_total
         else None
     )
     if not measured:
@@ -322,6 +432,12 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "prompt_tokens_total": scalar(
             prompt_total, "token", precision=0
         ),
+        "reporting_prompt_tokens_total": scalar(
+            reporting_prompt_total, "token", precision=0
+        ),
+        "reporting_eligible_tokens_total": scalar(
+            reporting_eligible_total, "token", precision=0
+        ),
         "eligible_prefix_tokens": scalar(
             eligible_total, "token", precision=0
         ),
@@ -341,8 +457,10 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "value": server_hit,
             "unit": "ratio",
             "condition": (
-                "server-reported cached_tokens / prompt_tokens over the "
-                "reporting turns, turn 0 included in the denominator"
+                "server-reported cached_tokens / prompt tokens over the "
+                "same turns that reported cached_tokens; turns without "
+                "the field are excluded, so the value describes the "
+                "reporting subset, not the whole Case"
             ),
         },
         "server_cache_eligible_rate": {
@@ -350,8 +468,9 @@ def prefix_cache_view(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "unit": "ratio",
             "condition": (
                 "server-reported cached_tokens / client-side eligible "
-                "prefix; numerator and denominator come from different "
-                "sources, so read it alongside reporting_turns"
+                "prefix, both over the reporting turns; numerator and "
+                "denominator come from different sources, so read it "
+                "alongside reporting_turns"
             ),
         },
         "reporting_turns": scalar(reporting, "turn", precision=0),
@@ -495,7 +614,7 @@ def session_views(
     values: dict[str, Any] = {}
     values["multi_max_turns"] = parameters.get("multi_max_turns")
     values["multi_num_sessions"] = parameters.get("multi_num_sessions")
-    values["turn_view"] = turn_view(rows)
+    values["turn_view"] = turn_view(rows, facts.get("samples"))
     values["caching_view"] = caching_view(rows)
     values["caching_view"]["prefix_cache"] = prefix_cache_view(rows)
     values["pressure_view"] = pressure_view(rows, duration)
