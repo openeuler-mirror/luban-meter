@@ -167,9 +167,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
                     if spec.path and parameters.get(key):
                         if not Path(parameters[key]).is_file():
                             raise ValueError(f"{key} does not exist")
-                chosen = parameters["metrics"] or list(
-                    scenario.default_metrics
-                )
+                chosen = scenario.select_metrics(parameters)
                 if len(chosen) != len(set(chosen)):
                     raise ValueError("metric names must be unique")
                 for metric_name in chosen:

@@ -469,17 +469,18 @@ def test_real_sse_single_multi_workers_and_saved_reports(tmp_path):
             if task["name"] == "disabled":
                 assert row["reasoning_tokens"] is None
                 assert "reasoning_tokens_source" not in row
+                assert "phase_timing" not in row
             else:
                 assert row["reasoning_tokens_source"] == "token_ids"
                 assert row["reasoning_tokens"] == 2
                 assert (
                     row["token_id_observation"]["prompt_token_ids"] == prompt
                 )
-        phase = case["metrics"]["streaming_phase_timing"]
-        view = phase["values"]["request_view"]
         if task["name"] == "disabled":
-            assert set(view) == {"content_duration", "first_content_latency"}
+            assert "streaming_phase_timing" not in case["metrics"]
         else:
+            phase = case["metrics"]["streaming_phase_timing"]
+            view = phase["values"]["request_view"]
             assert view["reasoning_tpot"]["count"] == expected
             assert view["reasoning_tpot"]["weight_sum"] == 2 * expected
             assert view["reasoning_itl"]["weight_sum"] == expected
@@ -632,14 +633,15 @@ def test_unicode_ids_keep_single_multi_workers_and_full_reports_successful(
                 )
             else:
                 assert "token_id_observation" not in response
-        phase = case["metrics"]["streaming_phase_timing"]["values"]
-        view = phase["request_view"]
+                assert "phase_timing" not in response
         if enabled:
+            phase = case["metrics"]["streaming_phase_timing"]["values"]
+            view = phase["request_view"]
             assert view["reasoning_tpot"]["count"] == (
                 0 if native is None else expected
             )
         else:
-            assert set(view) == {"content_duration", "first_content_latency"}
+            assert "streaming_phase_timing" not in case["metrics"]
     html = write_html(
         result, directory / "unicode-ids.html",
         include_requests=True, raw_root=directory,

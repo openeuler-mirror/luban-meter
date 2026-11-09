@@ -52,9 +52,8 @@ const {chromium} = require('playwright');
     assert.equal(multi['思考Token间延迟（ITL） 权重总数（Token间隔）'],'6');
     const disabled=await summaryRow(2,'case_1');
     assert.ok(!Object.keys(disabled).some(label=>label.includes('思考')));
-    assert.equal(disabled[sampleLabels[1]],'1');
-    assert.equal(disabled[sampleLabels[2]],'1');
-    for(const label of countLabels) assert.equal(disabled[label],'0');
+    for(const label of [...sampleLabels,...countLabels])
+      assert.ok(!Object.hasOwn(disabled,label),label);
     await page.locator('#report-nav a[href="#case-analysis"]').click();
     const metric=page.locator('#analysis-metric');
     const options=await metric.locator('option').allTextContents();
@@ -99,11 +98,11 @@ const {chromium} = require('playwright');
     const disabledOptions=await metric.locator('option').allTextContents();
     assert.ok(!disabledOptions.some(label=>label.includes('思考')));
     for(const label of ['正式回答输出时长','首个正式回答延迟']) {
-      assert.ok(disabledOptions.includes(label));
-      await metric.selectOption({label});
-      assert.match(await page.locator('#analysis-content').innerText(),/（N）：1/);
-      assert.ok(!(await page.locator('#analysis-content').innerText()).includes('思考'));
+      assert.ok(!disabledOptions.includes(label));
     }
+    const saved=JSON.parse(await page.locator('#report-data').textContent());
+    for(const task of saved.result.tasks.slice(2))
+      assert.ok(!Object.hasOwn(task.cases[0].metrics,'streaming_phase_timing'));
 
     // Preserve empty distributions and explicit overall-only metric selection.
     await page.evaluate(() => {

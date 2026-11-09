@@ -59,7 +59,7 @@ def event(delta=None, finish=None):
     return ("data: " + json.dumps({"choices": [choice]}) + "\n\n").encode()
 
 
-def test_thinking_switch_defaults_off_and_preserves_content_metrics():
+def test_content_only_derivation_matches_full_phase_formulas():
     record = {**response(), "reasoning_tokens": 4}
     timing = phase_timing.request_phase_timing(record)
     assert timing == {
@@ -79,28 +79,35 @@ def test_thinking_switch_defaults_off_and_preserves_content_metrics():
         assert value == enabled["values"]["phase_counts"][key]
 
 
-def test_disabled_thinking_is_absent_from_terminal_and_saved_result():
-    metric = compute([response()], thinking_metrics=False)
-    case = {
-        "id": "case_1", "status": "success",
-        "parameters": {"thinking_metrics": False},
-        "metrics": {"streaming_phase_timing": metric},
-    }
-    result = {
-        "kind": "run", "id": "off", "status": "success",
-        "tasks": [{
-            "name": "off", "category": "generation_performance",
-            "status": "success", "cases": [case],
-        }],
-    }
-    text = render_text(result)
-    assert "thinking TTFT" not in text
-    assert "thinking TPOT" not in text
-    assert "thinking ITL" not in text
-    assert "thinking 输出时长" not in text
-    assert "正式回答输出时长: Mean=1000" in text
-    assert "首个正式回答延迟: Mean=3200" in text
-    assert "reasoning_" not in json.dumps(metric)
+@pytest.mark.parametrize("enabled", [None, False])
+def test_disabled_switch_skips_phase_derivation(monkeypatch, enabled):
+    def forbidden(*args, **kwargs):
+        pytest.fail("disabled phase timing must not run")
+
+    monkeypatch.setattr(phase_timing, "request_phase_timing", forbidden)
+    monkeypatch.setattr(
+        online_serving.reasoning_tokens, "supplement_reasoning_tokens",
+        forbidden,
+    )
+    wire = (event({"reasoning": "r", "content": "c"})
+            + event(finish="length") + b"data: [DONE]\n\n")
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=httpx.ByteStream(wire))
+    )
+    arguments = {} if enabled is None else {"thinking_metrics": enabled}
+    with httpx.Client(transport=transport) as client:
+        record = online_serving.execute_request(
+            client=client, request_index=0, payload={},
+            endpoint="/v1/chat/completions", service_url="http://test",
+            api_key="", timeout=1, benchmark_start=0, scheduled_time=0,
+            tracker=online_serving.ActiveRequestTracker(),
+            stream_collector=collect_chat_stream, **arguments,
+        )
+    assert record["status"] == "success"
+    assert record["finish_reason"] == "length"
+    assert record["content_event_offsets_ms"]
+    assert record["reasoning_event_offsets_ms"]
+    assert "phase_timing" not in record
 
 
 @pytest.mark.parametrize("width", [60, 120])
@@ -271,7 +278,7 @@ def test_http_sse_reasoning_counts_preserve_request_outcome(
                 "peak_concurrent_requests": 1,
             }
             overall, success, failed = online_serving.process_case(case)
-            supplement = compute([row], thinking_metrics=thinking_metrics)
+            supplement = compute([row]) if thinking_metrics else None
             assert online_serving.process_case(case) == (
                 overall, success, failed,
             )
@@ -280,8 +287,9 @@ def test_http_sse_reasoning_counts_preserve_request_outcome(
         server.server_close()
         thread.join()
 
-    view = supplement["values"]["request_view"]
-    counts = supplement["values"]["phase_counts"]
+    if thinking_metrics:
+        view = supplement["values"]["request_view"]
+        counts = supplement["values"]["phase_counts"]
     log = log_path.read_text()
     if weights is None:
         assert row["status"] == "failed"
@@ -289,20 +297,21 @@ def test_http_sse_reasoning_counts_preserve_request_outcome(
         assert "reasoning_tokens" in row["error"]["message"] or (
             "completion_tokens_details" in row["error"]["message"]
         )
-        assert row["phase_timing"]["status"] == "failed"
-        assert all(node["count"] == 0 and node["mean"] is None
-                   for node in view.values())
-        assert counts["excluded_requests"]["value"] == 1
-        assert counts["failed_requests"]["value"] == 1
+        if thinking_metrics:
+            assert row["phase_timing"]["status"] == "failed"
+            assert all(node["count"] == 0 and node["mean"] is None
+                       for node in view.values())
+            assert counts["excluded_requests"]["value"] == 1
+            assert counts["failed_requests"]["value"] == 1
         assert (success, failed) == (0, 1)
         assert "Streaming request failed: index=7" in log
         assert "Traceback (most recent call last)" in log
     else:
         assert row["status"] == "success"
-        assert row["phase_timing"]["status"] == "eligible"
         assert (success, failed) == (1, 0)
-        assert counts["excluded_requests"]["value"] == 0
         if thinking_metrics:
+            assert row["phase_timing"]["status"] == "eligible"
+            assert counts["excluded_requests"]["value"] == 0
             for name in ("reasoning_ttft", "reasoning_duration",
                          "reasoning_stream_event_itl"):
                 assert view[name]["count"] == 1
@@ -318,9 +327,10 @@ def test_http_sse_reasoning_counts_preserve_request_outcome(
     assert overall["service_view"]["total_requests"]["value"] == 1
     assert overall["service_view"]["failed_requests"]["value"] == failed
     if not thinking_metrics:
-        assert set(view) == {"content_duration", "first_content_latency"}
-        assert "reasoning_" not in json.dumps(row["phase_timing"])
-    assert "Phase timing computed:" in log
+        assert "phase_timing" not in row
+        assert "Phase timing computed:" not in log
+    else:
+        assert "Phase timing computed:" in log
     for secret in ("private-key", "private-prompt", "private-thought",
                    "private-answer"):
         assert secret not in log
@@ -587,6 +597,13 @@ def test_real_workers_reports_and_shared_log(tmp_path):
         {**common, "name": "disabled", "scenario": "online_serving",
          "data": "jsonl", "dataset_path": str(dataset), "num_requests": 1,
          "thinking_metrics": False},
+        {**common, "name": "disabled_multi", "scenario": "multi_turn_serving",
+         "dataset_path": str(multi), "multi_num_sessions": 1,
+         "multi_max_turns": 2, "thinking_metrics": False},
+        {**{key: value for key, value in common.items()
+            if key != "thinking_metrics"},
+         "name": "default", "scenario": "online_serving", "data": "jsonl",
+         "dataset_path": str(dataset), "num_requests": 1},
     ]}))
     try:
         result, directory = RunCoordinator().run(
@@ -596,25 +613,26 @@ def test_real_workers_reports_and_shared_log(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
-    assert len(posts) == 11
-    single, multi_result, disabled = (
-        task["cases"][0] for task in result["tasks"]
+    assert len(posts) == 14
+    single, multi_result = (
+        task["cases"][0] for task in result["tasks"][:2]
     )
-    disabled_view = disabled["metrics"]["streaming_phase_timing"][
-        "values"]["request_view"]
-    assert set(disabled_view) == {
-        "content_duration", "first_content_latency",
-    }
-    disabled_raw = json.loads((
-        directory / "tasks/disabled/raw/case_1.json"
-    ).read_text())
-    disabled_response = disabled_raw["requests"][0]["response"]
-    assert disabled_response["reasoning_tokens"] == 4
-    assert len(disabled_response["reasoning_event_offsets_ms"]) == 2
-    assert not any(
-        key.startswith("reasoning_") or key == "interleaved"
-        for key in disabled_response["phase_timing"]
-    )
+    for task in result["tasks"][2:]:
+        disabled = task["cases"][0]
+        assert disabled["parameters"]["metrics"] == ["streaming_performance"]
+        assert "streaming_phase_timing" not in disabled["metrics"]
+        disabled_raw = json.loads((
+            directory / "tasks" / task["name"] / "raw/case_1.json"
+        ).read_text())
+        for request in disabled_raw["requests"]:
+            disabled_response = request["response"]
+            assert disabled_response["reasoning_tokens"] == 4
+            assert len(disabled_response["reasoning_event_offsets_ms"]) == 2
+            assert "phase_timing" not in disabled_response
+        disabled_text = render_text({**result, "tasks": [task]}, width=120)
+        for label in ("streaming_phase_timing", "thinking TTFT",
+                      "正式回答输出时长", "首个正式回答延迟", "分阶段样本"):
+            assert label not in disabled_text
     single_metric = single["metrics"]["streaming_phase_timing"]
     counts = single_metric["values"]["phase_counts"]
     assert counts["eligible_requests"]["value"] == 4
@@ -666,7 +684,13 @@ def test_real_workers_reports_and_shared_log(tmp_path):
     log = logs[0].read_text()
     assert "Phase timing computed: eligible=4 excluded=4" in log
     assert "Phase timing computed: eligible=2 excluded=0" in log
-    assert "thinking_metrics=False content_samples=1" in log
+    for name in ("disabled", "disabled_multi", "default"):
+        assert any(
+            f"task={name} case=case_1" in line
+            and "Phase timing configured: enabled=False" in line
+            for line in log.splitlines()
+        )
+    assert "Phase timing configured: enabled=True" in log
     assert "thinking_samples=" in log
     assert "thinking_weights={'reasoning_tpot': 5, 'reasoning_itl': 3}" in log
     assert "thinking_token_summary=mean_only" in log

@@ -32,6 +32,8 @@ const {chromium} = require('playwright');
       assert.equal(row['思考Token间延迟（ITL） 权重总数（Token间隔）'],String(count));
     }
     assert.ok(!(await tables.nth(2).innerText()).includes('思考'));
+    for(const label of ['正式回答输出时长','首个正式回答延迟','输出截断请求','排除请求'])
+      assert.ok(!(await tables.nth(2).innerText()).includes(label));
     await page.locator('#report-nav a[href="#case-analysis"]').click();
     for(const label of ['思考每Token耗时（TPOT）','思考Token间延迟（ITL）']) {
       await page.locator('#analysis-metric').selectOption({label});

@@ -25,6 +25,7 @@ from luban_meter.runtime.request_params import (
 )
 
 from .common.lengths import assess_lengths
+from .common.phase_timing import select_phase_metrics
 from .common.reasoning_tokens import prepare_reasoning_counter
 from .common.tokenization import (
     LENGTH_PARAMETERS,
@@ -73,7 +74,9 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         **LENGTH_PARAMETERS,
         "num_requests": Parameter(int, 100, minimum=1),
         "tokenizer": Parameter(str, ""),
-        "thinking_metrics": Parameter(bool, False),
+        "thinking_metrics": Parameter(
+            bool, False, help="enable thinking and content phase metrics",
+        ),
         "prompt_field": Parameter(str, "prompt"),
         "input_template": Parameter(str, "prompt_record"),
         "input_format": Parameter(str, ""),
@@ -84,6 +87,12 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         "circuit_breaker": Parameter(float, None, minimum=0.001),
         "max_error_rate": Parameter(float, None, minimum=0.0, maximum=1.0),
     }
+
+    @classmethod
+    def select_metrics(cls, parameters):
+        return select_phase_metrics(
+            parameters, super().select_metrics(parameters),
+        )
 
     @classmethod
     def validate(cls, parameters):

@@ -26,6 +26,17 @@ CONDITION = (
 )
 
 
+def select_phase_metrics(parameters, names):
+    """Require the thinking switch for the whole phase timing metric."""
+    if parameters.get("thinking_metrics", False):
+        return names
+    if "streaming_phase_timing" in parameters["metrics"]:
+        raise ValueError(
+            "streaming_phase_timing requires thinking_metrics=true"
+        )
+    return [name for name in names if name != "streaming_phase_timing"]
+
+
 def request_phase_timing(record, *, thinking_metrics=False):
     """Derive milliseconds from saved offsets without changing facts.
 

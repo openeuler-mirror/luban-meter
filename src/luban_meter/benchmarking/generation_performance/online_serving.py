@@ -222,11 +222,10 @@ def execute_request(
         observation=observation,
         error=error,
     )
-    if endpoint == "/v1/chat/completions":
-        if thinking_metrics:
-            reasoning_tokens.supplement_reasoning_tokens(
-                record, observation, reasoning_token_counter,
-            )
+    if endpoint == "/v1/chat/completions" and thinking_metrics:
+        reasoning_tokens.supplement_reasoning_tokens(
+            record, observation, reasoning_token_counter,
+        )
         record["phase_timing"] = phase_timing.request_phase_timing(
             record, thinking_metrics=thinking_metrics,
         )
