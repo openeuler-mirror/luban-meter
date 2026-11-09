@@ -242,14 +242,15 @@ TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事�
 
 ### thinking与正式回答的分阶段计时
 
-单轮及多轮在线Chat性能默认启用独立指标`streaming_phase_timing`。
+单轮及多轮在线Chat性能的整组分阶段指标默认关闭，包括正式回答输出时长和
+首个正式回答延迟。显式设置`thinking_metrics=true`后，默认指标列表才包含
+独立指标`streaming_phase_timing`；CLI对应`--thinking-metrics`和
+`--no-thinking-metrics`。关闭时不生成单请求的`response.phase_timing`，
+不计算或保存整组分阶段汇总，终端和HTML也不展示这些指标及其样本计数。
+原始思考文本、事件时间、服务用量及原有校验保持不变。
 该指标复用原始流事件时间，不增加模型调用；普通Completions接口返回不可用。
-显式设置`metrics`会覆盖默认列表，需要保留此指标才能生成分阶段汇总。
-
-思考补充指标需显式设置`thinking_metrics=true`，默认`false`；CLI对应
-`--thinking-metrics`和`--no-thinking-metrics`。关闭时仍计算正式回答输出时长和
-首个正式回答延迟，但不计算或保存thinking派生指标、思考通道计数与交错计数，
-终端和HTML也不展示这些内容。原始思考文本、事件时间、服务用量及原有校验保持不变。
+显式设置`metrics`仍覆盖默认列表；显式选择`streaming_phase_timing`时也必须
+开启`thinking_metrics`，否则在配置检查时报告错误。
 该开关仅控制客户端统计，不控制模型是否思考，不自动添加服务请求参数，
 也不覆盖显式`metrics`选择。例如，任务JSON中可设置：
 
@@ -262,7 +263,7 @@ TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事�
 }
 ```
 
-下表中`reasoning_`指标及下文对应统计规则仅在开启该开关时生效。
+下表中全部分阶段指标及下文对应统计规则仅在开启该开关时生效。
 
 | 指标（`values.request_view`） | 计算方法 | 单位 |
 |---|---|---|
@@ -399,7 +400,7 @@ thinking TTFT/TPOT/ITL对应的`_ms`字段（TPOT/ITL单位实际为ms/token）�
 `reasoning_stream_event_itl_samples_ms`间隔列表、
 `reasoning_event_count`、`content_event_count`、`interleaved`和统计资格`status`。
 `interleaved`表示首个正文事件早于最后一个thinking事件；两者同一时间不算交错。
-关闭时该对象仅保存正文时长、首正文延迟、`content_event_count`及统计资格`status`。
+关闭时不生成该对象。
 原始`finish_reason`和请求成功失败状态不变，统计资格如下：
 
 | `phase_timing.status` | 含义 | 进入主要分布 |
@@ -652,9 +653,9 @@ prefix_cache_environment 仍可读取，仅作历史注记。报告读取旧结�
 不同会话并行，同一会话同时最多一个在途请求。
 
 `online_serving`和`multi_turn_serving`保留各自的执行方式，默认都使用
-`streaming_performance`计算整体指标，同时默认启用`streaming_phase_timing`
-计算Chat分阶段计时。是否执行多轮由场景决定，不由Metric名称决定。
-两种场景都需设置`thinking_metrics=true`才能计算和展示思考补充指标。
+`streaming_performance`计算整体指标。两种场景都需设置`thinking_metrics=true`
+才默认启用`streaming_phase_timing`，计算、保存和展示思考及正文分阶段指标。
+是否执行多轮由场景决定，不由Metric名称决定。
 旧任务若显式配置`"metrics": ["multi_turn_performance"]`，需改为
 `"metrics": ["streaming_performance"]`；旧名称已移除，不保留配置别名。
 未指定`metrics`时直接使用场景默认值。已保存结果中的历史

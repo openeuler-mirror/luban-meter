@@ -50,6 +50,11 @@ class Benchmark(ABC):
         return cls.fact_fields
 
     @classmethod
+    def select_metrics(cls, parameters):
+        """Resolve explicit or default metrics for the effective parameters."""
+        return list(parameters["metrics"] or cls.default_metrics)
+
+    @classmethod
     def parameter_schema(cls) -> dict[str, Parameter]:
         schema = {}
         for base in reversed(cls.__mro__):

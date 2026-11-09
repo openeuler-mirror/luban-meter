@@ -108,9 +108,11 @@ class ReasoningTokenCounter:
 
 def prepare_reasoning_counter(parameters, tokenizer=None):
     """Prepare optional counting resources before sending requests."""
-    if not parameters.get("thinking_metrics") or parameters.get(
+    enabled = bool(parameters.get("thinking_metrics")) and parameters.get(
         "endpoint"
-    ) != "/v1/chat/completions":
+    ) == "/v1/chat/completions"
+    logger.info("Phase timing configured: enabled=%s", enabled)
+    if not enabled:
         return None
     name = parameters.get("tokenizer") or parameters["model"]
     reason = None

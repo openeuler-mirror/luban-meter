@@ -23,6 +23,44 @@ def test_thinking_metrics_cli_boolean_flags(command, enabled):
 
 @pytest.mark.parametrize("scenario", ["online_serving", "multi_turn_serving"])
 @pytest.mark.parametrize("enabled", [None, False, True])
+def test_phase_metrics_require_opt_in(tmp_path, scenario, enabled):
+    dataset = tmp_path / "data.json"
+    dataset.write_text('[]')
+    parameters = {
+        "scenario": scenario, "model": "mock", "dataset_path": str(dataset),
+    }
+    if enabled is not None:
+        parameters["thinking_metrics"] = enabled
+    plan = build_plan(parameters)
+    saved = plan["tasks"][0]["cases"][0]["parameters"]
+    expected = ["streaming_performance"]
+    if enabled:
+        expected.append("streaming_phase_timing")
+    assert saved["metrics"] == expected
+    assert saved["request_params"] == {}
+
+
+@pytest.mark.parametrize("scenario", ["online_serving", "multi_turn_serving"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_explicit_phase_metric_requires_switch(tmp_path, scenario, enabled):
+    dataset = tmp_path / "data.json"
+    dataset.write_text('[]')
+    parameters = {
+        "scenario": scenario, "model": "mock", "dataset_path": str(dataset),
+        "metrics": ["streaming_phase_timing"], "thinking_metrics": enabled,
+    }
+    if not enabled:
+        with pytest.raises(ValueError, match="requires thinking_metrics=true"):
+            build_plan(parameters)
+    else:
+        plan = build_plan(parameters)
+        assert plan["tasks"][0]["cases"][0]["parameters"]["metrics"] == [
+            "streaming_phase_timing",
+        ]
+
+
+@pytest.mark.parametrize("scenario", ["online_serving", "multi_turn_serving"])
+@pytest.mark.parametrize("enabled", [None, False, True])
 def test_thinking_metrics_opt_in_preserves_explicit_metric_selection(
     tmp_path, scenario, enabled,
 ):

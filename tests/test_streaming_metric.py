@@ -86,7 +86,7 @@ def test_both_benchmarks_plan_default_streaming_metrics(tmp_path, scenario):
         "streaming_performance", "streaming_phase_timing",
     )
     assert task["cases"][0]["parameters"]["metrics"] == [
-        "streaming_performance", "streaming_phase_timing",
+        "streaming_performance",
     ]
 
 
