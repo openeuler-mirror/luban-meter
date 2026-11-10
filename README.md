@@ -763,6 +763,9 @@ luban-meter run --scenario online_serving --model served-model \
 服务端Prometheus采样只适用于HTTP任务。硬件exporter地址单独指定；不提供时不启动硬件监控。
 观测故障独立记录，不让推理任务因为指标接口故障而失败。报告保留实际采样时间和缺失信息。
 
+服务端经典直方图的分位数落入 `+Inf` 桶时，按 Prometheus 规则返回最高有限桶边界，
+不对无界区间插值；只有 `+Inf` 桶、没有有限桶边界时，分位数标为不可用。
+
 服务端观测聚合保存在Case的`observation.metrics`。其中`latency_decomposition.queue_time_window`（s）
 是等待队列中平均每个请求的等待时间（分母为窗口内全部完成请求，含等待约等于0的），
 为服务端指标（`boundary=server`）：按观测窗口对vLLM的`vllm:request_queue_time_seconds`
