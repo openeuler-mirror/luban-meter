@@ -503,6 +503,119 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 只有声明允许按Case变化的参数才能进入矩阵；配置路径相对于JSON所在目录，CLI路径相对于工作目录。
 所有选中任务先完成静态预检，再启动执行；预检不代表服务、GPU或Docker已可用。
 
+## 定时计划与串行队列
+
+在项目根目录登记计划，不需要修改任务JSON格式：
+
+```bash
+# 一次性计划；日期时间必须在未来，可精确到秒：
+luban-meter schedule --at "2026-11-11 02:30" task.json
+# 周期计划；五字段依次为分钟、小时、日、月、星期：
+luban-meter schedule --cron "30 2 * * *" task.json
+# 可选时区；省略时保存创建机器的系统时区：
+luban-meter schedule --cron "30 2 * * *" --timezone Asia/Shanghai task.json
+luban-meter schedule list
+```
+
+登记命令保存后立即返回并输出计划ID。另一个终端在同一项目目录启动常驻服务：
+
+```bash
+luban-meter schedule serve
+```
+
+服务到点后自动启动整份配置。计划时间指运行启动时间，模型准备、预热与正式请求
+沿用现有流程；预约和排队等待不计入压测指标。服务每0.2秒检查状态，不保证实时
+调度。只有服务正在运行时才会触发任务；登记计划不会自动安装或启动系统服务。
+同一个项目只允许一个调度服务、一个计划运行；手动`run`不受这个队列限制。
+`serve`的`--log-level`、`--log-dir`及`LUBAN_LOG_DIR`沿用统一日志规则，并传递给
+运行和任务子进程。
+
+计划与状态保存在当前项目的`schedule/`中，按**记录发生的机器本地日期**归档：
+
+```text
+schedule/
+  2026-11-10/
+    plans.json          # 当天登记/修改或执行涉及的计划与参数快照
+    executions.csv      # 当天执行状态变化、实际时间和结果摘要
+  2026-11-11/
+    plans.json
+    executions.csv
+```
+
+有记录的日期目录固定包含这两个文件。`plans.json`保留计划及修改历史，也保存
+当日执行涉及的参数快照，包含原任务JSON路径、一次性时间或cron、时区和
+已解析的完整参数快照；不复制模型与数据集。直接修改或删除原任务JSON不会改变
+计划，但引用的数据、模型等资源仍须在执行时可用。快照为执行保留凭据，文件使用
+仅当前用户可读写的权限；结果、实例日志中的凭据仍脱敏。通过命令维护这些文件。
+
+CSV每行是一条状态记录，同一执行可有queued、starting、running及最终状态多行。
+`sequence`确定更新顺序，跨天通过`plan_id`和`execution_id`关联，重测通过
+`retry_of`关联旧执行。CSV时间保存带UTC偏移的ISO日期时间，包含原计划时间、
+入队时间、实际开始和完成时间、运行ID、原因、任务/Case数量、各状态Case数、
+运行耗时以及完整结果和日志路径。完整原始结果及HTML仍在`runs/<run_id>/`。
+
+`schedule list`读取所有日期目录，默认显示全部历史状态及未来下一次计划，无需
+`--all`。每行展示计划和执行ID、计划状态、执行状态、时间/cron、时区、原计划
+时间、实际起止时间、排队次序、配置来源和结果/日志位置。时间按该轮保存的时区
+展示；修改计划不会把历史行显示成新参数。没有计划时显示“暂无计划”。
+
+```bash
+# 使用登记命令输出的ID。配置可选；也可只改时间：
+luban-meter schedule update <plan_id> new-task.json
+luban-meter schedule update <plan_id> --at "2026-11-12 03:00"
+luban-meter schedule cancel <plan_id>
+```
+
+固定处理规则如下，不额外提供策略配置：
+
+- 不同计划到点后按原计划时间排队，同一时间按计划登记先后；上一轮退出后才启动
+  下一轮。队列保存在CSV中，排队超过计划时间仍会执行。
+- 同一周期计划已有排队、启动中或运行中的一轮时，后续周期触发记为skipped，
+  不积压多轮。普通失败保存结果并继续后面的队列，不自动重试。
+- 启动中或运行中禁止修改计划。排队中允许修改：仅改参数时更新未启动轮次的
+  快照，保留原计划时间和排队次序；改时间或cron时撤销旧排队项，按新规则安排。
+  已取消或已结束的一次性计划不能修改，需要重新登记。
+- 取消会立即移除排队项，并请求停止当前压测；`stopping`表示正在退出，随后为
+  `cancelled`。确认旧运行退出后才启动下一项。取消同时阻止后续周期，重复取消
+  无副作用；结果和日志保留。
+- 服务重启时先请求旧运行停止并等待退出，然后从整份配置开头重新测试被打断的
+  一轮，新运行关联旧记录且不覆盖旧结果。重测优先于原队列；已完成、明确失败、
+  已取消的不重测。队列中已登记的等待项继续保留。
+- 停机期间尚未入队就错过的时间不补跑：一次性记为missed，周期记为missed并
+  转到下次未来时间。等待队列中的任务不算错过。
+- 重复扫描不重复入队；服务锁和运行锁防止同项目重复启动。历史文件损坏时报告
+  错误，不静默忽略计划。保留整个`schedule/`才能完整恢复计划、快照和队列。
+
+需要机器重启后自动启动服务时，可使用Linux的systemd用户服务。将以下内容保存为
+`~/.config/systemd/user/luban-meter-schedule.service`，替换两个绝对路径：
+
+```ini
+[Unit]
+Description=LuBan-Meter schedule
+
+[Service]
+WorkingDirectory=/absolute/project
+ExecStart=/absolute/venv/bin/luban-meter schedule serve
+Restart=on-failure
+KillMode=mixed
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now luban-meter-schedule.service
+```
+
+`KillMode=mixed`先通知调度进程，由它完成当前运行的停止和状态保存；详见
+[systemd进程停止规则](https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html)。
+无人登录时也需开机运行的环境，应由管理员为该用户启用
+[linger](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html)。
+
+模块职责、持久化顺序和恢复机制见[定时计划架构](docs/scheduling.md)。
+
 ## HTTP连接复用
 
 在线生成和模型服务质量评测保留线程池及原有调度，每个Case创建一个共享HTTPX客户端。
