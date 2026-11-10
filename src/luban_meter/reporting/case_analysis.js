@@ -64,8 +64,9 @@ const metricNames = {
   server_cached_tokens:'服务端命中 Token', server_cache_hit_rate:'服务端缓存命中率',
   server_cache_eligible_rate:'服务端命中 / 可复用前缀', reporting_turns:'上报轮次',
   turn_context_tokens:'单轮上下文 Token', total_prefill_tokens:'Prefill Token 合计',
-  prefill_token_rate:'Prefill Token 速率', peak_turn_context_tokens:'单轮上下文峰值'
-};
+  prefill_token_rate:'Prefill Token 速率', peak_turn_context_tokens:'单轮上下文峰值',
+  slo_satisfied_rate:'SLO 达标率', goodput_request_throughput:'Goodput 请求吞吐量',
+  goodput_output_token_throughput:'Goodput 输出 Token 吞吐量'};
 const statNames = {mean:'均值', median:'中位数',
   min:'最小值', max:'最大值', stddev:'标准差',
   std:'标准差', p999:'P99.9'};
@@ -237,6 +238,31 @@ function summaryMetrics(task) {
   const cache=available.filter(m=>m.parts[0]==='prefix_cache_hit_rate' && cacheSummaryKeys.includes(m.key));
   return [...cache,...(core.length ? core.sort((a,b)=>
     order.indexOf(a.key)-order.indexOf(b.key)) : available.slice(0,4))];
+}
+// Configured SLO dimensions only; unconfigured ones stay null and are
+// omitted so the text never invents a threshold.  Used by the dedicated
+// SLO section cards and table, not by the summary columns.
+function sloConfigText(c) {
+  const slo=servingMetric(c)?.values?.service_view?.goodput?.slo_config||{};
+  return [['ttft_ms','TTFT'],['tpot_ms','TPOT'],['e2el_ms','E2EL']]
+    .filter(([name])=>numeric(slo[name]))
+    .map(([name,label])=>label+'≤'+slo[name]+'ms').join(' ');
+}
+// Hover text for the SLO section table: thresholds, undetermined
+// requests, denominator.
+function goodputCellTitle(c) {
+  const goodput=servingMetric(c)?.values?.service_view?.goodput;
+  if(!goodput)return '';
+  const notes=[];
+  const thresholds=sloConfigText(c);
+  if(thresholds)notes.push('SLO：'+thresholds);
+  const undetermined=goodput.undetermined_count?.value;
+  if(numeric(undetermined)&&undetermined>0)
+    notes.push('无法判定请求 '+undetermined+' 个（缺必要观测维度）');
+  const determined=goodput.determined_count?.value;
+  if(numeric(determined))
+    notes.push('达标率分母：'+determined+' 个已判定请求（含失败）');
+  return notes.join('；');
 }
 const taskCategoryNames = {generation_performance:'推理性能评测',
   model_service_quality:'模型能力评测'};

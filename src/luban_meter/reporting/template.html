@@ -39,6 +39,12 @@ th{cursor:default}th button{border:0;padding:0;background:transparent;font-size:
 tbody tr:hover{background:var(--bg)}.summary-table td:last-child{white-space:nowrap}
 .metric-context{overflow-wrap:anywhere}.metric-context code{font-size:12px}
 .stat-table td:first-child{min-width:140px}.analysis-note{font-size:13px;color:var(--muted)}
+.slo-field-table{width:100%;table-layout:fixed}.slo-field-table th,.slo-field-table td{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.slo-field-table thead th{white-space:nowrap;border-bottom:2px solid var(--line);overflow:hidden;text-overflow:ellipsis}
+.slo-field-table thead th:first-child{width:300px}
+.slo-field-table tbody th{white-space:nowrap;color:var(--muted);font-weight:600}
+.slo-field-table td{font-variant-numeric:tabular-nums}
+.slo-field-table tbody tr:last-child th,.slo-field-table tbody tr:last-child td{border-bottom:0}
 @media(max-width:700px){.analysis-toolbar,.analysis-toolbar.quality,.analysis-grid{grid-template-columns:1fr}.analysis-toolbar{gap:10px}}
 
 .report-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px;max-width:1840px;margin:auto;padding:24px;--anchor-offset:24px}
@@ -156,6 +162,7 @@ body.dark #observation-section{--resource-color-0:#66d5cf;--resource-color-1:#b5
 <nav id="report-nav" aria-label="报告模块">
 <a href="#overview" aria-current="page">报告总览</a>
 <a href="#summary-section">结果摘要</a>
+<a href="#slo-section">SLO 与 Goodput</a>
 <a href="#case-analysis">Case 分析</a>
 <a href="#task-metrics">全部指标</a>
 <a href="#observation-section">资源观测</a>
@@ -178,6 +185,8 @@ __RUN_SUMMARY__
 </div>
 <p class="overview-link"><a href="#summary-section">查看各 Case 结果摘要 →</a></p></section>
 <section id="summary-section" class="report-page" tabindex="-1" hidden><h2>结果摘要</h2><p class="muted">按任务分组，每行一个 Case。点击“分析”查看完整指标；未采集不代表零。</p><div id="run-context"></div><div id="case-summaries"></div></section>
+
+<section id="slo-section" class="report-page" tabindex="-1" hidden><h2>SLO 达标率与 Goodput 有效吞吐</h2><p class="muted">仅展示已配置 --goodput 且保存了判定结果的 Case；达标率分母为已判定请求数（满足+违反+失败，失败单独计数），任一已配置维度缺必要观测的请求记为无法判定且不进分母；Goodput 为满足请求数及其输出Token总数除以Case窗口。未采集不代表零。</p><div id="slo-overview" class="summary-cards" aria-label="SLO 最佳指标"></div><div id="slo-cases"></div></section>
 
 <section id="case-analysis" class="report-page" tabindex="-1" hidden><h2>Case 分析</h2>
 <div class="analysis-toolbar" id="analysis-toolbar">
@@ -388,6 +397,7 @@ tasks.forEach((task, ti) => {
   diagnosticParents.get(ti).append(section);
 });
 renderSummaries();
+renderSloSection();
 initAnalysis();
 renderOverview();
 initResources();

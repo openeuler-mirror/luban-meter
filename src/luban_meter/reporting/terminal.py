@@ -228,6 +228,11 @@ def metric_lines(entries, width, verbose=False):
             "queue_time_missing_requests": (
                 "Queue Timing Missing 缺失计时请求数"
             ),
+            "slo_satisfied_rate": "SLO 达标率",
+            "goodput_request_throughput": "Goodput 请求吞吐量",
+            "goodput_output_token_throughput": (
+                "Goodput 输出Token吞吐量"
+            ),
             "accuracy": "Accuracy 准确率",
             "exact_match": "Exact Match 完全匹配",
             "token_f1": "Token F1", "pass_at_1": "pass@1",
@@ -241,6 +246,8 @@ def metric_lines(entries, width, verbose=False):
                 view_label = {
                     "request_view": "request_view / 请求统计",
                     "service_view": "service_view / 服务统计",
+                    "service_view/goodput":
+                        "service_view/goodput / SLO与有效吞吐",
                     "": "metrics / 指标",
                 }.get(view, view)
                 yield from boxed([safe_text(view_label)], width)
@@ -346,6 +353,55 @@ def saved_token_view(result):
     return values.get("service_view") or {}
 
 
+def goodput_lines(goodput):
+    """One compact SLO/Goodput block read from the saved service_view."""
+    slo = goodput.get("slo_config") or {}
+    dimensions = []
+    for name, label in (
+        ("ttft_ms", "TTFT"), ("tpot_ms", "TPOT"), ("e2el_ms", "E2EL"),
+    ):
+        value = slo.get(name)
+        if isinstance(value, (int, float)) and not isinstance(
+            value, bool
+        ):
+            dimensions.append(f"{label}≤{number(value)}ms")
+    yield "SLO 阈值: " + ("  ".join(dimensions) or "N/A")
+
+    def count(name):
+        value = (goodput.get(name) or {}).get("value")
+        return number(value) if isinstance(value, int) else "N/A"
+
+    rate = (goodput.get("slo_satisfied_rate") or {}).get("value")
+    rate_text = (
+        f"{number(rate * 100)}%"
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool)
+        else "N/A（无已判定请求）"
+    )
+    yield (
+        f"SLO 达标率: {rate_text}  满足={count('slo_satisfied_count')} "
+        f"违反={count('slo_violated_count')} 失败={count('failed_count')} "
+        f"无法判定={count('undetermined_count')} "
+        f"分母={count('determined_count')}"
+    )
+
+    def throughput(item):
+        value = item.get("value")
+        return (
+            f"{number(value)} {safe_text(item.get('unit'))}"
+            if value is not None else "N/A"
+        )
+
+    output_item = goodput.get("goodput_output_token_throughput") or {}
+    note = ""
+    if output_item.get("value") is None:
+        note = "（有达标请求缺输出Token计数）"
+    yield (
+        "Goodput: 请求吞吐="
+        + throughput(goodput.get("goodput_request_throughput") or {})
+        + " · 输出Token吞吐=" + throughput(output_item) + note
+    )
+
+
 def case_lines(task, case, width, verbose=False):
     yield ""
     display_name = cache_case_label(task, case)
@@ -399,6 +455,10 @@ def case_lines(task, case, width, verbose=False):
         values = metric.get("values")
         phase_counts = (
             values.get("phase_counts") if isinstance(values, dict) else None
+        )
+        goodput = (
+            (values.get("service_view") or {}).get("goodput")
+            if isinstance(values, dict) else None
         )
         if phase_counts is not None and not verbose:
             view = metric["values"]["request_view"]
@@ -454,9 +514,18 @@ def case_lines(task, case, width, verbose=False):
                 if key in phase_counts
             )
             continue
+        if goodput is not None and not verbose:
+            # The compact SLO block replaces the raw goodput entries in
+            # this mode; --verbose keeps the full field table.
+            yield from goodput_lines(goodput)
         if metric.get("condition"):
             yield "condition=" + safe_text(metric["condition"])
         entries = metric_entries(metric)
+        if goodput is not None and not verbose:
+            entries = [
+                (path, item) for path, item in entries
+                if not path.startswith("service_view/goodput/")
+            ]
         if not entries:
             yield "N/A: " + safe_text(
                 metric.get("reason") or metric.get("error") or

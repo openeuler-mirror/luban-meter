@@ -178,6 +178,9 @@ function savedRequestCounts(c) {
   return {success,total,valid};
 }
 function performanceOverviewCards(records,bestMode=true) {
+  // SLO/Goodput cards live in their own section below the summaries,
+  // so the overview grid keeps its seven throughput/latency cards and
+  // never duplicates the peak output throughput on the same page.
   const cards=[
     {id:'peak-throughput',title:'Peak Throughput',unit:'tok/s',tone:'cyan',
       description:'higher is better · 已测最大值'},
@@ -217,6 +220,10 @@ function performanceOverviewCards(records,bestMode=true) {
     if(index===4) {
       const counts=savedRequestCounts(best.c);
       cards[index].source+=' · '+counts.success+' / '+counts.total+' 请求';
+    }
+    if(index===7||index===8) {
+      const thresholds=sloConfigText(best.c);
+      if(thresholds)cards[index].source+=' · SLO '+thresholds;
     }
   }
   extreme(0,usable.flatMap(record=>{
@@ -260,6 +267,148 @@ function performanceOverviewCards(records,bestMode=true) {
     }
   }
   return cards;
+}
+// The SLO section's own two cards; best values over the saved goodput
+// blocks.  Prefix-cache warm-up and observe Cases only join through the
+// same usable filter as the overview counts.
+function sloOverviewCards(records) {
+  const cards=[
+    {id:'best-slo-attainment',title:'Best SLO Attainment',unit:'%',tone:'green',
+      kind:'percentage',description:'higher is better · 达标请求占比'},
+    {id:'best-goodput-throughput',title:'Best Goodput Output Throughput',
+      unit:'tok/s',tone:'cyan',
+      description:'higher is better · SLO 内输出吞吐量'},
+  ].map(card=>({...card,value:null,source:'缺少可用的已保存数据',href:'#slo-section'}));
+  if(!records.length)return cards;
+  const completed=records.filter(({c})=>c.collection_complete===true &&
+    c.status!=='discarded' && (!c.metrics_status || c.metrics_status==='complete'));
+  const candidates=completed.filter(({c})=>!isPrefixCache(c)||usablePerformanceResult(c));
+  const goodputOf=(c,field)=>{
+    const m=servingMetric(c)?.values?.service_view?.goodput?.[field];
+    return m && numeric(m.value) && m.value>=0?m:null;
+  };
+  function extreme(index,points) {
+    if(!points.length)return;
+    const best=points.reduce((a,b)=>b.value>a.value?b:a);
+    const ties=points.filter(p=>p.value===best.value).length;
+    cards[index].value=best.value;
+    cards[index].source=taskDisplayName(best.task.name)+' / '+best.c.id+
+      ' · C'+valueText(best.c.parameters?.max_concurrency)+
+      (ties>1?' · '+ties+' 个 Case 并列':'');
+    cards[index].href='#summary-'+best.ti+'-'+best.ci;
+    const thresholds=sloConfigText(best.c);
+    if(thresholds)cards[index].source+=' · SLO '+thresholds;
+  }
+  extreme(0,candidates.flatMap(record=>{
+    const m=goodputOf(record.c,'slo_satisfied_rate');
+    return m?.unit==='ratio'?[{...record,value:m.value}]:[];
+  }));
+  extreme(1,candidates.flatMap(record=>{
+    const m=goodputOf(record.c,'goodput_output_token_throughput');
+    return m?.unit==='token/s'?[{...record,value:m.value}]:[];
+  }));
+  const configured=completed.some(({c})=>
+    servingMetric(c)?.values?.service_view?.goodput);
+  for(const index of [0,1]) {
+    if(!configured)cards[index].source='未配置 SLO（goodput 参数）';
+    else if(cards[index].value===null)
+      cards[index].source='已配置 SLO，暂无可判定的达标数据';
+  }
+  return cards;
+}
+// A dedicated page under the result summaries: every SLO/Goodput figure
+// lives here instead of the overview grid and the summary columns.
+function renderSloSection() {
+  const records=[];
+  tasks.forEach((task,ti)=>{
+    if(task.category!=='generation_performance')return;
+    task.cases.forEach((c,ci)=>records.push({task,ti,c,ci}));
+  });
+  const section=$('slo-section');
+  if(!records.length) {
+    section.remove();
+    document.querySelector('#report-nav a[href="#slo-section"]')?.remove();
+    return;
+  }
+  const goodputOf=c=>servingMetric(c)?.values?.service_view?.goodput;
+  const configured=records.filter(({c})=>goodputOf(c));
+  if(!configured.length) {
+    $('slo-overview').append(el('p',
+      '本次运行未配置 SLO（--goodput）：未保存达标率与 Goodput 有效吞吐，'+
+      '各 Case 仅保留常规吞吐与延迟指标。需要这些指标时，应在任务中配置'+
+      ' goodput 阈值并重新运行。','empty'));
+    return;
+  }
+  renderSummaryCards($('slo-overview'),sloOverviewCards(records));
+  // Transposed table: one row per field and one column per Case, so the
+  // multi-dimension SLO thresholds get the full row width instead of
+  // squeezing into a narrow column.
+  const countText=(g,key)=>{
+    const value=(g[key]||{}).value;
+    return value==null?'N/A':valueText(value);
+  };
+  const plainText=m=>m?.value==null?'N/A':valueText(m.value);
+  // A dedicated class: summary-table's sticky last column targets the
+  // horizontal layout and would detach the value column here.
+  const table=el('table');
+  table.className='slo-field-table';
+  const head=el('tr');
+  head.append(el('th','指标'));
+  configured.forEach(({task,c,ti,ci})=>{
+    const th=el('th');
+    th.append(link(task.name+' / '+c.id,'analysis-'+ti+'-'+ci));
+    head.append(th);
+  });
+  const thead=el('thead');
+  thead.append(head);
+  table.append(thead);
+  const body=el('tbody');
+  const fields=[
+    {title:'并发',titleText:'测试期间允许的最大并发请求数',
+      get:r=>valueText(r.c.parameters?.max_concurrency)},
+    {title:'SLO 阈值',titleText:'仅列出已配置维度；未配置的维度不显示、不虚构',
+      get:r=>sloConfigText(r.c)||'N/A'},
+    {title:'达标率',dynamicTitle:r=>goodputCellTitle(r.c),
+      get:r=>{
+        const m=goodputOf(r.c).slo_satisfied_rate;
+        return m?.value==null?'N/A':valueText(m.value,'ratio');
+      }},
+    {title:'满足 / 违反 / 失败 / 无法判定',
+      titleText:'依次为满足、违反、失败、无法判定的请求数；'+
+        '达标率分母为满足+违反+失败，无法判定不进分母',
+      get:r=>{
+        const g=goodputOf(r.c);
+        return ['slo_satisfied_count','slo_violated_count',
+          'failed_count','undetermined_count']
+          .map(key=>countText(g,key)).join(' / ');
+      }},
+    {title:'Goodput 请求吞吐量（req/s）',
+      titleText:'满足请求数除以Case窗口',
+      get:r=>plainText(goodputOf(r.c).goodput_request_throughput)},
+    {title:'Goodput 输出 Token 吞吐量（token/s）',
+      titleText:'满足请求的输出Token总数除以Case窗口；'+
+        '有达标请求缺输出Token计数时为N/A',
+      get:r=>plainText(goodputOf(r.c).goodput_output_token_throughput)},
+  ];
+  fields.forEach(field=>{
+    const tr=el('tr');
+    tr.append(el('th',field.title));
+    configured.forEach(record=>{
+      const value=field.get(record);
+      const td=el('td',value);
+      const title=field.dynamicTitle?
+        field.dynamicTitle(record):field.titleText;
+      if(title)td.title=title;
+      if(value!=='N/A' && !isNaN(Number(String(value).replace(/,/g,''))))
+        td.className='num';
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  const wrap=el('div',undefined,'table-wrap');
+  wrap.append(table);
+  $('slo-cases').append(wrap);
 }
 function renderSuccessCounts(parent,group) {
   const details=el('details');details.id='overview-success-counts';details.tabIndex=-1;
