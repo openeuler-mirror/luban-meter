@@ -923,6 +923,23 @@ TPOT按输出Token数加权，ITL按后续Token数加权；流式事件可能包
 不是性能变化，需区分会话失败与从未开始的轮次。会话耗时包含轮间等待，不能与单请求
 延迟混用。
 
+### SLO阈值、达标率与Goodput吞吐的展示
+
+配置`--goodput`后，`service_view.goodput`保存SLO判定与有效吞吐。达标率分母为
+已判定请求数（满足+违反+失败），失败请求计入分母、单独计数、不并入违反；
+任一已配置维度缺必要观测的请求记为无法判定，不进分母；`tpot_ms`维度沿用GuideLLM口径，约束排除首Token
+等待的ITL。Goodput请求吞吐量为满足请求数除以Case窗口，输出Token吞吐量为其
+Token总数除以窗口，有达标请求缺输出Token计数时该吞吐为空。
+HTML报告将SLO相关内容集中在结果摘要下方的独立章节“SLO 与 Goodput”，不进入
+总览卡区与Case摘要表，避免与Peak Throughput等输出吞吐展示重复：章节内含
+“Best SLO Attainment”与“Best Goodput Output Throughput”两张卡（取已保存值的
+最佳Case，来源处注明SLO阈值），及按Case的明细表（并发、SLO阈值、达标率、
+满足/违反/失败/无法判定计数、Goodput请求与输出Token吞吐量），达标率悬停显示
+该Case阈值、无法判定请求数与达标率分母。终端简洁摘要在指标下方输出SLO阈值、
+达标率及满足/违反/失败/无法判定计数、两种Goodput吞吐；不可判定字段为N/A并
+注明原因。未配置`--goodput`时该数据块不存在，章节显示未配置说明，总览与摘要
+不出现相应内容；`--verbose`保留完整字段表。
+
 质量指标包括选择题Accuracy、GSM8K数值Exact Match、SQuAD规范化EM/F1、
 HumanEval单次候选pass@1、LCSTS中文ROUGE-1/2/L、WikiText困惑度与Bits-per-Byte。
 完整样本中的服务失败、解析失败、沙箱失败沿用各指标既有分母规则；

@@ -272,7 +272,8 @@ const failed=cardCase('all_failed',4,0,0,10,[null,null,null]);failed.status='fai
 const failedScope=call('summaryScopeGroups',[task([failed])])[0];
 assert.equal(failedScope.peaks.length,0);
 const failedCards=call('performanceOverviewCards',recordsFor([failed]));
-assert.deepEqual(failedCards.map(card=>card.value),[null,null,null,null,0,4,null]);
+assert.deepEqual(failedCards.map(card=>card.value),
+  [null,null,null,null,0,4,null]);
 failed.metrics.streaming_performance.values.service_view.total_requests.value=0;
 failed.metrics.streaming_performance.values.service_view.failed_requests.value=0;
 assert.equal(call('performanceOverviewCards',recordsFor([failed]))[4].value,null);
@@ -318,6 +319,68 @@ assert.equal(separated.groups.length,2);
 const crossConditions=call('performanceOverviewCards',recordsFor([a,b,c,other]));
 assert.equal(crossConditions[0].value,9000);
 assert.equal(crossConditions[0].href,'#summary-0-3');
+
+// The SLO section's own cards read only the saved goodput block; the
+// overview grid keeps seven cards and the summary table stays free of
+// goodput columns.
+function withGoodput(c,fields) {
+  c.metrics.streaming_performance.values.service_view.goodput={
+    status:'applicable',
+    slo_config:{ttft_ms:100,tpot_ms:5,e2el_ms:2000},
+    slo_satisfied_count:scalar(8,'request'),
+    slo_violated_count:scalar(1,'request'),
+    failed_count:scalar(1,'request'),
+    undetermined_count:scalar(0,'request'),
+    determined_count:scalar(10,'request'),
+    slo_satisfied_rate:{value:fields.rate,unit:'ratio'},
+    goodput_request_throughput:{value:fields.req,unit:'req/s'},
+    goodput_output_token_throughput:{value:fields.out,unit:'token/s'},
+  };
+  return c;
+}
+const slo=withGoodput(cardCase('slo_case',16,150,50,50,[10,4,25]),
+  {rate:.9,req:5,out:1000});
+const sloCards=call('sloOverviewCards',recordsFor([slo]));
+assert.equal(sloCards.length,2);
+assert.equal(sloCards[0].id,'best-slo-attainment');
+assert.equal(sloCards[0].value,.9);
+assert.equal(sloCards[0].kind,'percentage');
+assert.equal(sloCards[0].href,'#summary-0-0');
+assert.match(sloCards[0].source,/SLO TTFT≤100ms TPOT≤5ms E2EL≤2000ms/);
+assert.equal(sloCards[1].id,'best-goodput-throughput');
+assert.equal(sloCards[1].value,1000);
+assert.match(sloCards[1].source,/SLO TTFT≤100ms TPOT≤5ms E2EL≤2000ms/);
+// The overview grid never carries SLO/Goodput cards, configured or not.
+assert.deepEqual(call('performanceOverviewCards',recordsFor([slo]))
+  .map(card=>card.id),['peak-throughput','peak-total-throughput',
+  'best-ttft-p99','best-tpot-p99','success-rate','max-concurrency',
+  'best-e2e-p99']);
+// The summary table stays free of goodput columns even when configured.
+assert.ok(!call('summaryMetrics',{
+  category:'generation_performance',cases:[slo]}).some(m=>
+  m.parts.at(-2)==='goodput'),'summary columns exclude goodput fields');
+const hover=call('goodputCellTitle',slo);
+assert.ok(hover.includes('TTFT≤100ms') && hover.includes('分母：10'),
+  'cell hover text carries thresholds and denominator');
+const undeterminedSlo=withGoodput(
+  cardCase('undetermined_slo',16,150,50,50,[10,4,25]),
+  {rate:null,req:null,out:null});
+undeterminedSlo.metrics.streaming_performance.values.service_view
+  .goodput.undetermined_count.value=50;
+undeterminedSlo.metrics.streaming_performance.values.service_view
+  .goodput.determined_count.value=0;
+const undeterminedCards=call('sloOverviewCards',
+  recordsFor([undeterminedSlo]));
+assert.equal(undeterminedCards[0].value,null);
+assert.equal(undeterminedCards[0].source,'已配置 SLO，暂无可判定的达标数据');
+assert.equal(undeterminedCards[1].value,null);
+const undeterminedHover=call('goodputCellTitle',undeterminedSlo);
+assert.ok(undeterminedHover.includes('无法判定请求 50 个'),
+  'hover text reports undetermined requests');
+// Unconfigured runs state the missing configuration on the SLO cards.
+const unconfiguredCards=call('sloOverviewCards',recordsFor([a]));
+assert.equal(unconfiguredCards[0].source,'未配置 SLO（goodput 参数）');
+assert.equal(unconfiguredCards[1].source,'未配置 SLO（goodput 参数）');
 
 function qualityCase(id,key,value,unit='ratio') {
   return {id,status:'success',collection_complete:true,metrics_status:'complete',parameters:{},

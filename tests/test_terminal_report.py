@@ -914,3 +914,66 @@ def test_quality_report_has_no_throughput(result):
     assert "total_token_throughput" not in text
     assert "正式测试时长" not in text
     assert "整轮 duration=" in text
+
+
+def _with_goodput(result, *, rate, req, out, undetermined=0):
+    task = result["tasks"][0]
+    task["cases"][0]["metrics"]["streaming_performance"]["values"][
+        "service_view"
+    ]["goodput"] = {
+        "status": "applicable",
+        "slo_config": {"ttft_ms": 100, "tpot_ms": 5, "e2el_ms": 2000},
+        "slo_satisfied_count": {"value": 8, "unit": "request"},
+        "slo_violated_count": {"value": 1, "unit": "request"},
+        "failed_count": {"value": 1, "unit": "request"},
+        "undetermined_count": {"value": undetermined, "unit": "request"},
+        "determined_count": {"value": 10, "unit": "request"},
+        "slo_satisfied_rate": {"value": rate, "unit": "ratio"},
+        "goodput_request_throughput": {"value": req, "unit": "req/s"},
+        "goodput_output_token_throughput": {
+            "value": out, "unit": "token/s"
+        },
+    }
+    return result
+
+
+def test_goodput_block_summarizes_slo_attainment_and_throughputs(result):
+    payload = _with_goodput(
+        copy.deepcopy(result), rate=0.8, req=5, out=1000
+    )
+    text = render_text(payload, width=120)
+    assert "SLO 阈值: TTFT≤100ms TPOT≤5ms E2EL≤2000ms" in text
+    assert "SLO 达标率: 80%" in text
+    assert "满足=8" in text and "违反=1" in text and "失败=1" in text
+    assert "无法判定=0" in text and "分母=10" in text
+    assert "Goodput: 请求吞吐=5 req/s" in text
+    assert "输出Token吞吐=1000 token/s" in text
+    # The compact block replaces the raw field rows in this mode.
+    assert "service_view/goodput/" not in text
+    assert "slo_satisfied_rate" not in text
+    verbose = render_text(payload, width=120, verbose=True)
+    assert "SLO 达标率" in verbose
+    assert "service_view/goodput" in verbose
+
+
+def test_goodput_block_marks_undeterminable_values(result):
+    payload = _with_goodput(
+        copy.deepcopy(result), rate=None, req=None, out=None,
+        undetermined=50,
+    )
+    payload["tasks"][0]["cases"][0]["metrics"]["streaming_performance"][
+        "values"
+    ]["service_view"]["goodput"]["determined_count"] = {"value": 0}
+    text = render_text(payload, width=120)
+    assert "SLO 达标率: N/A（无已判定请求）" in text
+    assert "无法判定=50" in text
+    assert "请求吞吐=N/A" in text
+    assert "输出Token吞吐=N/A" in text
+    assert "有达标请求缺输出Token计数" in text
+
+
+def test_no_goodput_block_without_configuration(result):
+    text = render_text(result, width=120)
+    assert "SLO 阈值" not in text
+    assert "Goodput:" not in text
+    assert "SLO 达标率" not in text
