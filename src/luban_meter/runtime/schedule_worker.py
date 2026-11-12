@@ -4,7 +4,11 @@ import sys
 import threading
 import time
 
-from luban_meter.core.planning import bootstrap, public_plan
+from luban_meter.core.planning import (
+    bootstrap,
+    public_plan,
+    validate_plan_parameters,
+)
 from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.core.schedule_store import ScheduleStore
 from luban_meter.core.schedule_time import stamp
@@ -66,6 +70,7 @@ def main():
                             "scheduled=%s retry_of=%s",
                             row["plan_id"], execution_id, row["scheduled_at"],
                             row["retry_of"])
+                validate_plan_parameters(plan, base_dir=store.project)
                 result, directory = coordinator.run(
                     plan, store.project / "runs", run_id=row["run_id"],
                     log_dir=log_dir, log_level=log_level,

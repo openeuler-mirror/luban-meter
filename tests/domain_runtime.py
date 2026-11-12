@@ -28,9 +28,9 @@ def collect_domain(name, request, parameters):
     supplied.update(
         model=request.get("model_name", "test-model"),
         base_url=parameters.get("service_url", "http://127.0.0.1:8000"),
-        endpoint="/v1/chat/completions"
+        endpoint="chat"
         if parameters.get("prompt_format", "base") == "chat"
-        else "/v1/completions",
+        else "completion",
     )
     if "max_tokens" in parameters:
         supplied["output_tokens"] = parameters["max_tokens"]

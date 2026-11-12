@@ -78,8 +78,10 @@ class PrefixCacheBenchmark(OnlineServingBenchmark):
                 "goodput", "circuit_breaker", "max_error_rate",
             )
         },
-        "endpoint": Parameter(str, "/v1/completions",
-                              choices=("/v1/completions",)),
+        "endpoint": Parameter(
+            str, "completion", choices=("completion",),
+            help=HTTP["endpoint"].help,
+        ),
         "length_policy": Parameter(str, "strict", choices=("strict",)),
         "prefix_cache_target": Parameter(
             float, required=True, minimum=0, maximum=1, matrix=True,

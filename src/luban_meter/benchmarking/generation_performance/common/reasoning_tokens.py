@@ -110,7 +110,7 @@ def prepare_reasoning_counter(parameters, tokenizer=None):
     """Prepare optional counting resources before sending requests."""
     enabled = bool(parameters.get("thinking_metrics")) and parameters.get(
         "endpoint"
-    ) == "/v1/chat/completions"
+    ) == "chat"
     logger.info("Phase timing configured: enabled=%s", enabled)
     if not enabled:
         return None

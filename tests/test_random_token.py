@@ -198,7 +198,7 @@ def test_output_budget_and_early_eos(service, tmp_path, ignore_eos, condition):
 
 
 def test_chat_accepts_synthetic_text(service, tmp_path):
-    p = {**serving(service), "endpoint": "/v1/chat/completions"}
+    p = {**serving(service), "endpoint": "chat"}
     result, _ = RunCoordinator().run(build_plan(p), tmp_path)
     assert result["status"] == "success", result
     assert all("messages" in body for _, body in Handler.posts)
@@ -364,7 +364,7 @@ def test_chat_context_overflow_detected_before_any_request(
     tokenizer.save_pretrained(Handler.tokenizer_path)
     p = {
         **serving(service),
-        "endpoint": "/v1/chat/completions",
+        "endpoint": "chat",
         "max_model_len": 12,
     }
     result, _ = RunCoordinator().run(build_plan(p), tmp_path / "run")

@@ -61,7 +61,7 @@
             "dataset_path": "/home/haiyang/LuBan-Meter/dataset/gsm8k/test.jsonl",
             "device_exporter_url": "",
             "device_sample_interval": 1.0,
-            "endpoint": "/v1/completions",
+            "endpoint": "completion",
             "eval_mode": "gen",
             "few_shot": 0,
             "few_shot_path": "",

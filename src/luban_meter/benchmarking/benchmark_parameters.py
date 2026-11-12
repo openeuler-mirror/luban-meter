@@ -8,8 +8,9 @@ HTTP = {
     "model": Parameter(str, "", required=True),
     "endpoint": Parameter(
         str,
-        "/v1/completions",
-        choices=("/v1/completions", "/v1/chat/completions"),
+        "completion",
+        choices=("completion", "chat"),
+        help="API type: chat or completion (HTTP paths are not accepted)",
     ),
     "api_key": Parameter(str, "", secret=True),
     "http_max_connections": Parameter(

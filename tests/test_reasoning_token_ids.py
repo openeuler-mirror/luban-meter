@@ -47,7 +47,7 @@ class Tokenizer:
 
 def parameters(**overrides):
     return {
-        "model": "mock", "endpoint": "/v1/chat/completions",
+        "model": "mock", "endpoint": "chat",
         "thinking_metrics": True, "tokenizer": "matching-model",
         "request_params": {"return_token_ids": True}, **overrides,
     }
@@ -105,7 +105,7 @@ def execute(monkeypatch, data, counter, enabled=True):
     )) as client:
         return online_serving.execute_request(
             client=client, request_index=3, payload={},
-            endpoint="/v1/chat/completions", service_url="http://mock",
+            endpoint="chat", service_url="http://mock",
             api_key="", timeout=1, benchmark_start=10, scheduled_time=10,
             tracker=online_serving.ActiveRequestTracker(),
             stream_collector=lambda lines: collect_chat_stream(
@@ -339,7 +339,7 @@ def test_mixed_sources_weighted_means_and_exclusions(monkeypatch, counter):
 
 @pytest.mark.parametrize("overrides,reason", [
     ({"thinking_metrics": False}, None),
-    ({"endpoint": "/v1/completions"}, None),
+    ({"endpoint": "completion"}, None),
     ({"request_params": {}}, "token_ids_not_requested"),
     ({"request_params": {"return_token_ids": False}},
      "token_ids_not_requested"),
@@ -429,7 +429,7 @@ def test_real_sse_single_multi_workers_and_saved_reports(tmp_path):
     ]}]))
     common = {
         "model": "mock", "base_url": f"http://127.0.0.1:{server.server_port}",
-        "endpoint": "/v1/chat/completions", "profile": "concurrent",
+        "endpoint": "chat", "profile": "concurrent",
         "max_concurrency": 1, "num_warmups": 0, "api_key": "private-key",
         "thinking_metrics": True, "tokenizer": str(tokenizer_path),
         "request_params": {"return_token_ids": True},
@@ -574,7 +574,7 @@ def test_unicode_ids_keep_single_multi_workers_and_full_reports_successful(
                     ),
                     "model": f"mock-{count}",
                     "base_url": f"http://127.0.0.1:{server.server_port}",
-                    "endpoint": "/v1/chat/completions",
+                    "endpoint": "chat",
                     "data": "sharegpt" if is_multi else "jsonl",
                     "dataset_path": str(multi if is_multi else single),
                     "profile": "concurrent", "max_concurrency": 1,

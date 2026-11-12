@@ -117,7 +117,7 @@ def test_short_suffix_or_partial_block(tokenizer, total, rate, expected):
     {"prefix_cache_alignment": "strict", "prefix_cache_target": 0.333},
     {"prefix_cache_alignment": "ceil"}, {"prefix_count": 101},
     {"prefix_count": 0}, {"kv_cache_block_size": 0}, {"input_tokens": 0},
-    {"kv_cache_block_size": 1.5}, {"endpoint": "/v1/chat/completions"},
+    {"kv_cache_block_size": 1.5}, {"endpoint": "chat"},
     {"max_model_len": 1024}, {"data": "sharegpt"}, {"input_tokens_std": 2},
     {"request_params": {"truncate_prompt_tokens": 4}},
 ])

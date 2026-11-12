@@ -126,7 +126,7 @@ def run_stream(monkeypatch, chunks, *, collector=None, failure=None):
         monkeypatch.setattr(http, "build_request", build)
         record = online_serving.execute_request(
             client=http, request_index=0, payload={},
-            endpoint="/v1/completions", service_url="http://mock",
+            endpoint="completion", service_url="http://mock",
             api_key="", timeout=1.0, benchmark_start=0.0,
             scheduled_time=19.0, tracker=online_serving.ActiveRequestTracker(),
             stream_collector=lambda lines: collector(
