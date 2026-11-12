@@ -32,6 +32,7 @@ class StreamObservation:
     prompt_token_ids: Any = None
     output_token_id_chunks: tuple[Any, ...] = ()
     token_ids_error: str | None = None
+    tool_call_event_times: tuple[float, ...] = ()
 
 
 def server_queue_time_ms(value: Any) -> float | None:
@@ -137,14 +138,15 @@ def collect_chat_stream(
     stream: Iterable[bytes],
     clock: Callable[[], float] = time.perf_counter,
 ) -> StreamObservation:
-    """Collect reasoning and content, counting each output event once.
+    """Collect reasoning, content and tool output, timing each event once.
 
     Thinking aliases are kept separate from final content. A response
-    with reasoning alone is a valid performance observation.
+    with reasoning or tool output alone is a valid observation.
     """
     event_times: list[float] = []
     content_times: list[float] = []
     reasoning_times: list[float] = []
+    tool_call_times: list[float] = []
     generated_parts: list[str] = []
     reasoning_parts: list[str] = []
     usage: tuple[int, int] | None = None
@@ -200,7 +202,20 @@ def collect_chat_stream(
         thought = reasoning_text(delta)
         content = delta.get("content")
         content = content if isinstance(content, str) else ""
-        if not thought and not content:
+        tool_calls = delta.get("tool_calls")
+        has_tool_output = False
+        if isinstance(tool_calls, list):
+            for call in tool_calls:
+                if not isinstance(call, Mapping):
+                    continue
+                function = call.get("function")
+                if isinstance(function, Mapping) and any(
+                    isinstance(function.get(key), str) and function[key]
+                    for key in ("name", "arguments")
+                ):
+                    has_tool_output = True
+                    break
+        if not thought and not content and not has_tool_output:
             continue
         timestamp = clock()
         event_times.append(timestamp)
@@ -210,6 +225,8 @@ def collect_chat_stream(
         if content:
             generated_parts.append(content)
             content_times.append(timestamp)
+        if has_tool_output:
+            tool_call_times.append(timestamp)
 
     if not event_times:
         raise RuntimeError(
@@ -233,4 +250,5 @@ def collect_chat_stream(
         prompt_token_ids=prompt_token_ids,
         output_token_id_chunks=tuple(output_token_id_chunks),
         token_ids_error=token_ids_error,
+        tool_call_event_times=tuple(tool_call_times),
     )

@@ -17,11 +17,18 @@
 | `te` | 流式采集结束 | `e2el_ms`，相对`t0` |
 | `r1`、`rn` | 首个、最后一个思考事件 | `reasoning_event_offsets_ms`首尾，相对`t0` |
 | `c1`、`cn` | 首个、最后一个正文事件 | `content_event_offsets_ms`首尾，相对`t0` |
+| 工具事件 | 有效工具调用片段 | `tool_call_event_offsets_ms`，相对`t0`；不属于正文或思考通道 |
 
 Completions使用非空`choices[0].text`；Chat使用独立的
-`delta.reasoning`、`delta.reasoning_content`和`delta.content`。
-整体有效输出包括思考与正文。同一事件含两个通道时共用时间戳，整体只记一次。
+`delta.reasoning`、`delta.reasoning_content`和`delta.content`，以及有效
+`delta.tool_calls`。工具调用列表中任一`function.name`或`function.arguments`
+为非空字符串即有效；只有`id`、`type`、`index`或空字段不计时。空格和换行字符串
+属于非空输出。整体有效输出包括思考、正文和工具调用；同一事件共用时间戳，只记一次。
 空角色事件、空文本、仅usage或Token ID的事件、心跳及`[DONE]`不算有效输出。
+工具事件只保存时间，不拼入`generated_text`或`reasoning_text`；无正文时首正文延迟
+仍为`null`。仅工具输出的性能请求可成功，仍沿用usage及流完整性校验。
+`finish_reason=tool_calls`可进入整体指标，但分阶段仍按`other_finish`排除。
+多轮无正文时记录请求性能后以`tool_calls_only`结束会话，不执行工具或自动续轮。
 
 TTFT从`t0`计时，包含HTTP发送、服务排队及首个有效输出前的客户端可见等待。
 Chat在已有有效输出后，可收到`[DONE]`或正常EOF结束采集；
@@ -35,7 +42,8 @@ Completions必须收到`[DONE]`，即使已收到正文、正常stop和完整usa
 ## 2. 整体在线指标
 
 令`N`为单请求的`usage.completion_tokens`，`I`为`usage.prompt_tokens`。
-应确认服务的输出总数覆盖思考与正文；工具不再把思考Token数累加到`N`。
+应确认服务的输出总数覆盖思考、正文与工具调用；工具不再把思考Token数累加到`N`，
+也不按工具调用片段数量估算缺失Token数。
 
 | 指标 | 正常采集的单请求计算 | 单位 | Case汇总 |
 |---|---|---|---|
