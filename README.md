@@ -997,6 +997,10 @@ luban-meter report --input results/<run_id>/result.json --output report.html
 
 ## 指标口径
 
+完整的时间边界、公式、样本排除、权重及思考Token计数说明见
+[在线性能与思考阶段指标说明](METRICS.md)，图文与计算示例见
+[HTML指标说明](METRICS.html)。
+
 在线性能从客户端观察，Engine性能使用引擎提供的内部时间戳。
 令首个有效输出时刻为t1、最后有效输出时刻为tn、请求开始为t0、输出Token数为N：
 
