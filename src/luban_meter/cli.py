@@ -12,6 +12,7 @@ from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.metric import metrics
 from luban_meter.core.planning import build_plan, cli_schema, public_plan
 from luban_meter.core.run_coordinator import RunCoordinator
+from luban_meter.core.schedule_commands import add_parser, execute
 from luban_meter.log import (
     LOG_LEVEL_NAMES,
     add_log_secrets,
@@ -57,6 +58,7 @@ def _build_parser():
     listing.add_argument("action", choices=("list",))
     metric_list = commands.add_parser("metrics")
     metric_list.add_argument("action", choices=("list",))
+    schedule = add_parser(commands)
     for command in ("run", "plan"):
         run = commands.add_parser(command, allow_abbrev=False)
         run.add_argument("--scenario", default=argparse.SUPPRESS)
@@ -121,7 +123,7 @@ def _build_parser():
         "--raw-root", type=Path,
         help="原始运行目录；默认使用输入结果文件所在目录",
     )
-    for child in (listing, metric_list, report):
+    for child in (listing, metric_list, report, schedule):
         child.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
                            default=argparse.SUPPRESS)
         child.add_argument("--log-dir", type=Path, default=argparse.SUPPRESS)
@@ -172,6 +174,8 @@ def main(argv=None):
 
 def _execute(args, schema, run_id, log_file):
     try:
+        if args.command == "schedule":
+            return execute(args)
         if args.command == "benchmarks":
             for name, implementation in benchmarks.items():
                 print(f"{implementation.category}\t{name}")
