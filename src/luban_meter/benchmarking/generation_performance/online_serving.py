@@ -86,8 +86,12 @@ def _build_request_record(
         for previous, current in itertools.pairwise(event_times)
     ]
     content_times = observation.content_event_times
-    # Completion streams have no separate reasoning channel.
-    if not content_times and not observation.reasoning_event_times:
+    tool_call_times = observation.tool_call_event_times
+    # Completion streams have no separate reasoning or tool channel.
+    if (
+        not content_times and not observation.reasoning_event_times
+        and not tool_call_times
+    ):
         content_times = event_times
     return {
         "request_index": request_index,
@@ -108,7 +112,10 @@ def _build_request_record(
         "input_tokens": observation.input_tokens,
         "output_tokens": observation.output_tokens,
         "stream_event_count": len(event_times),
-        "output_observation": "reasoning_and_content",
+        "output_observation": (
+            "reasoning_content_and_tool_calls"
+            if tool_call_times else "reasoning_and_content"
+        ),
         "generated_text": observation.generated_text,
         "reasoning_text": observation.reasoning_text,
         "has_content": bool(observation.generated_text),
@@ -125,6 +132,9 @@ def _build_request_record(
         ],
         "content_event_offsets_ms": [
             round((value - started) * 1000, 3) for value in content_times
+        ],
+        "tool_call_event_offsets_ms": [
+            round((value - started) * 1000, 3) for value in tool_call_times
         ],
         "reasoning_tokens": observation.reasoning_tokens,
         "finish_reason": observation.finish_reason,
@@ -679,6 +689,19 @@ def process_case(
     for name in ("arrival_process", "burstiness", "num_prompts", "max_tokens"):
         if raw_case.get(name) is not None:
             case_info[name] = raw_case[name]
+
+    tool_requests = sum(
+        bool(record.get("tool_call_event_offsets_ms")) for record in successful
+    )
+    if tool_requests:
+        tool_events = sum(
+            len(record.get("tool_call_event_offsets_ms", ()))
+            for record in successful
+        )
+        logger.info(
+            "Tool-call output observed: requests=%d events=%d",
+            tool_requests, tool_events,
+        )
 
     return (
         {

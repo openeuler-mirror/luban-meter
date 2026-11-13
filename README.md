@@ -249,20 +249,29 @@ PPL/logprobs评分必需字段保持原有行为，也可通过`request_params`�
 空停止列表不会禁用EOS或绕过输出预算，也不能保证清除服务端自行配置的停止规则。
 
 chat性能采集同时识别`delta.reasoning`、`delta.reasoning_content`和`delta.content`。
-TTFT、最后输出时间及流事件间隔覆盖思考和正文；同一个事件包含两个通道时只计时一次。
+`delta.tool_calls`中任一调用的`function.name`或`function.arguments`为非空
+字符串时，也作为有效输出；只有`id`、`type`、`index`或空字段的片段不计时。
+TTFT、最后输出时间及流事件间隔覆盖思考、正文和工具输出；同一个事件只计时一次。
 原始请求事实分别保存`reasoning_text`和`generated_text`，并记录：
 
-- `output_observation=reasoning_and_content`：标记本次输出观察口径；
-- `output_event_offsets_ms`、`reasoning_event_offsets_ms`、`content_event_offsets_ms`：
+- `output_observation`：观察到工具输出时为`reasoning_content_and_tool_calls`，
+  其余保留`reasoning_and_content`；
+- `output_event_offsets_ms`、`reasoning_event_offsets_ms`、`content_event_offsets_ms`、
+  `tool_call_event_offsets_ms`：
   相对请求开始的事件时间，单位毫秒；
 - `first_content_latency_ms`：首个非空正文延迟，无正文时为`null`；
 - `has_content`、`finish_reason`及服务返回的`usage`；
 - `reasoning_tokens`：优先保存服务`usage.completion_tokens_details.reasoning_tokens`；
   开启思考指标后，服务计数缺失/null时可按下述Token ID规则补充，否则为`null`。
 
-只有思考的性能响应仍视为成功，并标记`has_content=false`；完全没有有效输出仍失败。
+只有思考或工具输出的性能响应仍视为成功，并标记`has_content=false`；完全没有有效
+输出仍失败。工具输出独立记录时间，不拼入正文或思考，也不保存函数参数全文或执行
+工具；因此无正文时`first_content_latency_ms`仍为`null`。无效工具字段不会单独使
+已有有效输出的响应失败。`finish_reason=tool_calls`保留原值，整体性能仍可统计，
+分阶段指标沿用正常`stop`资格，将其记为`other_finish`。
 输出Token总数沿用服务`usage.completion_tokens`，不再额外累加思考Token，
-也不按字符或事件估算缺失计数；需确认被测服务的总数包含思考，才能按全部输出比较吞吐。
+也不按字符或事件估算缺失计数；需确认服务总数包含思考与工具输出，才能比较全部
+输出吞吐量。Case指标阶段的日志汇总工具输出的请求数和事件数，不逐请求记录内容。
 
 ### thinking与正式回答的分阶段计时
 
@@ -866,8 +875,11 @@ assistant消息切分：参考回答只作分隔符，**从不回放**，历史�
   `user_interrupt`）与已完成、未开始轮数，未准入的轮次不计入请求失败。某轮HTTP失败
   或超时即结束该会话，该轮计入请求失败，后续轮记为未开始，其他会话继续执行，不做
   轮级重试；`abort_reason`取值`turn_failed`、`context_overflow`、`session_timeout`、
-  `num_requests`、`max_duration`、`user_interrupt`、`reasoning_only`、`no_output`；
-  其中`turn_failed`、`reasoning_only`、`no_output`发生在请求发出后，该轮计入
+  `num_requests`、`max_duration`、`user_interrupt`、`reasoning_only`、
+  `tool_calls_only`、`no_output`；只有工具输出而无正文时，记录该请求性能后结束会话，
+  标记`tool_calls_only`，不执行工具或续接工具轮次；同时有思考时也用此原因。
+  其中`turn_failed`、`reasoning_only`、`tool_calls_only`、`no_output`发生在请求
+  发出后，该轮计入
   `sent_failed_turns`，`session_view`的未开始轮次不再包含它。
   `--max-error-rate`的分母是本Case已结束的全部请求（失败计入），未准入的轮次不算
   服务失败；`--circuit-breaker`只用各会话首轮成功请求的P99 E2EL，因为后续轮prefill

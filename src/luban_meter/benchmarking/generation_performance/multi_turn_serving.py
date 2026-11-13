@@ -69,7 +69,7 @@ _THINK_POLL_S = 0.05
 # turn already counts in the error-rate denominator, so it is reported
 # separately from turns that were never started.
 _SENT_FAILED_REASONS = frozenset(
-    {"turn_failed", "reasoning_only", "no_output"}
+    {"turn_failed", "reasoning_only", "tool_calls_only", "no_output"}
 )
 
 CONVERSATION_PARAMETERS = {
@@ -533,17 +533,20 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             if record.get("status") != "success":
                 abort_reason = "turn_failed"
                 break
-            # A reasoning-only response is a valid performance
+            # A reasoning/tool-only response is a valid performance
             # observation, but a session cannot continue without
-            # assistant text to carry forward.  Record which of the
-            # two happened instead of merging them.
+            # assistant text to carry forward. Keep the stop reason
+            # in the session facts.
             reply = record.get("generated_text")
             if not isinstance(reply, str) or not reply:
-                abort_reason = (
-                    "reasoning_only"
-                    if record.get("reasoning_text")
-                    else "no_output"
-                )
+                if record.get("tool_call_event_offsets_ms"):
+                    abort_reason = "tool_calls_only"
+                else:
+                    abort_reason = (
+                        "reasoning_only"
+                        if record.get("reasoning_text")
+                        else "no_output"
+                    )
                 break
             completed += 1
             history.append({"role": "assistant", "content": reply})
