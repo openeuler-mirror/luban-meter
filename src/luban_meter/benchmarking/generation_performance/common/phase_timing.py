@@ -104,7 +104,7 @@ def request_phase_timing(record, *, thinking_metrics=False):
 
 def phase_timing_metric(facts):
     """Aggregate each admitted Chat request once, including session turns."""
-    if facts["parameters"].get("endpoint") != "/v1/chat/completions":
+    if facts["parameters"].get("endpoint") != "chat":
         logger.info("Phase timing unavailable: endpoint is not Chat")
         return {"status": "unavailable", "reason": "requires Chat endpoint"}
     thinking = facts["parameters"].get("thinking_metrics", False)

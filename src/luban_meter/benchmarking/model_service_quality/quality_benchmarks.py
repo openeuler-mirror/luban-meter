@@ -86,16 +86,19 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         }
 
     @classmethod
+    def _prompt_format(cls, parameters):
+        endpoint = cls.parameter_schema()["endpoint"].validate(
+            "endpoint", parameters["endpoint"],
+        )
+        return {"chat": "chat", "completion": "base"}[endpoint]
+
+    @classmethod
     def domain_parameters(cls, parameters):
         values = dict(parameters)
         values.update(
             service_url=parameters["base_url"],
             max_tokens=parameters["output_tokens"],
-            prompt_format=(
-                "chat"
-                if parameters["endpoint"] == "/v1/chat/completions"
-                else "base"
-            ),
+            prompt_format=cls._prompt_format(parameters),
             max_concurrency=parameters.get("max_concurrency", 8),
         )
         return cls.domain_module.validate_parameters(values)
@@ -200,6 +203,11 @@ class ChoiceBenchmark(QualityBenchmark):
 
     @classmethod
     def domain_parameters(cls, parameters):
+        if (parameters["eval_mode"] == "ppl"
+                and parameters["endpoint"] != "completion"):
+            raise ValueError(
+                "eval_mode=ppl supports only endpoint='completion'"
+            )
         module = cls.domain_module
         template = parameters["template"]
         definition = module.ChoiceBenchmarkDefinition(
@@ -209,11 +217,7 @@ class ChoiceBenchmark(QualityBenchmark):
         values.update(
             service_url=parameters["base_url"],
             max_tokens=parameters["output_tokens"],
-            prompt_format=(
-                "chat"
-                if parameters["endpoint"] == "/v1/chat/completions"
-                else "base"
-            ),
+            prompt_format=cls._prompt_format(parameters),
         )
         return module.validate_choice_parameters(values, definition)
 
@@ -309,7 +313,8 @@ class WikiTextBenchmark(QualityBenchmark):
         "template": Parameter(str, "wikitext", choices=("wikitext",)),
         "eval_mode": Parameter(str, "loss", choices=("loss",)),
         "endpoint": Parameter(
-            str, "/v1/completions", choices=("/v1/completions",)
+            str, "completion", choices=("completion",),
+            help=HTTP["endpoint"].help,
         ),
         "max_context_length": Parameter(int, 2048, minimum=2, matrix=True),
         "stride": Parameter(int, None, minimum=1, matrix=True),
@@ -326,7 +331,8 @@ class HumanEvalBenchmark(QualityBenchmark):
         **SANDBOX,
         "template": Parameter(str, "humaneval", choices=("humaneval",)),
         "endpoint": Parameter(
-            str, "/v1/completions", choices=("/v1/completions",)
+            str, "completion", choices=("completion",),
+            help=HTTP["endpoint"].help,
         ),
         "max_samples": Parameter(int, 164, minimum=1),
         "output_tokens": Parameter(int, 1024, minimum=1, matrix=True),

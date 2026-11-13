@@ -45,7 +45,7 @@ def collect(tmp_path, scenario, text, *, mode="chat", pipeline=True,
             parser=None):
     dataset = tmp_path / "data.jsonl"
     dataset.write_text('{}\n')
-    endpoint = "/v1/chat/completions" if mode == "chat" else "/v1/completions"
+    endpoint = "chat" if mode == "chat" else "completion"
     plan = build_plan({
         "scenario": scenario, "model": "mock", "dataset_path": str(dataset),
         "endpoint": endpoint,

@@ -38,7 +38,7 @@ def thinking_timing(record):
 
 
 def compute(
-    records, endpoint="/v1/chat/completions", *, thinking_metrics=True,
+    records, endpoint="chat", *, thinking_metrics=True,
 ):
     facts = {
         "parameters": {
@@ -98,7 +98,7 @@ def test_disabled_switch_skips_phase_derivation(monkeypatch, enabled):
     with httpx.Client(transport=transport) as client:
         record = online_serving.execute_request(
             client=client, request_index=0, payload={},
-            endpoint="/v1/chat/completions", service_url="http://test",
+            endpoint="chat", service_url="http://test",
             api_key="", timeout=1, benchmark_start=0, scheduled_time=0,
             tracker=online_serving.ActiveRequestTracker(),
             stream_collector=collect_chat_stream, **arguments,
@@ -264,7 +264,7 @@ def test_http_sse_reasoning_counts_preserve_request_outcome(
                 row = online_serving.execute_request(
                     client=client, request_index=7,
                     payload={"prompt": "private-prompt"},
-                    endpoint="/v1/chat/completions",
+                    endpoint="chat",
                     service_url=f"http://127.0.0.1:{server.server_port}",
                     api_key="private-key", timeout=2,
                     benchmark_start=started, scheduled_time=started,
@@ -470,7 +470,7 @@ def test_no_usage_required_and_empty_or_non_chat_results_unavailable():
     assert compute([response()])["status"] == "success"
     assert compute([])["status"] == "unavailable"
     assert compute([response([], [])])["status"] == "unavailable"
-    assert compute([response()], "/v1/completions")["status"] == "unavailable"
+    assert compute([response()], "completion")["status"] == "unavailable"
 
 
 @pytest.mark.parametrize("field", [
@@ -501,7 +501,7 @@ def test_timeout_has_no_phase_values(failure):
     with httpx.Client(transport=httpx.MockTransport(timeout)) as client:
         record = online_serving.execute_request(
             client=client, request_index=9, payload={},
-            endpoint="/v1/chat/completions", service_url="http://test",
+            endpoint="chat", service_url="http://test",
             api_key="", timeout=1, benchmark_start=0, scheduled_time=0,
             tracker=tracker, stream_collector=collect_chat_stream,
             thinking_metrics=True,
@@ -583,7 +583,7 @@ def test_real_workers_reports_and_shared_log(tmp_path):
     ]}]))
     common = {
         "model": "mock", "base_url": f"http://127.0.0.1:{server.server_port}",
-        "endpoint": "/v1/chat/completions", "profile": "concurrent",
+        "endpoint": "chat", "profile": "concurrent",
         "max_concurrency": 1, "num_warmups": 0, "api_key": "private-key",
         "thinking_metrics": True,
     }
@@ -708,7 +708,7 @@ def test_empty_phase_distributions_show_unavailable():
             "name": "test", "category": "generation_performance",
             "status": "success", "cases": [{
                 "id": "case_1", "status": "success",
-                "parameters": {"endpoint": "/v1/chat/completions"},
+                "parameters": {"endpoint": "chat"},
                 "metrics": {"streaming_phase_timing": compute([
                     response(finish="length"),
                 ])},

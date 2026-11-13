@@ -4,7 +4,7 @@
       "name": "prefix-half",
       "scenario": "prefix_cache",
       "model": "Qwen2.5-3B",
-      "endpoint": "/v1/completions",
+      "endpoint": "completion",
       "profile": "concurrent",
       "max_concurrency": 4,
       "input_tokens": 1024,

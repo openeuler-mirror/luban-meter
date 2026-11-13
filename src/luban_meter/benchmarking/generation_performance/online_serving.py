@@ -154,7 +154,7 @@ def execute_request(
 ) -> dict[str, Any]:
     """Execute a streaming HTTP request and return a result record.
 
-    ``endpoint`` is ``"/v1/completions"`` or ``"/v1/chat/completions"``.
+    ``endpoint`` is ``"completion"`` or ``"chat"``.
     ``stream_collector`` is ``collect_completion_stream`` or
     ``collect_chat_stream``.
     """
@@ -163,7 +163,11 @@ def execute_request(
             return exception_log_info(error)
         return type(error), error, error.__traceback__
 
-    url = f"{service_url.rstrip('/')}/{endpoint.lstrip('/')}"
+    path = {
+        "completion": "/v1/completions",
+        "chat": "/v1/chat/completions",
+    }[endpoint]
+    url = service_url.rstrip("/") + path
     http_request = client.build_request(
         "POST",
         url,
@@ -222,7 +226,7 @@ def execute_request(
         observation=observation,
         error=error,
     )
-    if endpoint == "/v1/chat/completions" and thinking_metrics:
+    if endpoint == "chat" and thinking_metrics:
         reasoning_tokens.supplement_reasoning_tokens(
             record, observation, reasoning_token_counter,
         )

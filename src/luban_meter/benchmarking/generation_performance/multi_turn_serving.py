@@ -131,8 +131,9 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
         # Multi-turn history is a chat concept; completions has no roles.
         "endpoint": Parameter(
             str,
-            "/v1/chat/completions",
-            choices=("/v1/chat/completions",),
+            "chat",
+            choices=("chat",),
+            help=HTTP["endpoint"].help,
         ),
         "profile": Parameter(str, "concurrent"),
         "data": Parameter(str, "sharegpt", choices=("sharegpt",)),

@@ -15,7 +15,7 @@ from luban_meter.core.parameters import (
     validate_parameters,
 )
 from luban_meter.core.template_contracts import compatible
-from luban_meter.log import add_log_secrets, get_logger
+from luban_meter.log import add_log_secrets, get_logger, log_context
 from luban_meter.runtime.load_profiles import profiles
 
 logger = get_logger(__name__)
@@ -207,6 +207,31 @@ def build_plan(base, config=None, selected=(), *, observe=False):
     if unknown:
         raise ValueError(f"unknown task selection: {sorted(unknown)}")
     return {"tasks": tasks, "case_count": sum(len(t["cases"]) for t in tasks)}
+
+
+def validate_plan_parameters(plan, *, base_dir):
+    """Recheck saved Case parameters without rewriting their snapshot."""
+    bootstrap()
+    for task in plan["tasks"]:
+        for case in task["cases"]:
+            with log_context(task=task["name"], case=case["id"],
+                             phase="validate"):
+                logger.info("Validating saved Case: scenario=%s",
+                            task["scenario"])
+                try:
+                    scenario = benchmarks.get(task["scenario"])
+                    supplied = case["parameters"]
+                    parameters = validate_parameters(
+                        schema_for(scenario, supplied), supplied,
+                        base_dir=base_dir,
+                    )
+                    scenario.validate(parameters)
+                except (ValueError, TypeError):
+                    logger.exception(
+                        "Saved Case parameter validation failed; update or "
+                        "recreate the schedule with a valid task JSON"
+                    )
+                    raise
 
 
 def public_plan(plan):

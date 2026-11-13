@@ -3,7 +3,7 @@
     {
       "backend": "openai_http",
       "base_url": "http://127.0.0.1:8000",
-      "endpoint": "/v1/completions",
+      "endpoint": "completion",
       "model": "served-model",
       "request_timeout": 120,
       "task_timeout": 3600,
@@ -27,7 +27,7 @@
     {
       "backend": "openai_http",
       "base_url": "http://127.0.0.1:8000",
-      "endpoint": "/v1/completions",
+      "endpoint": "completion",
       "model": "served-model",
       "request_timeout": 120,
       "task_timeout": 3600,
@@ -51,7 +51,7 @@
     {
       "backend": "openai_http",
       "base_url": "http://127.0.0.1:8000",
-      "endpoint": "/v1/completions",
+      "endpoint": "completion",
       "model": "served-model",
       "request_timeout": 120,
       "task_timeout": 3600,

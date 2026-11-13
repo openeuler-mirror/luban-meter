@@ -168,7 +168,7 @@ def server(monkeypatch):
 def request(http, server, *, index=0, timeout=3.0, tracker=None):
     return execute_request(
         client=http, request_index=index, payload={"stream": True},
-        endpoint="/v1/completions", service_url=server.url,
+        endpoint="completion", service_url=server.url,
         api_key="test-key", timeout=timeout, benchmark_start=0,
         scheduled_time=0, tracker=tracker or ActiveRequestTracker(),
         stream_collector=collect_completion_stream,

@@ -37,7 +37,7 @@ luban-meter run \
   --scenario online_serving \
   --backend openai_http \
   --base-url http://127.0.0.1:8000 \
-  --endpoint /v1/completions \
+  --endpoint completion \
   --model served-model --tokenizer /models/your-model \
   --data random_token \
   --input-tokens 1024 --output-tokens 128 \
@@ -47,6 +47,30 @@ luban-meter run \
   --goodput ttft:1000 tpot:50 e2el:10000 \
   --result-dir results
 ```
+
+接口类型使用CLI的`--endpoint chat`或`--endpoint completion`，任务JSON使用
+`"endpoint": "chat"`或`"endpoint": "completion"`。程序映射实际HTTP路径：
+
+| 接口类型 | 请求路径 | 请求输入 |
+| --- | --- | --- |
+| `chat` | `/v1/chat/completions` | 带角色的`messages` |
+| `completion` | `/v1/completions` | 文本或Token ID形式的`prompt` |
+
+各场景原有默认行为保持不变：`multi_turn_serving`默认且仅支持`chat`；
+其余HTTP场景默认`completion`。`prefix_cache`、`wikitext`、`humaneval`
+及C-Eval/CMMLU的`eval_mode=ppl`仅支持`completion`；`online_serving`、
+C-Eval/CMMLU的`gen`、GSM8K、LCSTS和SQuAD支持两种类型。
+不支持的接口类型在静态预检阶段报错，并列出当前场景或模式支持的类型。
+
+旧路径写法已移除，不保留别名。旧命令中的`--endpoint /v1/completions`
+需改为`--endpoint completion`，`--endpoint /v1/chat/completions`需改为
+`--endpoint chat`；任务JSON中的`endpoint`值按同样规则替换。
+结果与原始事实的参数快照也保存新名称；原有结果文件不会被自动改写。
+
+已登记的定时计划保存独立参数快照，仅修改源JSON不会更新计划。旧计划未处于启动
+或运行状态时，可用`luban-meter schedule update <计划ID> tasks.json`重新保存；
+已完成或取消的计划需重新登记。重放前会按当前参数规则校验整份快照，旧路径或
+不支持的接口会导致该轮计划失败并记录日志，不发出模型请求。
 
 `random_token`通过Faker生成随机文本，经本地Tokenizer编码、
 按目标长度截取并解码。不从词表直接随机采样，也不再循环重复种子文本。
@@ -157,7 +181,7 @@ Prompt构造、答案解析与指标计算独立执行。Python调用方式见[�
 luban-meter run --scenario ceval --model served-model \
   --base-url http://127.0.0.1:8000 \
   --dataset-path /data/ceval/val.jsonl \
-  --eval-mode gen --endpoint /v1/chat/completions \
+  --eval-mode gen --endpoint chat \
   --few-shot 0 --max-samples 100 --max-concurrency 8
 ```
 
@@ -214,7 +238,7 @@ A/B/C/D，与普通答案一起检查冲突，不从解释或一般数学表达�
 
 ```bash
 luban-meter run --scenario online_serving --model served-model \
-  --base-url http://127.0.0.1:8000 --endpoint /v1/chat/completions \
+  --base-url http://127.0.0.1:8000 --endpoint chat \
   --data jsonl --dataset-path dataset/prompts.jsonl \
   --request-params '{"chat_template_kwargs":{"enable_thinking":false}}'
 ```
@@ -798,7 +822,7 @@ luban-meter run --scenario multi_turn_serving \
 | `--multi-session-timeout` | `multi_session_timeout` | 空；单会话墙钟上限，超时提前结束 |
 | `--multi-save-response-text` | `multi_save_response_text` | false；额外保存整段`messages`数组 |
 
-数据只支持`--data sharegpt`，端点只支持`/v1/chat/completions`。轮次按参考
+数据只支持`--data sharegpt`，接口类型只支持`--endpoint chat`。轮次按参考
 assistant消息切分：参考回答只作分隔符，**从不回放**，历史一律使用被测模型的
 实际输出；每轮之前出现的system等消息保留在该轮内。因此数据集自带的system
 指令不会被静默改写，`--multi-system-prompt`只在记录没有system时生效，

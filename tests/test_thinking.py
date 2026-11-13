@@ -196,7 +196,7 @@ def test_real_subprocess_thinking_tasks(tmp_path, only_reasoning, controls):
         "answer": "B",
     }) + '\n')
     common = {
-        "model": "mock", "endpoint": "/v1/chat/completions",
+        "model": "mock", "endpoint": "chat",
         "base_url": f"http://127.0.0.1:{server.server_port}",
         "dataset_path": str(dataset), "data": "jsonl",
         "num_requests": 1, "profile": "concurrent", "max_concurrency": 1,

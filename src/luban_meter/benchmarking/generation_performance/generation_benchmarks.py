@@ -219,7 +219,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         limit = self.p["max_model_len"]
         if not limit:
             return
-        if self.p["endpoint"] == "/v1/chat/completions":
+        if self.p["endpoint"] == "chat":
             tokens = self.tokenizer.apply_chat_template(
                 [{"role": "user", "content": text}],
                 tokenize=True,
@@ -252,7 +252,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         }
         if self.p["ignore_eos"]:
             payload.update(min_tokens=budget, ignore_eos=True)
-        if self.p["endpoint"] == "/v1/chat/completions":
+        if self.p["endpoint"] == "chat":
             payload["messages"] = [{"role": "user", "content": text}]
         else:
             payload.update(prompt=text, add_special_tokens=False)
@@ -276,7 +276,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
                 tracker=self.tracker,
                 stream_collector=(
                     collect_chat_stream
-                    if self.p["endpoint"] == "/v1/chat/completions"
+                    if self.p["endpoint"] == "chat"
                     else collect_completion_stream
                 ),
                 thinking_metrics=self.p["thinking_metrics"],

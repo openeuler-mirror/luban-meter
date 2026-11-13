@@ -92,7 +92,7 @@ def test_thinking_metrics_requires_boolean(enabled):
     "scenario", ["online_serving", "ceval", "cmmlu", "gsm8k", "squad", "lcsts"]
 )
 @pytest.mark.parametrize(
-    "endpoint", ["/v1/chat/completions", "/v1/completions"]
+    "endpoint", ["chat", "completion"]
 )
 def test_task_defaults_depend_on_endpoint(tmp_path, scenario, endpoint):
     dataset = tmp_path / "data.jsonl"

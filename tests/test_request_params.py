@@ -55,7 +55,7 @@ def test_task_json_replaces_cli_object_without_deep_merge(tmp_path):
 
 @pytest.mark.parametrize("scenario, extra", [
     ("online_serving", {}),
-    ("cmmlu", {"eval_mode": "gen", "endpoint": "/v1/chat/completions"}),
+    ("cmmlu", {"eval_mode": "gen", "endpoint": "chat"}),
     ("cmmlu", {"eval_mode": "ppl"}),
     ("gsm8k", {}),
     ("squad", {}),

@@ -213,7 +213,7 @@ class ServingCollectionTest(unittest.TestCase):
                     "stream": True,
                     "stream_options": {"include_usage": True},
                 },
-                endpoint="/v1/completions",
+                endpoint="completion",
                 service_url="http://127.0.0.1:8000",
                 api_key="",
                 timeout=5,
