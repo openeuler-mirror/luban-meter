@@ -119,7 +119,11 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
 
     profile_modes = frozenset({"requests"})
     capabilities = frozenset({"client_stream_timing", "multi_turn_timing"})
-    default_metrics = ("streaming_performance", "streaming_phase_timing")
+    default_metrics = (
+        "streaming_performance",
+        "streaming_phase_timing",
+        "stability_trends",
+    )
     summary_fields = GenerationPerformanceBenchmark.summary_fields + (
         "multi_max_turns",
         "multi_num_sessions",
@@ -128,6 +132,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
     parameters = {
         **HTTP,
         **CONVERSATION_PARAMETERS,
+        **generation_benchmarks.TREND_PARAMETERS,
         # Multi-turn history is a chat concept; completions has no roles.
         "endpoint": Parameter(
             str,
@@ -588,6 +593,7 @@ class MultiTurnServingBenchmark(GenerationPerformanceBenchmark):
             "multi_save_response_text": self.p["multi_save_response_text"],
             # Assistant text is regenerated, never replayed from data.
             "history_source": "model_under_test",
+            "trend_window_seconds": self.p["trend_window_seconds"],
         }
         slo = generation_benchmarks.thresholds(
             self.p["goodput"], ("ttft", "tpot", "e2el")

@@ -619,7 +619,9 @@ def test_real_workers_reports_and_shared_log(tmp_path):
     )
     for task in result["tasks"][2:]:
         disabled = task["cases"][0]
-        assert disabled["parameters"]["metrics"] == ["streaming_performance"]
+        assert disabled["parameters"]["metrics"] == [
+            "streaming_performance", "stability_trends",
+        ]
         assert "streaming_phase_timing" not in disabled["metrics"]
         disabled_raw = json.loads((
             directory / "tasks" / task["name"] / "raw/case_1.json"

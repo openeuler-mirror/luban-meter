@@ -1,7 +1,6 @@
 """Overview arithmetic and export contract, without model requests."""
 
 import json
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,9 +9,34 @@ import pytest
 from luban_meter.reporting.html import write_html
 from luban_meter.utils.json_io import write_json_atomic
 
+from tests.node_runtime import node_binary
+
+
+def test_offline_analysis_provenance_is_visible_and_escaped(tmp_path):
+    payload = {
+        "kind": "run", "id": "original-analysis-auto", "status": "success",
+        "tasks": [], "analysis_provenance": {
+            "source_run_id": "original<script>",
+            "source_result_sha256": "synthetic-test-hash",
+            "cases": [{"case": "test/case_1",
+                       "original_window_seconds": 60,
+                       "requested_window_seconds": "auto",
+                       "effective_window_seconds": 15}],
+        },
+    }
+    text = write_html(payload, tmp_path / "report.html").read_text("utf-8")
+    assert 'id="analysis-provenance"' in text
+    assert "离线派生分析 · 非新压测" in text
+    assert "original&lt;script&gt;" in text
+    assert "原始测试窗口（秒）" in text
+    assert "派生分析请求窗口" in text
+    assert "<td>60</td><td>auto</td><td>15</td>" in text
+    embedded = text.split('id="report-data">', 1)[1].split("</script>")[0]
+    assert json.loads(embedded)["result"] == payload
+
 
 def test_overview_summary_semantics():
-    node = shutil.which("node")
+    node = node_binary()
     if node is None:
         pytest.skip("Node.js is required for the report JavaScript checks")
     script = Path(__file__).with_name("report_overview.unit.cjs")
@@ -26,7 +50,17 @@ def test_overview_export_keeps_original_result_and_offline_pages(tmp_path):
     text = write_html(payload, tmp_path / "report.html").read_text("utf-8")
     embedded = text.split('id="report-data">', 1)[1].split("</script>", 1)[0]
     assert json.loads(embedded)["result"] == payload
-    assert text.count('class="report-page"') == 6
+    assert text.count('class="report-page"') == 7
+    assert 'id="stability-trends-section"' not in text
+    assert "function renderStabilityTrends" not in text
+    assert 'id="analysis-stability-panel"' in text
+    assert 'id="analysis-metrics-panel"' in text
+    assert 'aria-controls="analysis-stability-panel"' in text
+    assert 'id="analysis-load-tab"' in text
+    assert 'id="analysis-load-panel"' in text
+    assert 'id="analysis-group"' in text
+    assert "function renderLoadComparison" in text
+    assert "__TREND_SCRIPT__" not in text
     overview = text.split('<section id="overview"', 1)[1].split(
         '</section>', 1
     )[0]
@@ -46,7 +80,7 @@ def test_overview_export_keeps_original_result_and_offline_pages(tmp_path):
 
 
 def test_persisted_performance_metric_selection(tmp_path):
-    node = shutil.which("node")
+    node = node_binary()
     if node is None:
         pytest.skip("Node.js is required for the report JavaScript checks")
     def scalar(value, unit):

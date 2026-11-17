@@ -166,6 +166,35 @@ class StreamingPhaseTiming(Metric):
         return phase_timing_metric(facts)
 
 
+@metrics.register("stability_trends")
+class StabilityTrends(Metric):
+    """Windowed throughput, latency and outcome stability facts."""
+
+    requires = frozenset({"client_stream_timing"})
+
+    def compute(self, facts):
+        from .generation_performance.common.time_windows import (
+            DEFAULT_WINDOW_SECONDS,
+            time_window_result,
+        )
+
+        window = facts["parameters"].get("trend_window_seconds")
+        if window is None:
+            window = (facts["metadata"] or {}).get("trend_window_seconds")
+        if window is None:
+            window = DEFAULT_WINDOW_SECONDS
+        responses = [
+            request["response"]
+            if isinstance(request.get("response"), Mapping) else request
+            for request in facts["requests"]
+        ]
+        return time_window_result(
+            responses,
+            facts["window"]["duration_s"],
+            window,
+        )
+
+
 @metrics.register("engine_performance")
 class EnginePerformance(Metric):
     requires = frozenset({"engine_timing"})
