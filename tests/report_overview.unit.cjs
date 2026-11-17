@@ -41,6 +41,15 @@ const call = (name,value,...extra) => {
     extra.map(v=>','+JSON.stringify(v)).join('')+'))',context));
 };
 const scalar=(value,unit='token/s')=>({value,unit});
+for(const [maximum,high] of [[3206.005,4000],[28.809,30],[.9,1],[1,1],[0,1]]){
+  const scale=call('loadChartScale',maximum);
+  assert.equal(scale.high,high);
+  assert.ok(scale.tickCount>=1 && scale.tickCount<=4);
+}
+assert.ok(Number.isFinite(call('loadChartScale',1.7e308).high));
+const localScale=call('loadChartScale',35,33,true);
+assert.ok(localScale.low>0 && localScale.low<33 && localScale.high>35);
+assert.deepEqual(call('loadChartScale',1,.95,true,true),{low:0,high:1,tickCount:4});
 // Phase metrics are selectable even at zero or unavailable; they never
 // replace the provider of whole-request throughput and latency metrics.
 const phaseKeys=['reasoning_duration','content_duration','first_content_latency'];
@@ -137,12 +146,83 @@ const cases=[point('c16',16,270),point('c4',4,70),point('c8',8,140),
   point('other_model',16,700,{model:'another-model'}),
   point('other_profile',16,800,{profile:'constant',request_rate:2})];
 const before=JSON.stringify(cases),summary=summarize(cases);
+for(const profile of ['concurrent','rate','constant','poisson']) {
+  const rate=profile!=='concurrent';
+  const synthetic=[10,2,2,4].map((load,index)=>{
+    const record=point('synthetic-test-'+index,rate?8:load,index,{profile,
+      trend_window_seconds:index+1,...(rate?{request_rate:load}:{})});
+    const values=record.metrics.streaming_performance.values;
+    values.request_view.ttft={unit:'ms',mean:index,p99:index===3?null:index+10,count:3};
+    values.request_view.e2el={unit:'s',p99:.02,count:3};
+    return record;
+  });
+  const groups=call('summaryScopeGroups',[task(synthetic)]);
+  assert.equal(groups.length,1);
+  assert.equal(groups[0].axis,rate?'request_rate':'max_concurrency');
+  for(const [spec,expected] of [
+    [['throughput','token/s','output_token_throughput','value'],[1,2,3,0]],
+    [['TTFT','ms','ttft','mean'],[1,2,3,0]],
+    [['TTFT','ms','ttft','p99'],[11,12,null,10]],
+    [['E2EL','ms','e2el','p99'],[20,20,20,20]]]) {
+    const points=call('curvePoints',groups[0],spec);
+    assert.deepEqual(points.map(point=>point.load),[2,2,4,10]);
+    assert.deepEqual(points.map(point=>point.value),expected);
+  }
+  if(rate){
+    const marks=[];
+    context.svgElement=(tag,attrs)=>{
+      marks.push({tag,attrs});
+      return {...domNode(),getAttribute:key=>attrs[key]};
+    };
+    context.testGroup=groups[0];
+    context.testParent=domNode();
+    vm.runInContext('concurrencyChart(testParent,testGroup,loadMetrics[2])',context);
+    assert.equal(marks.filter(mark=>mark.tag==='circle').length,3);
+    assert.equal(marks.filter(mark=>mark.tag==='line' && mark.attrs.stroke==='var(--accent)').length,0);
+    assert.match(domTexts(),/小样本/);
+    assert.match(domTexts(),/未采集/);
+    context.svgElement=domNode;
+    synthetic[0].parameters.max_concurrency++;
+    assert.equal(summarize(synthetic).groups.length,2);
+  }
+}
 assert.equal(summary.groups.length,5);
+const historical=[point('synthetic-legacy-a',2,0),point('synthetic-legacy-b',4,1)];
+historical.forEach(record=>delete record.parameters.profile);
+const isolated=call('summaryScopeGroups',[task(historical)]);
+assert.equal(isolated.length,2);
+assert.deepEqual(isolated.map(group=>call('summaryGroupRecords',group).length),[1,1]);
+assert.equal(call('loadAxis',{profile:'rate',request_rate:'inf',max_concurrency:4}),'max_concurrency');
+assert.equal(call('loadAxis',{profile:'replay',request_rate:3,max_concurrency:4}),'max_concurrency');
 assert.deepEqual(summary.groups[0].points.map(p=>p.concurrency),[4,8,16]);
 assert.equal(summary.groups[0].peaks[0].c.id,'c16');
 assert.equal(summary.groups[0].peaks[0].ci,0);
 assert.equal(summary.groups[0].maximum,270);
 assert.equal(JSON.stringify(cases),before);
+const related=call('loadMeasurement',cases[0],['Request Throughput','req/s','request_throughput','value']);
+assert.equal(related.value,1);
+for(const key of ['ttft','e2el','tpot','itl']){
+  const record=point('synthetic-extra',1,10);
+  const unit=['tpot','itl'].includes(key)?'ms/token':'ms';
+  record.metrics.streaming_performance.values.request_view[key]={
+    mean:20,p50:21,p95:22,p99:23,count:12,unit,
+    aggregation:'token_weighted',weight_sum:32,percentile_method:'weighted_cdf'};
+  for(const stat of ['mean','p50','p95','p99']){
+    const node=call('loadMeasurement',record,[key,unit,key,stat]);
+    assert.equal(node.value,record.metrics.streaming_performance.values.request_view[key][stat]);
+    assert.equal(node.weight,32);
+    assert.equal(node.aggregation,'token_weighted');
+  }
+  record.metrics.streaming_performance.values.request_view[key].weight_sum=0;
+  assert.equal(call('loadMeasurement',record,[key,unit,key,'mean']).value,null);
+}
+const reliable=point('synthetic-counts',1,20);
+Object.assign(reliable.metrics.streaming_performance.values.service_view,{
+  total_requests:scalar(10,'request'),successful_requests:scalar(8,'request'),
+  failed_requests:scalar(2,'request')});
+assert.equal(call('loadMeasurement',reliable,['Success','ratio','success_rate','value']).value,.8);
+assert.equal(call('loadMeasurement',reliable,['Timeout','ratio','timeout_rate','value']).value,null);
+assert.equal(call('loadMeasurement',point('missing',1,10),['E2EL','ms','e2el','p99']).value,null);
 assert.equal(call('performanceSummary',[task([cases[0]]),task([cases[0]])]).groups.length,2);
 const reordered=point('reordered',32,300);
 reordered.parameters=Object.fromEntries(Object.entries(reordered.parameters).reverse());
@@ -507,6 +587,95 @@ assert.ok(texts.includes('Stream Event ITL 均值'),'stream-event ITL renders');
 assert.ok(texts.includes('Stream Event ITL / E2EL'),'sample-count header names it');
 assert.ok(!texts.includes('没有已保存的成功轮次延迟统计'),
   'latency statistics are present for a successful session');
+context.tasks=[task([point('synthetic-load1',1,28),point('synthetic-load2',2,27),
+  point('synthetic-load4',4,29)])];
+context.tasks[0].cases[1].metrics.streaming_performance.values.request_view.ttft.mean=20;
+context.tasks[0].cases[2].metrics.streaming_performance.values.request_view.ttft.mean=30;
+context.names={success:'成功'};
+context.$=()=>domNode();
+context.option=(parent,value,text)=>{
+  parent.value ??= value;
+  const node=domNode();node.value=value;node.textContent=text;
+  parent.append(node);
+};
+context.link=(text)=>context.el('a',text);
+context.document.createTextNode=text=>context.el('text',text);
+context.svgElement=(tag,attrs)=>{
+  const node=domNode();node.tag=tag;node.attrs=attrs;
+  node.getAttribute=key=>attrs[key];return node;
+};
+domNodes.length=0;
+vm.runInContext('renderPerformanceOverview()',context);
+let linkedCharts=domNodes.filter(node=>node.tag==='svg');
+assert.equal(linkedCharts.length,0);
+assert.match(domTexts(),/查看负载对比/);
+context.GROUP=call('summaryScopeGroups',context.tasks)[0];
+assert.equal(call('hasComparableLoad',context.GROUP),true);
+const sameLoad=call('summaryScopeGroups',[task([
+  point('synthetic-repeat-a',2,10),point('synthetic-repeat-b',2,11)])])[0];
+assert.equal(call('hasComparableLoad',sameLoad),false);
+assert.match(call('loadComparisonDescription',sameLoad),/重复负载分别保留/);
+const single=call('summaryScopeGroups',[task([point('synthetic-single',1,10)])])[0];
+assert.match(call('loadComparisonDescription',single),/单点/);
+assert.ok(!call('loadComparisonDescription',single).includes(' → '));
+context.PARENT=domNode();
+vm.runInContext('renderLoadComparison(PARENT,GROUP,loadMetrics[1])',context);
+linkedCharts=domNodes.filter(node=>node.tag==='svg');
+assert.equal(linkedCharts.length,1);
+assert.match(domTexts(),/跨 Case 对比/);
+assert.match(domTexts(),/正式请求数/);
+assert.match(linkedCharts[0].attrs['aria-label'],/TTFT Mean/);
+assert.ok(!domTexts().includes('当前选择：TTFT Mean'));
+assert.match(domTexts(),/已测最小值/);
+assert.deepEqual(domNodes.filter(node=>node.tag==='circle')
+  .map(node=>node.attrs['data-peak']),['true','false','false']);
+domNodes.length=0;
+vm.runInContext('renderLoadComparison(PARENT,GROUP,loadMetrics[0])',context);
+assert.match(domTexts(),/已测最大值/);
+assert.deepEqual(domNodes.filter(node=>node.tag==='circle')
+  .map(node=>node.attrs['data-peak']),['false','false','true']);
+domNodes.length=0;
+vm.runInContext('renderLoadComparison(PARENT,GROUP,loadMetrics[2])',context);
+linkedCharts=domNodes.filter(node=>node.tag==='svg');
+assert.equal(linkedCharts.length,0);
+assert.match(domTexts(),/暂无可绘制数据/);
+// A non-core metric adds one selected column; core metrics keep one copy.
+domNodes.length=0;
+vm.runInContext('renderLoadComparison(PARENT,GROUP,loadRelatedMetrics[1])',context);
+assert.match(domTexts(),/当前选择：TTFT P50/);
+for(const index of [0,1,2,3]){
+  domNodes.length=0;
+  vm.runInContext('renderLoadComparison(PARENT,GROUP,loadMetrics['+index+'])',context);
+  assert.ok(!domTexts().includes('当前选择：'));
+}
+// Synthetic DOM selection checks: unavailable choices cannot be selected
+// by the user, and a wholly unavailable category has an explicit empty state.
+const selection={options:[],value:'15',replaceChildren(){this.options=[];},disabled:false};
+const controls={'analysis-load-metric':selection,
+  'analysis-load-category':{value:'可靠性'},'analysis-group':{value:'0'}};
+for(const record of context.GROUP.task.cases){
+  const service=record.metrics.streaming_performance.values.service_view;
+  service.total_requests=scalar(1,'request');
+  service.successful_requests=scalar(1,'request');
+}
+context.$=id=>controls[id]||domNode();
+context.option=(parent,value,text)=>{
+  const node=domNode();node.value=value;node.textContent=text;
+  parent.options.push(node);
+};
+vm.runInContext('analysisLoadGroups=[GROUP]; updateAnalysisLoadMetricOptions()',context);
+assert.equal(selection.options.find(choice=>choice.value==='15').disabled,true);
+assert.equal(selection.options.find(choice=>choice.value==='14').disabled,false);
+assert.equal(selection.value,'14');
+assert.equal(selection.disabled,false);
+controls['analysis-load-category'].value='端到端延迟';
+vm.runInContext('updateAnalysisLoadMetricOptions()',context);
+assert.ok(selection.options.every(choice=>choice.disabled));
+assert.equal(selection.disabled,true);
+domNodes.length=0;
+vm.runInContext("analysisView='load'; renderAnalysis()",context);
+assert.match(domTexts(),/没有该类别的有效 Case 级指标/);
+assert.equal(domNodes.filter(node=>node.tag==='svg').length,0);
 console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '+
   'zero/missing data, observed trends, subject scores and scoring denominators; '+
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+

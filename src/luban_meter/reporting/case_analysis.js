@@ -657,11 +657,93 @@ function renderPhaseCounts(parent,c) {
     {title:'请求数',numeric:true,get:m=>m.value}],counts,'stat-table');
   parent.append(section);
 }
+let analysisView = 'metrics';
+let analysisReady = false;
+let analysisLoadGroups = [];
+const analysisGroupSelection = new Map();
+function selectAnalysisTab(view) {
+  analysisView = view;
+  for (const name of ['load', 'metrics', 'stability']) {
+    const selected = name === view;
+    const tab = $('analysis-' + name + '-tab');
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    $('analysis-' + name + '-panel').hidden = !selected;
+  }
+  $('analysis-case-field').hidden = view === 'load';
+  $('analysis-group-field').hidden = view !== 'load';
+  if(analysisReady)renderAnalysis();
+}
+function updateAnalysisLoadGroups() {
+  const taskIndex=Number($('analysis-task').value);
+  analysisLoadGroups=summaryScopeGroups(tasks).filter(group=>group.ti===taskIndex);
+  const select=$('analysis-group');
+  select.replaceChildren();
+  analysisLoadGroups.forEach((group,index)=>option(select,String(index),
+    performanceGroupLabel(group,index)));
+  select.disabled=!analysisLoadGroups.length;
+  const previous=analysisGroupSelection.get(taskIndex);
+  const preferred=analysisLoadGroups.findIndex(hasComparableLoad);
+  select.value=String(previous<analysisLoadGroups.length?previous:Math.max(0,preferred));
+  updateAnalysisLoadMetricOptions();
+}
+function updateAnalysisLoadMetricOptions() {
+  const select=$('analysis-load-metric'),previous=select.value;
+  const category=$('analysis-load-category').value;
+  const group=analysisLoadGroups[Number($('analysis-group').value)];
+  select.replaceChildren();
+  loadRelatedMetrics.forEach((spec,index)=>{
+    if(spec[4]!==category)return;
+    const available=group && curvePoints(group,spec).some(point=>numeric(point.value));
+    option(select,String(index),spec[0]+'（'+displayUnit(spec[1])+'）'+
+      (available?'':' · 不可用'));
+    select.options[select.options.length-1].disabled=!available;
+  });
+  const choices=[...select.options];
+  const enabled=choices.filter(choice=>!choice.disabled);
+  select.value=enabled.some(choice=>choice.value===previous)?previous:
+    enabled[0]?.value||choices[0]?.value||'';
+  select.disabled=enabled.length===0;
+}
 function renderAnalysis() {
   const ti=Number($('analysis-task').value),ci=Number($('analysis-case').value);
   const task=tasks[ti],c=task?.cases[ci],context=$('analysis-context'),content=$('analysis-content');
   context.replaceChildren();content.replaceChildren();
-  if(!c) {content.append(el('p','当前任务没有 Case','empty'));return;}
+  const stability = $('analysis-stability-content');
+  stability.replaceChildren();
+  const loadContent=$('analysis-load-content');
+  loadContent.replaceChildren();
+  if(analysisView==='load'){
+    context.append(el('h3',task?taskDisplayName(task.name):'当前没有任务'));
+    if(analysisLoadGroups.length>1)
+      context.append(el('p','本任务有多个不可直接合并的条件组，请分别查看。','analysis-note'));
+    if($('analysis-load-metric').disabled){
+      loadContent.append(el('p','当前条件组没有该类别的有效 Case 级指标；不可用选项已禁用。','empty'));
+      return;
+    }
+    const spec=loadRelatedMetrics[Number($('analysis-load-metric').value)]||loadRelatedMetrics[0];
+    const scale=$('analysis-load-scale');
+    if(spec[1]==='ratio'){
+      if(!scale.disabled)scale.dataset.previous=scale.value;
+      scale.value='full';scale.disabled=true;
+    }else{
+      if(scale.disabled)scale.value=scale.dataset.previous||'local';
+      scale.disabled=false;
+    }
+    renderLoadComparison(loadContent,analysisLoadGroups[Number($('analysis-group').value)],spec,
+      scale.value||'local');
+    return;
+  }
+  if(!c) {
+    content.append(el('p','当前任务没有 Case','empty'));
+    stability.append(el('p','当前任务没有 Case','empty'));return;
+  }
+  if(analysisView==='stability' && c.status==='discarded')
+    stability.append(el('p','已丢弃的 Case 没有可展示的稳定性趋势。','empty'));
+  else if(analysisView==='stability' && stabilityMetric(c))
+    renderStabilityCase(stability,c,false);
+  else if(analysisView==='stability')
+    stability.append(el('p','当前 Case 未保存 stability_trends；历史结果或未启用该指标时，稳定性趋势不可用。','empty'));
   const id='case-'+ti+'-'+ci;
   context.append(el('h3',taskDisplayName(task.name)+' / '+c.id+' · '+(names[c.status]||c.status)));
   context.append(el('p',Object.entries(c.coverage||{}).filter(([key])=>
@@ -671,6 +753,7 @@ function renderAnalysis() {
   const navigation=el('p');
   navigation.append(link('测试条件、覆盖率与诊断',id),document.createTextNode(' · '),
     link('返回结果摘要','summary-'+ti+'-'+ci));context.append(navigation);
+  if(analysisView==='stability')return;
   renderCacheDetails(content,c);
   if(c.status==='discarded') {content.append(el('p','已丢弃，不展示有效指标。请查看诊断。','empty'));return;}
   const metrics=metricsFor(c);
@@ -712,6 +795,7 @@ function updateAnalysisMetrics() {
   renderAnalysis();
 }
 function updateAnalysisCases() {
+  updateAnalysisLoadGroups();
   const task=tasks[Number($('analysis-task').value)],select=$('analysis-case');
   select.replaceChildren();
   for(const [ci,c] of (task?.cases||[]).entries()) {
@@ -730,24 +814,79 @@ function updateAnalysisCases() {
   updateAnalysisMetrics();
 }
 function ensureAnalysisTarget(target) {
-  const match=/^analysis-(\d+)-(\d+)(?:-(ttft|tpot|e2el|output_token_throughput))?$/.exec(target);
+  const load=/^analysis-load-(\d+)-(\d+)$/.exec(target);
+  if(load){
+    const group=summaryScopeGroups(tasks)[Number(load[2])];
+    if(group && group.ti===Number(load[1])){
+      $('analysis-task').value=load[1];updateAnalysisCases();
+      const index=analysisLoadGroups.findIndex(candidate=>
+        JSON.stringify(candidate.fixed)===JSON.stringify(group.fixed) &&
+        candidate.axis===group.axis && candidate.unknownProfileCase===group.unknownProfileCase);
+      $('analysis-group').value=String(index);
+      analysisGroupSelection.set(Number(load[1]),index);
+      selectAnalysisTab('load');return 'case-analysis';
+    }
+  }
+  if(target==='analysis-stability') {
+    selectAnalysisTab('stability');return 'case-analysis';
+  }
+  const match=/^analysis-(\d+)-(\d+)(?:-(ttft|tpot|e2el|output_token_throughput|stability))?$/.exec(target);
   if(!match||!tasks[Number(match[1])]?.cases[Number(match[2])])return target;
   $('analysis-task').value=match[1];updateAnalysisCases();
   $('analysis-case').value=match[2];updateAnalysisMetrics();
-  if(match[3]) {
+  selectAnalysisTab(match[3]==='stability'?'stability':'metrics');
+  if(match[3] && match[3]!=='stability') {
     const path=[...$('analysis-metric').options].map(o=>o.value)
       .find(value=>value.endsWith('/'+match[3]));
     if(path) {$('analysis-metric').value=path;renderAnalysis();}
   }
   return 'case-analysis';
 }
+function renderAnalysisInPlace() {
+  const top=window.scrollY,left=window.scrollX;
+  renderAnalysis();
+  window.scrollTo({top,left,behavior:'instant'});
+}
 function initAnalysis() {
+  const views=['load','metrics','stability'];
+  for (const view of views) {
+    const button = $('analysis-' + view + '-tab');
+    button.onclick = () => selectAnalysisTab(view);
+    button.onkeydown = event => {
+      if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
+      event.preventDefault();
+      const index=views.indexOf(analysisView);
+      const next = event.key==='Home'?'load':event.key==='End'?'stability':
+        views[(index+(event.key==='ArrowRight'?1:2))%3];
+      selectAnalysisTab(next);$('analysis-' + next + '-tab').focus();
+    };
+  }
+  selectAnalysisTab(analysisView);
   tasks.forEach((task,ti)=>option($('analysis-task'),String(ti),
     taskDisplayName(task.name)+' · '+scenarioDisplayName(task.scenario||task.category)));
+  const preferred=summaryScopeGroups(tasks).find(hasComparableLoad);
+  if(preferred){
+    $('analysis-task').value=String(preferred.ti);
+  }
+  selectAnalysisTab(preferred?'load':'metrics');
   $('analysis-task').disabled=!tasks.length;
   $('analysis-task').onchange=updateAnalysisCases;
   $('analysis-case').onchange=updateAnalysisMetrics;
   $('analysis-metric').onchange=renderAnalysis;
+  $('analysis-group').onchange=()=>{
+    analysisGroupSelection.set(Number($('analysis-task').value),Number($('analysis-group').value));
+    updateAnalysisLoadMetricOptions();
+    renderAnalysis();
+  };
+  const categories=[...new Set(loadRelatedMetrics.map(spec=>spec[4]))];
+  categories.forEach(category=>option($('analysis-load-category'),category,category));
+  $('analysis-load-category').value=categories[0];
+  $('analysis-load-category').onchange=()=>{
+    updateAnalysisLoadMetricOptions();renderAnalysisInPlace();
+  };
+  $('analysis-load-metric').onchange=renderAnalysisInPlace;
+  $('analysis-load-scale').onchange=renderAnalysisInPlace;
+  analysisReady=true;
   updateAnalysisCases();
 }
 

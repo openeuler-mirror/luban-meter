@@ -84,9 +84,11 @@ def test_both_benchmarks_plan_default_streaming_metrics(tmp_path, scenario):
     })["tasks"][0]
     assert benchmarks.get(scenario).default_metrics == (
         "streaming_performance", "streaming_phase_timing",
+        "stability_trends",
     )
     assert task["cases"][0]["parameters"]["metrics"] == [
         "streaming_performance",
+        "stability_trends",
     ]
 
 

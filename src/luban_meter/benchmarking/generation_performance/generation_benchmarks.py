@@ -26,6 +26,7 @@ from luban_meter.runtime.request_params import (
 
 from .common.lengths import assess_lengths
 from .common.phase_timing import select_phase_metrics
+from .common.time_windows import TrendWindowParameter
 from .common.reasoning_tokens import prepare_reasoning_counter
 from .common.tokenization import (
     LENGTH_PARAMETERS,
@@ -59,15 +60,32 @@ def thresholds(entries, allowed):
     return result
 
 
+# Windowed stability analysis is a reporting configuration, not a load
+# condition: it never joins curve grouping keys or summary fields.
+TREND_PARAMETERS = {
+    "trend_window_seconds": TrendWindowParameter(
+        str,
+        60,
+        minimum=1,
+        help="positive integer seconds or auto (default: 60 seconds)",
+    ),
+}
+
+
 @benchmarks.register("online_serving")
 class OnlineServingBenchmark(GenerationPerformanceBenchmark):
     profile_modes = frozenset({"requests", "trace"})
     capabilities = frozenset({"client_stream_timing"})
-    default_metrics = ("streaming_performance", "streaming_phase_timing")
+    default_metrics = (
+        "streaming_performance",
+        "streaming_phase_timing",
+        "stability_trends",
+    )
     parameters = {
         **HTTP,
         **DATA,
         **TRACE_PARAMETERS,
+        **TREND_PARAMETERS,
         "data": Parameter(str, "random_token"),
         "dataset_path": Parameter(str, "", path=True),
         "profile": Parameter(str, "rate"),
@@ -328,6 +346,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
             ),
             **self.input_metadata,
             "model": self.p["model"],
+            "trend_window_seconds": self.p["trend_window_seconds"],
             "slo_config": {
                 f"{name}_ms": value
                 for name, value in thresholds(

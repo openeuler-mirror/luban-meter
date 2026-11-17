@@ -62,7 +62,12 @@ def metric_rows(value, path="", unit="", count=None):
             }
         else:
             for name, item in value.items():
-                if name not in ("unit", "count", "sample_count", "weight_sum"):
+                if path == "/stability_trends" and name == "metadata":
+                    continue
+                if name not in (
+                    "unit", "count", "sample_count", "weight_sum",
+                    "windows",
+                ):
                     yield from metric_rows(item, f"{path}/{name}", unit, count)
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -95,7 +100,7 @@ def metric_groups(value, path="", unit="", count=None):
                 if key not in (
                     "unit", "count", "sample_count", "weight_sum",
                     "lengths", "environment", "metadata", "error", "reason",
-                    "condition",
+                    "condition", "windows",
                 ):
                     yield from metric_groups(
                         item, f"{path}/{key}".strip("/"), unit, count

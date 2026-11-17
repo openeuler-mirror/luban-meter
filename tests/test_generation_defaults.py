@@ -33,9 +33,9 @@ def test_phase_metrics_require_opt_in(tmp_path, scenario, enabled):
         parameters["thinking_metrics"] = enabled
     plan = build_plan(parameters)
     saved = plan["tasks"][0]["cases"][0]["parameters"]
-    expected = ["streaming_performance"]
+    expected = ["streaming_performance", "stability_trends"]
     if enabled:
-        expected.append("streaming_phase_timing")
+        expected.insert(1, "streaming_phase_timing")
     assert saved["metrics"] == expected
     assert saved["request_params"] == {}
 

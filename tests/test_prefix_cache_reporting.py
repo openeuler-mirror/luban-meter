@@ -2,7 +2,6 @@
 
 import copy
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +16,7 @@ from luban_meter.reporting.html import report_data, write_html
 from luban_meter.reporting.prefix_cache import cache_eligible, display_value
 from luban_meter.reporting.terminal import display_width, render_text
 from tests.test_prefix_cache_metrics import compute, facts
+from tests.node_runtime import node_binary
 from tests.test_report_analysis import browser_fixture
 
 MOCK_NOTICE = "Mock 数据 · 非真实 GPU 压测 · cached_tokens 服务验证未完成"
@@ -205,7 +205,7 @@ def test_projection_keeps_calculated_values_and_old_json(tmp_path):
     assert saved["result"]["id"] == MOCK_NOTICE
     assert saved["request_details"][0][2]["status"] == "available"
     assert '<script src=' not in html
-    assert html.count('class="report-page"') == 6
+    assert html.count('class="report-page"') == 7
     legacy = browser_fixture()
     assert report_data(legacy)["result"] == legacy
 
@@ -240,7 +240,7 @@ def test_salt_redaction_including_request_echo(tmp_path):
 
 
 def test_javascript_saved_values_and_grouping(tmp_path):
-    node = shutil.which("node")
+    node = node_binary()
     if not node:
         pytest.skip("Node.js is required; run the .cjs test separately")
     fixture = tmp_path / "fixture.json"

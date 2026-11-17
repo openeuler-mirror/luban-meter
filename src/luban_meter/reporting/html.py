@@ -188,6 +188,39 @@ def report_data(payload, *, include_requests=False, raw_root=None):
     return redact_cache_salts(data)
 
 
+def analysis_provenance_html(payload):
+    """Label optional offline analysis without rewriting test parameters."""
+    provenance = payload.get("analysis_provenance")
+    if not isinstance(provenance, dict):
+        return ""
+
+    def text(value):
+        return escape(str(value)) if value is not None else "未知"
+
+    rows = "".join(
+        "<tr>" + "".join("<td>" + text(row.get(key)) + "</td>"
+                         for key in ("case", "original_window_seconds",
+                                     "requested_window_seconds",
+                                     "effective_window_seconds")) + "</tr>"
+        for row in provenance.get("cases", []) if isinstance(row, dict)
+    )
+    return (
+        '<aside id="analysis-provenance" class="overview-quality">'
+        "<h3>离线派生分析 · 非新压测</h3><p>原始测试运行："
+        + text(provenance.get("source_run_id"))
+        + "；本报告分析标识：" + text(payload.get("id"))
+        + "。Case 参数保留原始测试配置；仅 stability_trends 根据已保存的"
+        "正式请求重新归桶，未发送新推理请求。</p>"
+        '<div class="table-wrap"><table><thead><tr><th>Case</th>'
+        "<th>原始测试窗口（秒）</th><th>派生分析请求窗口</th>"
+        "<th>实际采用窗口（秒）</th></tr></thead><tbody>"
+        + rows + "</tbody></table></div><details>"
+        "<summary>配置来源与校验信息</summary><pre>"
+        + escape(json.dumps(provenance, ensure_ascii=False, indent=2))
+        + "</pre></details></aside>"
+    )
+
+
 def run_summary_html(payload):
     """Render saved run metrics, without deriving values or reading raw."""
     if payload["kind"] != "run":
@@ -218,9 +251,10 @@ def run_summary_html(payload):
     if has_performance:
         throughput = view.get("total_token_throughput") or {}
         hero = (
-            '<div class="run-hero" aria-label="整轮总 Token 吞吐量">'
+            '<div class="run-hero" aria-label="'
+            '性能 Case 汇总 Token 吞吐量（按正式测试时长加权）">'
             '<span class="run-hero-label">'
-            "总 Token 吞吐量（输入＋输出，整轮平均）</span>"
+            "性能 Case 汇总 Token 吞吐量（按正式测试时长加权）</span>"
             '<span class="run-hero-value">' + text(throughput.get("value"))
             + '</span><span class="run-hero-unit">'
             + text(throughput.get("unit") or "token/s") + "</span></div>"
@@ -258,7 +292,10 @@ def write_html(payload, destination, *, include_requests=False, raw_root=None):
     data = data.replace("<", "\\u003c").replace("&", "\\u0026")
     replacements = {
         "__REPORT_DATA__": data,
-        "__RUN_SUMMARY__": run_summary_html(redact_cache_salts(payload)),
+        "__RUN_SUMMARY__": (
+            analysis_provenance_html(redact_cache_salts(payload))
+            + run_summary_html(redact_cache_salts(payload))
+        ),
     }
     html = re.sub(
         r"__REPORT_DATA__|__RUN_SUMMARY__",
@@ -285,6 +322,9 @@ TEMPLATE = (
 ).replace(
     "__OVERVIEW_SCRIPT__",
     Path(__file__).with_name("report_overview.js").read_text(encoding="utf-8"),
+).replace(
+    "__TREND_SCRIPT__",
+    Path(__file__).with_name("trends.js").read_text(encoding="utf-8"),
 ).replace(
     "__RESOURCE_SCRIPT__",
     Path(__file__).with_name("resources.js").read_text(encoding="utf-8"),

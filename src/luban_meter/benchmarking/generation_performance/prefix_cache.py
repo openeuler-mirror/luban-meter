@@ -76,6 +76,7 @@ class PrefixCacheBenchmark(OnlineServingBenchmark):
                 "output_tokens", "ignore_eos", "max_model_len", "stop",
                 "thinking_metrics",
                 "goodput", "circuit_breaker", "max_error_rate",
+                "trend_window_seconds",
             )
         },
         "endpoint": Parameter(

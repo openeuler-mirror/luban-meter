@@ -74,9 +74,9 @@ body.dark .task-heading.task-performance{--task-color:#6ed6cc}
 body.dark .task-heading.task-quality{--task-color:#b9a7ed}
 th button{display:inline-flex;align-items:center;gap:6px;text-align:inherit}
 th.num button .sort-arrow{order:-1}.sort-arrow{font-weight:400;color:var(--muted)}
-.evaluation-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:20px}
-.evaluation-tabs [aria-selected=true]{color:var(--accent);border-color:var(--accent);background:var(--bg);font-weight:650}
-.evaluation-tabs button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.evaluation-tabs,.analysis-tabs{display:flex;gap:8px;border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:20px}
+.evaluation-tabs [aria-selected=true],.analysis-tabs [aria-selected=true]{color:var(--accent);border-color:var(--accent);background:var(--bg);font-weight:650}
+.evaluation-tabs button:focus-visible,.analysis-tabs button:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .overview-context{overflow-wrap:anywhere}.overview-picker{display:flex;flex-direction:column;gap:6px;margin:16px 0;color:var(--muted)}
 .overview-picker select{width:100%;color:var(--ink)}
 .peak{border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:20px;background:var(--bg)}
@@ -155,6 +155,11 @@ body.dark #observation-section{--resource-color-0:#66d5cf;--resource-color-1:#b5
 #resource-service-content details{margin-top:16px}#resource-series{width:100%;margin:12px 0;font-size:12px}
 @media(max-width:1200px){.resource-meta{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.resource-toolbar,.resource-section-heading{align-items:stretch;flex-direction:column}.resource-toolbar .badge{align-self:flex-start}.resource-chart-grid,.resource-meta{grid-template-columns:1fr}.resource-section-heading label{width:100%}.resource-context-heading{align-items:flex-start}.resource-context-heading strong{font-size:16px}.resource-panel{padding:10px}}
+.trend-partial-toggle{display:inline-flex;align-items:center;gap:8px}
+.trend-partial-toggle input{width:auto;min-width:0;margin:0}
+#analysis-load-content .trend-chart svg{width:100%;height:clamp(340px,26vw,380px);max-height:none;min-height:0}
+#analysis-load-panel{overflow-anchor:none}
+@media(max-width:700px){#analysis-load-content .trend-chart svg{height:270px;min-width:600px}#analysis-load-content .trend-chart::after{content:'左右滑动查看全部负载点';display:block;font-size:12px;color:var(--muted)}}
 </style></head><body class="dark"><div class="report-layout">
 <header class="report-header"><div><div class="eyebrow">LUBAN-METER · EVALUATION</div><h1>评测结果报告</h1><p id="subtitle" class="muted"></p></div><button id="theme">切换明暗</button></header>
 <aside class="sidebar" aria-label="报告导航">
@@ -191,9 +196,26 @@ __RUN_SUMMARY__
 <section id="case-analysis" class="report-page" tabindex="-1" hidden><h2>Case 分析</h2>
 <div class="analysis-toolbar" id="analysis-toolbar">
 <label for="analysis-task">选择任务<select id="analysis-task"></select></label>
-<label for="analysis-case">选择 Case<select id="analysis-case"></select></label>
+<label for="analysis-case" id="analysis-case-field">选择 Case<select id="analysis-case"></select></label>
+<label for="analysis-group" id="analysis-group-field" hidden>可比条件组<select id="analysis-group"></select></label>
+</div><div id="analysis-context"></div>
+<div class="analysis-tabs" role="tablist" aria-label="Case 分析视图">
+<button id="analysis-load-tab" type="button" role="tab" aria-selected="false" aria-controls="analysis-load-panel" tabindex="-1">负载对比</button>
+<button id="analysis-metrics-tab" type="button" role="tab" aria-selected="true" aria-controls="analysis-metrics-panel">单 Case 指标</button>
+<button id="analysis-stability-tab" type="button" role="tab" aria-selected="false" aria-controls="analysis-stability-panel" tabindex="-1">稳定性趋势</button>
+</div>
+<div id="analysis-load-panel" role="tabpanel" aria-labelledby="analysis-load-tab" tabindex="-1" hidden>
+<div class="toolbar">
+<label for="analysis-load-category">指标类别<select id="analysis-load-category"></select></label>
+<label for="analysis-load-metric">对比指标<select id="analysis-load-metric"></select></label>
+<label for="analysis-load-scale">Y 轴刻度<select id="analysis-load-scale"><option value="local">局部缩放</option><option value="full">完整刻度</option></select></label>
+</div>
+<div id="analysis-load-content" aria-live="polite"></div></div>
+<div id="analysis-metrics-panel" role="tabpanel" aria-labelledby="analysis-metrics-tab" tabindex="-1">
 <label for="analysis-metric" id="analysis-metric-field">选择性能指标<select id="analysis-metric"></select></label>
-</div><div id="analysis-context"></div><div id="analysis-content" aria-live="polite"></div></section>
+<div id="analysis-content" aria-live="polite"></div></div>
+<div id="analysis-stability-panel" role="tabpanel" aria-labelledby="analysis-stability-tab" tabindex="-1" hidden>
+<div id="analysis-stability-content" aria-live="polite"></div></div></section>
 <section id="task-metrics" class="report-page" tabindex="-1" hidden><h2>全部指标</h2><p class="muted">客户端、Engine内部与服务端观测分别展示。缺失值不代表零；准确率应结合覆盖率阅读。</p><div class="toolbar"><select id="task"><option value="">全部任务</option></select><select id="case"><option value="">全部Case</option></select><input id="search" placeholder="搜索指标、任务或Case" aria-label="搜索指标"></div><div class="table-wrap"><table><thead><tr><th data-sort="task">任务</th><th data-sort="case">Case</th><th data-sort="metric">指标 ↕</th><th class="num" data-sort="value"><span aria-hidden="true">↕ </span>数值</th><th>单位</th><th class="num">样本数</th></tr></thead><tbody id="rows"></tbody></table></div><p id="rowCount" class="muted"></p></section>
 <section id="observation-section" class="report-page" tabindex="-1" hidden>
 <h2>资源观测</h2>
@@ -311,6 +333,7 @@ __REQUEST_SCRIPT__
 __CASE_SCRIPT__
 __SUMMARY_SCRIPT__
 __OVERVIEW_SCRIPT__
+__TREND_SCRIPT__
 __RESOURCE_SCRIPT__
 if (D.request_details) $('run-context').append(el('p',
   '完整详情报告：包含已保存的原始输入输出。缺失记录将明确标注；' +

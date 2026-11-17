@@ -19,6 +19,65 @@ function usablePerformanceResult(c) {
     !['failed','incomplete'].some(k=>c.coverage?.[k]>0) &&
     !(metric?.values?.service_view?.failed_requests?.value>0);
 }
+const loadMetrics = [
+  ['输出 Token 吞吐量','token/s','output_token_throughput','value'],
+  ['TTFT Mean','ms','ttft','mean'], ['TTFT P99','ms','ttft','p99'],
+  ['E2EL P99','ms','e2el','p99'],
+];
+const loadRelatedMetrics = [
+  ...['mean','p50','p95','p99'].map(stat=>
+    ['TTFT '+(stat==='mean'?'Mean':stat.toUpperCase()),'ms','ttft',stat,'首 Token 时延']),
+  ...['mean','p50','p95','p99'].map(stat=>
+    ['E2EL '+(stat==='mean'?'Mean':stat.toUpperCase()),'ms','e2el',stat,'端到端延迟']),
+  ...['mean','p99'].map(stat=>
+    ['TPOT '+(stat==='mean'?'Mean':'P99'),'ms/token','tpot',stat,'生成延迟']),
+  ...['mean','p99'].map(stat=>
+    ['ITL '+(stat==='mean'?'Mean':'P99'),'ms/token','itl',stat,'Token 间延迟']),
+  ['输出 Token 吞吐量','token/s','output_token_throughput','value','Token 吞吐'],
+  ['Request Throughput','req/s','request_throughput','value','请求吞吐'],
+  ['Success Rate','ratio','success_rate','value','可靠性'],
+  ['Timeout Rate','ratio','timeout_rate','value','可靠性'],
+];
+function loadAxis(parameters) {
+  return ['rate','constant','poisson'].includes(parameters.profile) &&
+    numeric(parameters.request_rate) && parameters.request_rate>0 ?
+    'request_rate':'max_concurrency';
+}
+function axisLabel(axis) {
+  return axis==='request_rate'?'配置请求速率（req/s）':'配置并发上限';
+}
+function loadConditions(c,axis) {
+  return Object.fromEntries(Object.entries(c.parameters||{}).filter(([key])=>
+    key!==axis && key!=='trend_window_seconds' &&
+    (!isPrefixCache(c)||key!=='prefix_cache_environment')));
+}
+function validLoad(parameters,axis) {
+  return axis==='request_rate' || (Number.isSafeInteger(parameters.max_concurrency) &&
+    parameters.max_concurrency>0);
+}
+function loadMeasurement(c,spec) {
+  const [,unit,key,stat]=spec, values=servingMetric(c)?.values;
+  if(key==='success_rate'){
+    const counts=savedRequestCounts(c);
+    return {value:counts.valid && counts.total>0?counts.success/counts.total:null,
+      count:counts.total,reason:'成功请求数 / Case 全部请求数（沿用已有成功率展示口径）'};
+  }
+  if(key==='timeout_rate')return {value:null,count:null,
+    reason:'未保存 Case 级超时率；分时超时率不能替代整个 Case 的统计'};
+  const node=(stat==='value'?values?.service_view:values?.request_view)?.[key];
+  const count=node?.sample_count??node?.count;
+  const scale=node?.unit===unit?1:
+    ((unit==='ms' && node?.unit==='s') ||
+     (unit==='ms/token' && node?.unit==='s/token'))?1000:null;
+  const raw=node?.[stat];
+  const valid=scale!==null && numeric(raw) && raw>=0 && numeric(raw*scale) &&
+    (stat==='value' || count==null || (Number.isSafeInteger(count) && count>0)) &&
+    (node?.weight_sum==null || (numeric(node.weight_sum) && node.weight_sum>0));
+  return {value:valid?raw*scale:null,count,
+    reason:valid?null:node?.reason||'字段缺失、单位不匹配或有效样本不足',
+    aggregation:node?.aggregation,weight:node?.weight_sum,
+    percentile:node?.percentile_method};
+}
 function performanceSummary(taskList) {
   const groups=new Map();
   let total=0, included=0;
@@ -30,22 +89,22 @@ function performanceSummary(taskList) {
       const service=metric?.values?.service_view;
       const throughput=service?.output_token_throughput;
       if(!usablePerformanceResult(c) ||
-        !Number.isInteger(p.max_concurrency) || p.max_concurrency<1 ||
-        !p.model || !p.profile || !numeric(throughput?.value) ||
+        !validLoad(p,loadAxis(p)) ||
+        !p.model || !numeric(throughput?.value) ||
         throughput.value<0 || throughput.unit!=='token/s')return;
       // Keep task/environment and every recorded parameter except concurrency
       // fixed. Object key order is not a change in test conditions.
-      const fixed=Object.fromEntries(Object.entries(p)
-        .filter(([key])=>key!=='max_concurrency' && (!isPrefixCache(c)||key!=='prefix_cache_environment')));
-      const key=JSON.stringify([ti,stableConfig(fixed)]);
-      if(!groups.has(key))groups.set(key,{task,ti,fixed,points:[]});
-      groups.get(key).points.push({c,ci,concurrency:p.max_concurrency,
+      const axis=loadAxis(p),fixed=loadConditions(c,axis);
+      const unknownProfileCase=p.profile?null:ci;
+      const key=JSON.stringify([ti,axis,stableConfig(fixed),unknownProfileCase]);
+      if(!groups.has(key))groups.set(key,{task,ti,axis,fixed,unknownProfileCase,points:[]});
+      groups.get(key).points.push({c,ci,load:p[axis],concurrency:p.max_concurrency,
         value:throughput.value,unit:throughput.unit});
       included++;
     });
   });
   for(const group of groups.values()) {
-    group.points.sort((a,b)=>a.concurrency-b.concurrency || a.ci-b.ci);
+    group.points.sort((a,b)=>a.load-b.load || a.ci-b.ci);
     group.maximum=Math.max(...group.points.map(p=>p.value));
     group.peaks=group.points.filter(p=>p.value===group.maximum);
   }
@@ -84,50 +143,104 @@ function overviewMetric(parent,label,value,unit,count) {
     '已保存样本 / 计数：'+valueText(count),'overview-unit'));
   parent.append(item);
 }
-function concurrencyChart(parent,group) {
-  const points=group.points,width=760,height=290;
+function curvePoints(group,spec) {
+  return summaryGroupRecords(group).filter(({c})=>usablePerformanceResult(c))
+    .map(({c,ci})=>({c,ci,load:c.parameters[group.axis],...loadMeasurement(c,spec)}))
+    .sort((first,second)=>first.load-second.load || first.ci-second.ci);
+}
+function loadChartScale(maximum,minimum=0,local=false,ratio=false) {
+  if(ratio)return {low:0,high:1,tickCount:4};
+  const padding=Math.max((maximum-minimum)*.12,Math.abs(maximum)*.02,1e-6);
+  const floor=local&&maximum>0?Math.max(0,minimum-padding):0;
+  const limit=local&&maximum>0?maximum+padding:maximum||1;
+  const magnitude=10**Math.floor(Math.log10((limit-floor)/4));
+  const fraction=(limit-floor)/4/magnitude;
+  const step=[1,2,2.5,5,10].find(value=>value>=fraction)*magnitude;
+  const high=Math.ceil(limit/step)*step;
+  const low=Math.floor(floor/step)*step;
+  if(!numeric(high) || !numeric(step) || step<=0)
+    return {low:0,high:maximum||1,tickCount:4};
+  return {low,high,tickCount:Math.round((high-low)/step)};
+}
+function concurrencyChart(parent,group,spec,withDetails=true,scaleMode='local') {
+  const points=curvePoints(group,spec),width=760,height=290;
+  const axis=axisLabel(group.axis),metric=spec[0]+'（'+displayUnit(spec[1])+'）';
+  const details=el('details');
+  details.append(el('summary','实测点明细（'+points.length+' 个 Case）'));
+  const describe=point=>{
+    const service=servingMetric(point.c)?.values?.service_view||{};
+    const fields=[point.c.id,point.c.parameters.profile||'Profile 未记录',
+      axis+' '+point.load,metric+' '+valueText(point.value,spec[1])];
+    for(const [key,label] of [['average_concurrency','实际平均并发'],
+      ['peak_concurrent_requests','实际峰值并发'],['successful_requests','成功请求'],
+      ['failed_requests','失败请求']]) {
+      if(numeric(service[key]?.value))fields.push(label+' '+valueText(service[key].value));
+    }
+    if(spec[3]!=='value')fields.push(point.count==null?'样本数未记录':
+      '样本数 '+point.count+(spec[3]==='p99'&&point.count<10?'（小样本）':''));
+    if(point.reason)fields.push(point.reason);
+    return fields.join(' · ');
+  };
+  for(const point of points)details.append(el('p',describe(point)));
+  if(withDetails)parent.append(details);
+  const valid=points.filter(point=>numeric(point.value));
+  if(!valid.length){
+    parent.append(el('p',metric+' 暂无可绘制数据。'+
+      [...new Set(points.map(point=>point.reason).filter(Boolean))].join('；')));
+    return;
+  }
   const left=75,right=28,top=35,bottom=60;
-  const min=points[0].concurrency,max=points.at(-1).concurrency;
-  const high=group.maximum||1;
+  const min=points[0].load,max=points.at(-1).load;
+  const maximum=Math.max(...valid.map(point=>point.value));
+  const minimum=Math.min(...valid.map(point=>point.value));
+  const {low,high,tickCount}=loadChartScale(maximum,minimum,scaleMode==='local',spec[1]==='ratio');
+  if(low>0)parent.append(el('p','局部缩放：Y 轴从 '+valueText(low,spec[1])+
+    ' '+displayUnit(spec[1])+' 开始（非零起点），请结合实际数值判断波动。','analysis-note'));
+  if(spec[1]==='ratio')parent.append(el('p','比例指标固定显示 0–100%。','analysis-note'));
+  const lowerIsBetter=['ms','ms/token'].includes(spec[1]) || spec[2]==='timeout_rate';
+  const extreme=lowerIsBetter?Math.min(...valid.map(point=>point.value)):maximum;
+  const extremeLabel=lowerIsBetter?'已测最小值（越低越好）':'已测最大值（越高越好）';
   const x=p=>min===max?(left+width-right)/2:
-    left+(p.concurrency-min)/(max-min)*(width-left-right);
-  const y=p=>height-bottom-p.value/high*(height-top-bottom);
+    left+(p.load-min)/(max-min)*(width-left-right);
+  const y=p=>height-bottom-(p.value-low)/(high-low)*(height-top-bottom);
   const svg=svgElement('svg',{viewBox:`0 0 ${width} ${height}`,role:'img',
-    'aria-label':'并发上限与输出 Token 吞吐量；突出标记已测最大值'});
+    'aria-label':axis+'与'+metric});
   const title=svgElement('title',{});
-  title.textContent='横轴为配置并发上限，纵轴为输出吞吐量（token/s）。'+performanceTrend(group);
+  title.textContent=axis+'与'+metric;
   svg.append(title);
-  for(let i=0;i<=4;i++) {
-    const value=high*i/4,py=height-bottom-value/high*(height-top-bottom);
+  for(let i=0;i<=tickCount;i++) {
+    const value=low+(high-low)*(i/tickCount),py=y({value});
     svg.append(svgElement('line',{x1:left,x2:width-right,y1:py,y2:py,stroke:'var(--line)'}));
     const label=svgElement('text',{x:left-9,y:py+4,'text-anchor':'end',
       fill:'currentColor','font-size':12});
-    label.textContent=valueText(value);svg.append(label);
+    label.textContent=valueText(value,spec[1]);svg.append(label);
   }
-  const repeated=new Set(points.map(p=>p.concurrency)).size!==points.length;
-  if(!repeated && points.length>1)svg.append(svgElement('polyline',{
-    points:points.map(p=>x(p)+','+y(p)).join(' '),fill:'none',
-    stroke:'var(--accent)','stroke-width':2}));
+  const repeated=new Set(points.map(p=>p.load)).size!==points.length;
+  if(!repeated)for(let index=1;index<points.length;index++){
+    const prior=points[index-1],next=points[index];
+    if(numeric(prior.value)&&numeric(next.value))svg.append(svgElement('line',{
+      x1:x(prior),x2:x(next),y1:y(prior),y2:y(next),stroke:'var(--accent)','stroke-width':2}));
+  }
   const ticks=new Set();
   points.forEach(p=>{
-    const peak=p.value===group.maximum;
+    if(!ticks.has(p.load)){
+      const label=svgElement('text',{x:x(p),y:height-bottom+23,'text-anchor':'middle',fill:'currentColor'});
+      label.textContent=p.load;svg.append(label);ticks.add(p.load);
+    }
+    if(!numeric(p.value))return;
+    const peak=p.value===extreme;
     const a=svgElement('a',{href:'#analysis-'+group.ti+'-'+p.ci,
-      'aria-label':p.c.id+'，并发上限 '+p.concurrency+'，输出吞吐量 '+
-        valueText(p.value)+' token/s'+(peak?'，已测最大值':'')});
-    const mark=svgElement('circle',{cx:x(p),cy:y(p),r:peak?7:4,
+      'aria-label':describe(p)});
+    const mark=svgElement('circle',{cx:x(p),cy:y(p),r:peak?5.5:4,
       fill:peak?'var(--accent)':'var(--panel)',stroke:'var(--accent)',
       'stroke-width':2,'data-case-index':p.ci,'data-peak':String(peak)});
-    const tip=svgElement('title',{});tip.textContent=a.getAttribute('aria-label');
+    const tip=svgElement('title',{});tip.textContent=a.getAttribute('aria-label')+
+      (peak?' · '+extremeLabel:'');
     mark.append(tip);a.append(mark);svg.append(a);
-    if(!ticks.has(p.concurrency)) {
-      const label=svgElement('text',{x:x(p),y:height-bottom+23,
-        'text-anchor':'middle',fill:'currentColor','font-size':12});
-      label.textContent=p.concurrency;svg.append(label);ticks.add(p.concurrency);
-    }
   });
-  for(const [text,px,py,anchor] of [['输出吞吐量（token/s）',left,18,'start'],
-    ['● 已测最大值',width-right,18,'end'],
-    ['配置并发上限',(left+width-right)/2,height-8,'middle']]) {
+  for(const [text,px,py,anchor] of [[metric,left,18,'start'],
+    ['● '+extremeLabel,width-right,18,'end'],
+    [axis,(left+width-right)/2,height-8,'middle']]) {
     const label=svgElement('text',{x:px,y:py,'text-anchor':anchor,
       fill:'currentColor','font-size':12});label.textContent=text;svg.append(label);
   }
@@ -137,22 +250,25 @@ function performanceGroupLabel(group,index) {
   const p=group.fixed;
   return ['条件组 '+(index+1),taskDisplayName(group.task.name),p.model,
     '输入 '+valueText(p.input_tokens),'输出上限 '+valueText(p.output_tokens),
-    p.profile].join(' · ');
+    p.profile||'Profile 未记录（单 Case）',group.axis==='request_rate'?
+      '固定并发上限 '+valueText(p.max_concurrency):
+      p.request_rate!=null?'固定请求速率 '+valueText(p.request_rate):'配置并发上限扫参'].join(' · ');
 }
 function summaryScopeGroups(taskList,summary=performanceSummary(taskList)) {
-  const key=(ti,fixed)=>JSON.stringify([ti,stableConfig(fixed)]);
-  const available=new Map(summary.groups.map(g=>[key(g.ti,g.fixed),g]));
+  const key=(ti,axis,fixed,single)=>JSON.stringify([ti,axis,stableConfig(fixed),single]);
+  const available=new Map(summary.groups.map(g=>[key(g.ti,g.axis,g.fixed,g.unknownProfileCase),g]));
   const scopes=new Map();
   taskList.forEach((task,ti)=>{
     if(task.category!=='generation_performance')return;
-    task.cases.forEach(c=>{
+    task.cases.forEach((c,ci)=>{
       const p=c.parameters||{};
       if(c.collection_complete!==true || c.status==='discarded' || !p.model ||
-        !p.profile || !Number.isSafeInteger(p.max_concurrency) || p.max_concurrency<1)return;
-      const fixed=Object.fromEntries(Object.entries(p).filter(([name])=>name!=='max_concurrency' && (!isPrefixCache(c)||name!=='prefix_cache_environment')));
-      const identity=key(ti,fixed);
+        !validLoad(p,loadAxis(p)))return;
+      const axis=loadAxis(p),fixed=loadConditions(c,axis);
+      const unknownProfileCase=p.profile?null:ci;
+      const identity=key(ti,axis,fixed,unknownProfileCase);
       if(!scopes.has(identity))scopes.set(identity,available.get(identity)||
-        {task,ti,fixed,points:[],maximum:null,peaks:[]});
+        {task,ti,axis,fixed,unknownProfileCase,points:[],maximum:null,peaks:[]});
     });
   });
   return [...scopes.values()];
@@ -160,9 +276,10 @@ function summaryScopeGroups(taskList,summary=performanceSummary(taskList)) {
 function summaryGroupRecords(group) {
   if(!group)return [];
   const fixed=JSON.stringify(stableConfig(group.fixed));
-  return group.task.cases.map((c,ci)=>({c,ci})).filter(({c})=>
-    JSON.stringify(stableConfig(Object.fromEntries(Object.entries(c.parameters||{})
-      .filter(([key])=>key!=='max_concurrency' && (!isPrefixCache(c)||key!=='prefix_cache_environment')))))===fixed);
+  return group.task.cases.map((c,ci)=>({c,ci})).filter(({c,ci})=>
+    (group.unknownProfileCase==null || ci===group.unknownProfileCase) &&
+    loadAxis(c.parameters||{})===group.axis && validLoad(c.parameters||{},group.axis) &&
+    JSON.stringify(stableConfig(loadConditions(c,group.axis)))===fixed);
 }
 function savedRequestCounts(c) {
   const metric=servingMetric(c),service=metric?.values?.service_view;
@@ -426,76 +543,98 @@ function renderSuccessCounts(parent,group) {
     {title:'计数校验',get:r=>r.counts.valid?'有效':'缺失或不一致'}],records);
   parent.append(details);
 }
+function hasComparableLoad(group) {
+  return new Set(curvePoints(group,loadMetrics[0]).map(point=>point.load)).size>=2;
+}
+function loadComparisonDescription(group) {
+  const points=curvePoints(group,loadMetrics[0]);
+  if(!points.length)return '没有满足成功与采集完整条件的可绘制性能数据。';
+  const loads=[...new Set(points.map(point=>point.load))];
+  const throughput=points.map(point=>point.value).filter(numeric);
+  const latency=curvePoints(group,loadMetrics[1]);
+  const range=values=>{
+    if(!values.length)return '缺失';
+    const minimum=Math.min(...values),maximum=Math.max(...values);
+    return minimum===maximum?valueText(minimum):valueText(minimum)+'–'+valueText(maximum);
+  };
+  const text=[points.length+' 个 Case',axisLabel(group.axis)+' '+loads[0]+
+    (loads.length>1?' → '+loads.at(-1):'（单点，无法描述负载变化）'),
+    '输出吞吐量 '+range(throughput)+' token/s'];
+  if(latency.length)text.push('TTFT Mean '+valueText(latency[0].value)+
+    (loads.length>1?' → '+valueText(latency.at(-1).value):'')+' ms');
+  if(loads.length!==points.length)text.push('重复负载分别保留，不合并均值');
+  return text.join(' · ');
+}
+function renderLoadComparison(parent,group,spec=loadMetrics[1],scaleMode='local') {
+  if(!group){
+    parent.append(el('p','当前任务没有可用的负载条件或性能数据。','empty'));return;
+  }
+  parent.append(el('p',loadComparisonDescription(group),'overview-notice'));
+  parent.append(el('p',axisLabel(group.axis)+(group.axis==='request_rate'?
+    '表示配置到达速率。':'表示客户端配置上限，实际平均/峰值并发见表格。')+
+    ' 连线只连接实测点；缺失值断线。','analysis-note'));
+  parent.append(el('h3','负载—'+spec[0]));
+  concurrencyChart(parent,group,spec,false,scaleMode);
+  const measurements=curvePoints(group,spec);
+  const definitions=[...new Set(measurements.map(point=>point.aggregation?
+    'aggregation='+point.aggregation+'；percentile_method='+(point.percentile||'未记录'):
+    point.reason).filter(Boolean))];
+  if(definitions.length){
+    const explanation=el('details');
+    explanation.append(el('summary','统计说明'),el('p',definitions.join('；'),'analysis-note'));
+    const records=measurements.filter(point=>point.aggregation);
+    records.forEach(point=>explanation.append(el('p',point.c.id+' · 权重合计 '+
+      valueText(point.weight)+' · 有效请求样本 '+valueText(point.count),'analysis-note')));
+    parent.append(explanation);
+  }
+  if(['tpot','itl'].includes(spec[2]))
+    parent.append(el('p','沿用原指标的 Token 加权统计；具体权重与分位数方法见统计说明。','analysis-note'));
+  const records=summaryGroupRecords(group).sort((first,second)=>
+    first.c.parameters[group.axis]-second.c.parameters[group.axis] || first.ci-second.ci);
+  if(!hasComparableLoad(group))
+    parent.append(el('p','只有一个可用负载点，或有效性能数据不足，无法形成负载变化趋势。','analysis-note'));
+  parent.append(el('h3','跨 Case 对比'));
+  const service=(record,key)=>{
+    const node=servingMetric(record.c)?.values?.service_view?.[key];
+    return numeric(node?.value)?node.value:null;
+  };
+  dataTable(parent,[
+    {title:'Case',get:record=>record.c.id},
+    {title:axisLabel(group.axis),numeric:true,get:record=>record.c.parameters[group.axis]},
+    {title:'状态',get:record=>names[record.c.status]||record.c.status},
+    {title:'平均并发',numeric:true,get:record=>service(record,'average_concurrency')},
+    {title:'峰值并发',numeric:true,get:record=>service(record,'peak_concurrent_requests')},
+    {title:'正式请求数',numeric:true,get:record=>savedRequestCounts(record.c).total},
+    {title:'成功请求数',numeric:true,get:record=>savedRequestCounts(record.c).success},
+    ...loadMetrics.map(metric=>({title:metric[0]+'（'+metric[1]+'）',
+      numeric:true,get:record=>loadMeasurement(record.c,metric).value})),
+    ...(!loadMetrics.some(metric=>metric[2]===spec[2] && metric[3]===spec[3] &&
+      metric[1]===spec[1])?[{
+      title:'当前选择：'+spec[0]+'（'+displayUnit(spec[1])+'）',
+      numeric:true,unit:spec[1],get:record=>loadMeasurement(record.c,spec).value,
+    }]:[]),
+  ],records);
+  parent.append(el('p','表格保留每次实验的保存值；仅成功且采集完整的 Case 参与曲线。'+
+    '数据点链接进入来源 Case。各条件组独立比较。','analysis-note'));
+  const fixed=el('details');
+  fixed.append(el('summary','固定测试条件'),el('pre',JSON.stringify(
+    Object.fromEntries(Object.entries(group.fixed).filter(([key])=>key!=='api_key')),null,2)));
+  parent.append(fixed);
+}
 function renderPerformanceOverview() {
-  const parent=$('performance-overview');parent.append(el('h3','推理性能总结'));
-  const summary=performanceSummary(tasks);
-  const groups=summaryScopeGroups(tasks,summary);
-  if(!groups.length) {
-    parent.append(el('p',tasks.some(t=>t.category==='generation_performance')?
-      '没有满足总结条件的在线性能 Case。需要成功且采集完整的结果、配置并发上限、'+
-      '模型、负载策略以及已保存的服务窗口输出吞吐量（token/s）；其他结果请查看 Case 分析。':
-      '本次未包含生成性能评测。','muted'));
-    return;
+  const parent=$('performance-overview');
+  parent.append(el('h3','推理性能总结'));
+  const groups=summaryScopeGroups(tasks);
+  if(!groups.length){
+    parent.append(el('p','没有可用的性能负载条件，详见 Case 分析。','muted'));return;
   }
-  const label=el('label','选择测试条件组','overview-picker'),select=el('select');
-  select.id='summary-performance-group';
-  groups.forEach((group,index)=>option(select,String(index),performanceGroupLabel(group,index)));
-  label.htmlFor=select.id;label.append(select);parent.append(label);
-  const content=el('div');content.id='overview-performance-content';
-  content.setAttribute('aria-live','polite');parent.append(content);
-  function draw() {
-    content.replaceChildren();
-    const group=groups[Number(select.value)],point=group.peaks[0];
-    if(!point) {
-      content.append(el('p','本组没有可用于峰值与趋势的成功性能 Case；'+
-        '已保存的成功率、并发配置和可用 P99 仍分别展示，缺失数据不作为零。','overview-notice'));
-      renderSuccessCounts(content,group);return;
-    }
-    const peak=el('div',undefined,'peak');
-    peak.append(el('div','本组已测最高输出吞吐量','peak-heading'));
-    const value=el('div',valueText(point.value)+' ','peak-value');
-    value.title='原始值：'+String(point.value)+' token/s';
-    value.append(el('small','token/s'));peak.append(value);
-    const where=el('p');
-    group.peaks.forEach((p,i)=>{
-      if(i)where.append(document.createTextNode('；'));
-      where.append(link(p.c.id+' · 并发上限 '+p.concurrency,
-        'analysis-'+group.ti+'-'+p.ci));
-    });
-    if(group.peaks.length>1)where.append(document.createTextNode('（并列最大值）'));
-    peak.append(where);
-    peak.append(el('p',performanceGroupLabel(group,Number(select.value)),
-      'overview-context muted'));
-    const values=servingMetric(point.c).values;
-    const metrics=el('div',undefined,'overview-metrics');
-    const throughput=values.service_view.request_throughput;
-    overviewMetric(metrics,'请求吞吐量',throughput?.value,throughput?.unit||'');
-    for(const key of ['ttft','tpot','itl']) {
-      const m=values.request_view?.[key];
-      overviewMetric(metrics,key.toUpperCase()+' Mean',m?.mean,
-        m?.unit||'',m?.sample_count??m?.count??null);
-    }
-    peak.append(metrics,el('p','以上吞吐与延迟均来自 '+point.c.id+
-      '；Mean 使用原指标保存的均值与权重口径。','overview-notice'));
-    content.append(peak,el('p',performanceTrend(group),'trend-text'));
-    const boundary=group.peaks.some(p=>p.concurrency===group.points.at(-1).concurrency);
-    content.append(el('p',boundary?
-      '最大值位于最高已测并发，当前只能确定已测范围内最高，不能据此确定服务极限。':
-      '标记的是已测并发点中的最大值，不推断未测试并发的结果。','overview-notice'));
-    concurrencyChart(content,group);
-    content.append(el('p','可横向滚动查看完整曲线；点击数据点进入对应 Case 分析。','overview-notice'));
-    const fixed=el('details');fixed.append(el('summary','本组固定测试条件'),
-      el('pre',JSON.stringify(Object.fromEntries(Object.entries(group.fixed)
-        .filter(([key])=>key!=='api_key')),null,2)));
-    content.append(fixed);
-    renderSuccessCounts(content,group);
-  }
-  const highest=Math.max(...groups.map(g=>g.maximum??-Infinity));
-  select.value=String(groups.findIndex(g=>(g.maximum??-Infinity)===highest));
-  select.onchange=draw;draw();
-  parent.append(el('p','纳入 '+summary.included+' / '+summary.total+
-    ' 个性能 Case。异常、采集不完整或缺少必要字段的 Case 不参与峰值与趋势；'+
-    '其状态及已保存指标仍保留在结果摘要、Case 分析和运行诊断。','overview-notice'));
+  groups.forEach((group,index)=>{
+    const summary=el('div',undefined,'overview-quality');
+    summary.append(el('h4',performanceGroupLabel(group,index)),
+      el('p',loadComparisonDescription(group),'overview-notice'),
+      link('查看负载对比','analysis-load-'+group.ti+'-'+index));
+    parent.append(summary);
+  });
 }
 function qualityScoreMetrics(c) {
   return metricsFor(c).filter(m=>m.kind==='scalar' &&
