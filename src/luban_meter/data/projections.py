@@ -99,7 +99,13 @@ def extract_conversation(
     for turn in turns:
         if not isinstance(turn, Mapping):
             raise ValueError("conversation turn must be an object")
-        role = CONVERSATION_ROLES.get(turn.get("from"))
+        speaker = turn.get("from")
+        if not isinstance(speaker, str):
+            logger.warning(
+                "Skipping conversation turn with non-string speaker"
+            )
+            continue
+        role = CONVERSATION_ROLES.get(speaker)
         value = turn.get("value")
         if role is None or not isinstance(value, str):
             continue
