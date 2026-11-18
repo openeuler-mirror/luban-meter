@@ -2,6 +2,7 @@
 
 from . import benchmark_metrics
 from .generation_performance import (
+    capacity_search,
     generation_benchmarks,
     multi_turn_serving,
     prefix_cache,
@@ -15,6 +16,7 @@ __all__ = [
     "multi_turn_serving",
     "prefix_cache",
     "prefix_cache_metrics",
+    "capacity_search",
     "quality_benchmarks",
     "benchmark_metrics",
     "template_adapters",

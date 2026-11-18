@@ -163,6 +163,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
                     schema, {**supplied, **overrides}, base_dir=directory
                 )
                 scenario.validate(parameters)
+                profiles.get(parameters["profile"]).validate(parameters)
                 for key, spec in schema.items():
                     if spec.path and parameters.get(key):
                         if not Path(parameters[key]).is_file():
@@ -226,6 +227,9 @@ def validate_plan_parameters(plan, *, base_dir):
                         base_dir=base_dir,
                     )
                     scenario.validate(parameters)
+                    profiles.get(parameters["profile"]).validate(
+                        parameters
+                    )
                 except (ValueError, TypeError):
                     logger.exception(
                         "Saved Case parameter validation failed; update or "

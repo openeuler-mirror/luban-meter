@@ -1,0 +1,36 @@
+{
+  "tasks": [
+    {
+      "backend": "openai_http",
+      "base_url": "http://127.0.0.1:8000",
+      "endpoint": "completion",
+      "model": "served-model",
+      "request_timeout": 120,
+      "task_timeout": 3600,
+      "seed": 42,
+      "temperature": 0.0,
+      "name": "step_capacity",
+      "scenario": "online_serving",
+      "data": "random_token",
+      "tokenizer": "/models/your-model",
+      "input_tokens": 1024,
+      "output_tokens": 128,
+      "profile": "step",
+      "step_start_rate": 2,
+      "step_rate_increment": 2,
+      "step_stage_duration": 30,
+      "step_max_rate": 64,
+      "max_concurrency": 32,
+      "num_requests": 5000,
+      "max_duration": 900,
+      "num_warmups": 8,
+      "ignore_eos": true,
+      "stop": [],
+      "goodput": ["ttft:1000", "tpot:50", "e2el:10000"],
+      "stage_min_requests": 30,
+      "stage_min_slo_rate": 0.99,
+      "stage_min_success_rate": 0.99,
+      "stage_max_timeout_rate": 0.01
+    }
+  ]
+}
