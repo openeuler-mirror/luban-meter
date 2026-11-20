@@ -12,13 +12,93 @@ from typing import Any
 CHOICE_LETTERS = ("A", "B", "C", "D")
 SUPPORTED_PROMPT_VERSIONS = {
     "squad": ("squad2-gen-v1",),
-    "ceval": ("ceval-v1", "ceval-v2", "ceval-v3"),
-    "cmmlu": ("cmmlu-v1", "cmmlu-v2", "cmmlu-v3"),
+    "ceval": ("ceval-v1", "ceval-v4"),
+    "cmmlu": ("cmmlu-v1", "cmmlu-v4"),
     "gsm8k": ("gsm8k-v1",),
     "humaneval": ("humaneval-completion-v1",),
-    "lcsts": ("lcsts-v1",),
+    "lcsts": ("lcsts-v2",),
     "wikitext": ("wikitext-v1",),
 }
+
+def render_choice_generation(sample, examples=()):
+    subject = sample.get("subject") or "综合知识"
+    instruction = (
+        f"以下是关于{subject}的单项选择题。每题只能选择一个正确答案，"
+        "合法选项为A、B、C、D。\n"
+        "只回答待答题。示例仅展示格式，不要复述示例、题目或选项。\n"
+        "只输出一行，格式为“答案：X”，X为一个大写选项字母。"
+        "不要输出分析、解释或其他文字。"
+    )
+    ending = "请输出待答题的答案，格式为“答案：X”。"
+    return _render_bounded(sample, examples, instruction, ending, choice=True)
+
+
+def _render_summary(sample, examples):
+    instruction = (
+        "阅读正文并生成简短摘要，概括其中的主要信息。\n"
+        "摘要只能依据给出的正文，不补充正文之外的信息。\n"
+        "只返回一行摘要正文，不添加标题、“摘要：”前缀、解释、"
+        "列表或其他内容。\n"
+        "示例仅展示任务形式；只为待摘要文本生成摘要。"
+    )
+    ending = "请输出待摘要文本的一行摘要正文。"
+    return _render_bounded(sample, examples, instruction, ending)
+
+
+def _render_bounded(sample, examples, instruction, ending, *, choice=False):
+    """Keep dataset text and selected examples outside template boundaries."""
+    input_fields = ("question", "choices", "subject", "content", "title",
+                    "context")
+    sources = [{key: sample[key] for key in input_fields if key in sample},
+               *examples]
+    source_text = "\n".join(
+        str(value) for row in sources for value in row.values()
+    )
+    suffix = ""
+    counter = 0
+    while f"[LBM{suffix}:" in source_text:
+        counter += 1
+        suffix = f"_{counter}"
+    markers = []
+
+    def mark(label):
+        value = f"[LBM{suffix}:{label}]"
+        markers.append(value)
+        return value
+
+    def field(label, value):
+        return f"{mark(label + '_BEGIN')}\n{value}\n{mark(label + '_END')}"
+
+    def body(row):
+        if not choice:
+            return field("CONTENT", row["content"])
+        # Reuse validation but keep the question itself unchanged.
+        render_choice_question(row)
+        options = "\n".join(
+            f"{letter}. {value}"
+            for letter, value in zip(CHOICE_LETTERS, row["choices"])
+        )
+        return field("QUESTION", row["question"]) + "\n" + field(
+            "OPTIONS", options
+        )
+
+    blocks = [instruction]
+    for index, example in enumerate(examples, 1):
+        answer = (
+            f"答案：{example['answer']}" if choice
+            else field("SUMMARY", example["abst"])
+        )
+        blocks.append(
+            f"{mark(f'EXAMPLE_{index}_BEGIN')}\n{body(example)}\n"
+            f"{answer}\n{mark(f'EXAMPLE_{index}_END')}"
+        )
+    blocks.append(
+        f"{mark('TARGET_BEGIN')}\n{body(sample)}\n{mark('TARGET_END')}"
+    )
+    return {
+        "prompt": "\n\n".join([*blocks, ending]),
+        "boundary_markers": list(dict.fromkeys(markers)),
+    }
 
 
 def validate_prompt_version(benchmark_name: str, prompt_version: str) -> None:
@@ -42,32 +122,16 @@ def render_choice_question(sample: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_choice_prompt(
+def render_choice_ppl(
     sample: Mapping[str, Any],
     *,
     few_shot_samples: Sequence[Mapping[str, Any]] = (),
     instruction_prefix: str = "以下是中国关于",
     instruction_suffix: str = "的单项选择题，请选出其中的正确答案。",
-    strict_final_answer: bool = True,
-    answer_only: bool = True,
 ) -> str:
-    """Render instruction + few-shot examples + question, ending with
-    答案：.
-    """
+    """Render the original choice continuation for logprob scoring."""
     subject = str(sample.get("subject") or "综合知识")
     header = f"{instruction_prefix}{subject}{instruction_suffix}\n"
-    if strict_final_answer:
-        if answer_only:
-            header += (
-                "请只输出一行答案，格式为“答案：X”，"
-                "其中X只能是A、B、C、D之一。"
-                "不要输出思考过程、分析、解释或其他文字。\n"
-            )
-        else:
-            header += (
-                "请将最终答案单独写在最后一行，格式为“答案：X”，"
-                "其中X只能是A、B、C、D之一。\n"
-            )
     blocks: list[str] = []
     for example in few_shot_samples:
         blocks.append(
@@ -105,17 +169,20 @@ def render_wikitext_prompt(sample: Mapping[str, Any]) -> str:
     return text
 
 
-def render_lcsts_prompt(
+def render_lcsts_prompt(sample, examples=()):
+    content = sample["content"]
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("sample content must be a non-empty string")
+    return _render_summary(sample, examples)
+
+
+def render_lcsts_override(
     sample: Mapping[str, Any],
     *,
     few_shot_samples: Sequence[Mapping[str, Any]] = (),
-    template: str = ("阅读以下文章，并给出简短的摘要：{content}\n摘要如下："),
+    template: str,
 ) -> str:
-    """Render LCSTS summarization prompt.
-
-    Matches OpenCompass ``lcsts_gen_8ee1fe.py``: zero-shot by default,
-    optional few-shot examples inserted before the target article.
-    """
+    """Render an explicitly supplied LCSTS format string."""
     content = sample.get("content")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("sample content must be a non-empty string")

@@ -85,6 +85,7 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
 def test_validate_parameters(tmp_path: Path) -> None:
     config = lcsts.validate_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "gen"
+    assert config["prompt_version"] == "lcsts-v2"
     assert config["prompt_format"] == "chat"
     assert config["max_tokens"] == 512
     assert config["few_shot"] == 0
@@ -111,10 +112,11 @@ def test_render_lcsts_prompt() -> None:
         "content": "\u4eca\u5929\u5929\u6c14\u5f88\u597d",
         "abst": "\u5929\u6c14\u597d",
     }
-    prompt = render_lcsts_prompt(sample)
-    assert "\u9605\u8bfb\u4ee5\u4e0b\u6587\u7ae0" in prompt
-    assert "\u4eca\u5929\u5929\u6c14\u5f88\u597d" in prompt
-    assert prompt.endswith("\u6458\u8981\u5982\u4e0b\uff1a")
+    prompt = render_lcsts_prompt(sample)["prompt"]
+    assert "阅读正文并生成简短摘要" in prompt
+    expected = "[LBM:CONTENT_BEGIN]\n今天天气很好\n[LBM:CONTENT_END]"
+    assert expected in prompt
+    assert prompt.endswith("请输出待摘要文本的一行摘要正文。")
 
 
 def test_render_lcsts_prompt_few_shot() -> None:
@@ -128,7 +130,7 @@ def test_render_lcsts_prompt_few_shot() -> None:
             "abst": "\u793a\u4f8b\u6458\u8981",
         }
     ]
-    prompt = render_lcsts_prompt(sample, few_shot_samples=few_shot)
+    prompt = render_lcsts_prompt(sample, few_shot)["prompt"]
     assert "\u793a\u4f8b\u6587\u7ae0" in prompt
     assert "\u793a\u4f8b\u6458\u8981" in prompt
     assert "\u6d4b\u8bd5\u6587\u7ae0" in prompt

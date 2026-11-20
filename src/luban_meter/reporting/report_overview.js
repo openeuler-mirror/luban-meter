@@ -350,6 +350,7 @@ function renderPerformanceOverview() {
 }
 function qualityScoreMetrics(c) {
   return metricsFor(c).filter(m=>m.kind==='scalar' &&
+    m.parts[0]!=='answer_output_quality' &&
     !/^(count(?:_|$)|total_|scored_|passed$|parse_failed$|service_failed$|sandbox_failed$|execution_timeout$)/.test(m.key) &&
     !c.metrics[m.parts[0]]?.error &&
     (!c.metrics[m.parts[0]]?.status || c.metrics[m.parts[0]].status==='success'));
@@ -386,18 +387,32 @@ function renderPerformanceBest() {
 function qualityComparisonGroups(taskList) {
   const keys=['data','dataset_path','split','eval_mode','few_shot','few_shot_path',
     'input_template','input_format','answer_parser','template','field_mapping',
-    'max_samples','num_requests','seed','shuffle'];
+    'max_samples','num_requests','seed','shuffle','prompt_version','endpoint',
+    'temperature','output_tokens','stop','request_params'];
   const groups=new Map();
   taskList.forEach((task,ti)=>{
     if(task.category!=='model_service_quality')return;
     task.cases.forEach((c,ci)=>{
       const protocol=Object.fromEntries(keys.map(key=>[key,c.parameters?.[key]]));
+      const effective=qualityProtocol(c);
+      ['prompt_version','input_template','answer_parser','parser_revision',
+        'input_format_sha256','selected_samples_sha256','few_shot_source_sha256']
+        .forEach(key=>{if(Object.hasOwn(effective,key))protocol[key]=effective[key];});
       const identity=JSON.stringify([ti,stableConfig(protocol)]);
       if(!groups.has(identity))groups.set(identity,{task,ti,protocol,records:[]});
       groups.get(identity).records.push({task,ti,c,ci});
     });
   });
   return [...groups.values()];
+}
+function qualityProtocol(c) {
+  return Object.values(c.metrics||{}).map(m=>m.metadata?.evaluation)
+    .find(Boolean)||{};
+}
+function recordedPromptVersion(c) {
+  const evidence=qualityProtocol(c);
+  return Object.hasOwn(evidence,'prompt_version')
+    ? evidence.prompt_version : c.parameters?.prompt_version;
 }
 function qualityDirection(key) {
   if(['accuracy','exact_match','pass_at_1','token_f1','f1','rouge1','rouge2','rougeL'].includes(key))return 1;
@@ -453,6 +468,8 @@ function renderQualityBest() {
     heading.textContent=automatic&&winner?'最佳能力得分':'当前 Case 能力概览';
     context.textContent=scenarioDisplayName(group.task.scenario)+' · '+
       (record.c.parameters?.model||'模型未采集')+' · '+(names[record.c.status]||record.c.status)+' · '+
+      'Prompt '+(recordedPromptVersion(record.c)||'未记录/自定义')+' · '+
+      '解析器 '+(qualityProtocol(record.c).answer_parser||record.c.parameters?.answer_parser||'未记录/不适用')+' · '+
       (automatic && winner?'所选数据集与指标的最佳已保存得分':
         automatic?'缺少可比较得分或未声明优化方向，展示首个 Case':'当前所选 Case')+
       '；不同数据集不做综合排名。';

@@ -7,7 +7,6 @@ import pytest
 from luban_meter.benchmarking.model_service_quality.common import (
     choice,
     parsers,
-    prompts,
     template_adapters,
 )
 
@@ -82,7 +81,7 @@ def test_strict_choice_parser(text, expected):
 def test_choice_collection_keeps_raw_output(name, text, expected, status):
     class Client:
         def chat(self, messages, **kwargs):
-            assert "只输出一行答案" in messages[0]["content"]
+            assert "只输出一行，格式为“答案：X”" in messages[0]["content"]
             assert kwargs["stop"] == []
             return {"text": text, "input_tokens": 100, "output_tokens": 50}
 
@@ -95,7 +94,7 @@ def test_choice_collection_keeps_raw_output(name, text, expected, status):
         },
         definition,
     )
-    assert config["prompt_version"] == f"{name}-v3"
+    assert config["prompt_version"] == f"{name}-v4"
     sample = {
         "id": "anatomy-43",
         "question": "全身最复杂的关节是",
@@ -109,37 +108,42 @@ def test_choice_collection_keeps_raw_output(name, text, expected, status):
     assert result["correct"] is (True if expected else None)
 
 
-def test_choice_prompt_requires_final_answer_and_preserves_ppl():
-    sample = {
-        "question": "题目",
-        "choices": ["甲", "乙", "丙", "丁"],
-        "answer": "B",
-    }
-    text = prompts.render_choice_prompt(sample, few_shot_samples=[sample])
-    assert "只能是A、B、C、D之一" in text
-    assert "只输出一行答案" in text
-    assert "不要输出思考过程、分析、解释或其他文字" in text
-    assert "答案：B\n\n问题：题目" in text
-    assert text.endswith("答案：")
-    legacy = prompts.render_choice_prompt(sample, strict_final_answer=False)
-    assert "最终答案" not in legacy
-
-
 @pytest.mark.parametrize("name", ["ceval", "cmmlu"])
-def test_choice_prompt_v2_remains_reproducible(name):
+def test_choice_ppl_keeps_original_scoring_input(name):
+    sample = {
+        "question": "题目", "choices": ["甲", "乙", "丙", "丁"], "answer": "B",
+    }
+    example = {**sample, "question": "示例"}
+    expected = (
+        "以下是中国关于综合知识的单项选择题，请选出其中的正确答案。\n"
+        "问题：示例\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案：B\n\n"
+        "问题：题目\nA. 甲\nB. 乙\nC. 丙\nD. 丁\n答案："
+    )
+    calls = []
+
+    class Client:
+        def tokenize(self, text):
+            return list(text)
+
+        def completion_logprobs(self, text):
+            calls.append(text)
+            logprob = -0.1 if text.endswith(" B. 乙") else -2.0
+            return {"token_logprobs": [logprob] * len(text)}
+
     config = choice.validate_choice_parameters(
         {
-            "dataset_path": "unused.jsonl",
-            "few_shot": 0,
-            "eval_mode": "gen",
-            "prompt_version": f"{name}-v2",
+            "dataset_path": "unused.jsonl", "few_shot": 0,
+            "eval_mode": "ppl", "prompt_format": "base",
         },
         choice.ChoiceBenchmarkDefinition(name, name, name),
     )
-    sample = {"question": "题目", "choices": ["甲", "乙", "丙", "丁"]}
-    text = template_adapters.ChoiceTemplate().render(sample, [], config)
-    assert "最终答案单独写在最后一行" in text["prompt"]
-    assert "只输出一行答案" not in text["prompt"]
+    result = choice.collect_sample(Client(), sample, [example], config)
+    assert config["prompt_version"] == f"{name}-v1"
+    assert result["prompt"] == expected
+    assert calls == [expected + f" {letter}. {option}"
+                     for letter, option in zip("ABCD", sample["choices"])]
+    assert result["prediction"] == "B"
+    assert result["correct"] is True
 
 
 @pytest.mark.parametrize("name", ["ceval", "cmmlu"])
@@ -147,7 +151,7 @@ def test_choice_collection_preserves_generation_budget(name):
     class Client:
         def chat(self, messages, **kwargs):
             assert kwargs["max_tokens"] == 8192
-            assert "只输出一行答案" in messages[0]["content"]
+            assert "只输出一行，格式为“答案：X”" in messages[0]["content"]
             return {"text": "答案：D", "output_tokens": 4}
 
     config = choice.validate_choice_parameters(

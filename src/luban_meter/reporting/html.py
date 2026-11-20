@@ -40,6 +40,9 @@ def report_data(payload, *, include_requests=False, raw_root=None):
                 "case_index": case_index,
             }
             for row in metric_rows(case.get("metrics", {})):
+                # Protocol evidence must not become additional metric rows.
+                if "metadata" in row["metric"].split("/"):
+                    continue
                 rows.append({**label, **row})
             server_metrics = case.get("observation", {}).get("metrics", {})
             for row in metric_rows(server_metrics, "/server_observation"):

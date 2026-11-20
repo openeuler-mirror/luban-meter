@@ -112,7 +112,7 @@ def test_extract_humaneval_completion_strips_repeated_prompt_only() -> None:
     assert parsers.extract_humaneval_completion("", prompt) == ""
 
 
-def test_render_choice_prompt() -> None:
+def test_render_choice_ppl() -> None:
     sample = {
         "id": "1",
         "question": "题目",
@@ -127,7 +127,7 @@ def test_render_choice_prompt() -> None:
         "answer": "A",
         "subject": "计算机网络",
     }
-    prompt = prompts.render_choice_prompt(sample, few_shot_samples=[example])
+    prompt = prompts.render_choice_ppl(sample, few_shot_samples=[example])
     assert prompt.startswith("以下是中国关于计算机网络的单项选择题")
     assert "A. 甲" in prompt
     assert "答案：A" in prompt

@@ -382,6 +382,8 @@ def test_real_cli_pipeline_preserves_saved_results(
             "--output-tokens", "2", "--num-requests", "3",
             "--num-warmups", "1" if mode == "ok" else "0",
             "--profile", "synchronous",
+            # This test asserts both saved metrics. Phase timing is opt-in.
+            "--thinking-metrics",
             "--request-timeout", "3", "--task-timeout", "30",
             "--result-dir", str(tmp_path / "runs"),
             "--log-level", log_level,
