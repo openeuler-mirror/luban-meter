@@ -42,6 +42,7 @@ class DomainMetric(Metric):
         return {
             "status": processed.get("status", "success"),
             "values": processed["metrics"],
+            "metadata": {"evaluation": facts["metadata"].get("evaluation")},
         }
 
 
@@ -80,7 +81,57 @@ class ChoiceAccuracy(Metric):
             {"status": "success", "metrics": {"samples": samples}},
             facts["metadata"]["template"],
         )
-        return {"status": result["status"], "values": result["metrics"]}
+        return {
+            "status": result["status"], "values": result["metrics"],
+            "metadata": {"evaluation": facts["metadata"].get("evaluation")},
+        }
+
+
+@metrics.register("answer_output_quality")
+class AnswerOutputQuality(Metric):
+    """Independent parse and format rates; task scores are untouched."""
+
+    def compute(self, facts):
+        rows = completed_samples(facts)
+        valid = [row for row in rows if row.get(
+            "parse_diagnostic", {}
+        ).get("status") in ("parsed", "parse_failed")]
+        parsed = sum(row["parse_diagnostic"]["status"] == "parsed"
+                     for row in valid)
+        checked = [row for row in valid
+                   if isinstance(row.get("format_compliant"), bool)]
+        reasons = {}
+        for row in valid:
+            reason = row["parse_diagnostic"].get("reason")
+            if reason:
+                reasons[reason] = reasons.get(reason, 0) + 1
+
+        def rate(count, denominator):
+            return {
+                "value": count / denominator if denominator else None,
+                "unit": "ratio", "sample_count": denominator,
+            }
+
+        return {
+            "status": "success" if valid else "unavailable",
+            "metadata": {"evaluation": facts["metadata"].get("evaluation")},
+            "condition": "completed text responses, including empty output; "
+                         "service failures excluded; format has its own "
+                         "applicability denominator",
+            "values": {
+                "answer_parse_rate": rate(parsed, len(valid)),
+                "parse_failure_rate": rate(len(valid) - parsed, len(valid)),
+                "invalid_output_rate": rate(len(valid) - parsed, len(valid)),
+                "format_compliance_rate": rate(
+                    sum(row["format_compliant"] for row in checked),
+                    len(checked),
+                ),
+                "parse_failures": {
+                    key: {"value": count, "unit": "sample"}
+                    for key, count in sorted(reasons.items())
+                },
+            },
+        }
 
 
 @metrics.register("sample_accuracy")

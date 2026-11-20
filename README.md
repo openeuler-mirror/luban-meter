@@ -286,11 +286,10 @@ luban-meter run --scenario ceval --model served-model \
 ```
 
 选择题支持`gen`和`ppl`；`ppl`要求completions接口支持echo/logprobs。
-CMMLU与C-Eval的默认`gen`模板采用`cmmlu-v3`/`ceval-v3`，要求只输出一行
-`答案：D`，不输出思考、分析或解释；few-shot示例使用相同格式。
-v2模板保留“最终答案单独写在最后一行”的原有指令，便于复现历史Prompt。
-`ppl`保留v1提示词及原有logprob评分方式。原始事实中的`prompt_version`
-记录实际模板版本，新旧模板的效果分数应分别比较。
+CMMLU 与 C-Eval 默认的 `gen` Prompt 标识分别为 `cmmlu-v4` 和 `ceval-v4`。
+模板区分 Few-shot 示例、待答问题和选项，并要求只输出一行 `答案：D`。
+`ppl` 保留 v1 Prompt 及原有 logprob 评分方式。原始事实中的 `prompt_version`
+记录实际模板标识，新旧模板的得分应分别比较。
 
 选择题生成解析先排除完整的`<think>...</think>`块，再匹配独立的A/B/C/D
 或完整答案行，例如`答案：D`、`答案是D`、`最终答案：D`、`Answer: D`。
@@ -1255,7 +1254,36 @@ luban-meter run --scenario offline_vllm_async --model /models/your-model \
 
 ## 输入模板与答案解析
 
-常规质量场景使用`--input-template`与`--answer-parser`选择已注册实现，默认行为保持不变。
+### 默认 Prompt 与结果追踪
+
+CEVAL 和 CMMLU 的生成式评测使用验证过的单行选择题 Prompt，要求输出
+`答案：X`，结果标识分别为 `ceval-v4`、`cmmlu-v4`。
+两者的 `eval_mode=ppl` 保持原 v1 续接输入和 logprob 评分。
+LCSTS 使用 `lcsts-v2`，明确正文范围并要求只返回摘要正文。
+GSM8K、SQuAD、HumanEval 和 WikiText 沿用原有输入与评分方式。
+
+如使用过实验配置，请从命令中移除 `--prompt-version`，并从任务 JSON 中移除
+`prompt_version`。继续传入这些输入会报参数错误。结果中的同名字段是实际内置
+Prompt 的只读标识。对于历史运行，可读取原始结果保存的文本；若需完整复现，
+应使用当时归档的代码、配置、数据和模型环境。历史结果缺少标识时显示“未记录”。
+
+选择题与 LCSTS 默认模板分别标记示例和待测输入，保留原有示例选择策略。
+如所选示例与本次测试输入重叠，评测在发送模型请求前报错。
+`format_string` 等自定义模板继续使用原接口。结果标为 `prompt_source=custom`，
+不分配内置 Prompt 标识。内置 `format_string` 不自动插入 Few-shot 示例。
+
+原始事实保存实际 Prompt 及其哈希、解析结果、生成条件和样本身份。
+生成式问答及摘要的默认指标包含 `answer_output_quality`，区分答案可解析率、
+解析失败率与格式合规率。无效输出率沿用解析失败率的口径。已完成文本响应（含空
+文本）纳入解析统计，服务失败排除。格式合规率仅以适用格式检查的响应为分母。
+这些诊断不影响任务评分。Zero-shot 的 `selection.few_shot` 记录整数 0。
+
+默认替换的依据是 Qwen2.5-3B-Instruct 固定子集实验。CEVAL 和 CMMLU 各 50 条，
+可解析率均由 86% 升至 100%，Accuracy 分别为 60%→70% 和 56%→68%。
+LCSTS 50 条的 ROUGE-L 为 12.67→21.52。部分样本得分下降，输入 Token 均有增加，
+这些结果仅代表此次实验条件。
+
+常规质量场景使用`--input-template`与`--answer-parser`选择已注册实现。
 内置输入模板有choice、numeric_qa、summarization、reading和format_string；
 解析器有choice、number、text和reading。类型不兼容的组合在请求发出前拒绝。
 例如GSM8K自定义输入文字，同时沿用数值解析及数值准确率：

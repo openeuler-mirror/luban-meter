@@ -42,6 +42,53 @@ def task(category="generation_performance"):
             "status": "success", "cases": [], "kind": "task"}
 
 
+def test_effective_prompt_versions_are_separate_comparison_groups():
+    from luban_meter.reporting.best_summary import quality_protocol
+
+    first, second = record(), record(2)
+    for case, version in ((first, "ceval-v3"), (second, "ceval-v4")):
+        case["parameters"]["prompt_version"] = ""
+        case["metrics"] = {"choice_accuracy": {
+            "metadata": {"evaluation": {
+                "prompt_version": version, "answer_parser": "choice",
+            }},
+            "values": {"accuracy": {"value": 0.5, "unit": "ratio"}},
+        }}
+    assert quality_protocol(first)["prompt_version"] == "ceval-v3"
+    t = task("model_service_quality")
+    text = "\n".join(quality_lines([(t, first), (t, second)]))
+    assert "Prompt ceval-v3" in text
+    assert "Prompt ceval-v4" in text
+    assert text.count("条件组") == 2
+
+
+def test_summary_prompt_grouping_preserves_historical_identity(tmp_path):
+    t = task("model_service_quality")
+    identities = (
+        {"prompt_version": "lcsts-v2", "input_format_sha256": None},
+        {"prompt_version": None, "input_format_sha256": "custom-a"},
+        {"prompt_version": None, "input_format_sha256": "custom-b"},
+        None,
+    )
+    for index, identity in enumerate(identities, 1):
+        case = record(index)
+        case["parameters"] = {"template": "lcsts"}
+        metric = {"values": {"rougeL": {"value": 50, "unit": "score"}}}
+        if identity is not None:
+            metric["metadata"] = {"evaluation": identity}
+        case["metrics"] = {"chinese_rouge": metric}
+        t["cases"].append(case)
+    destination = tmp_path / "result.json"
+    write_json_atomic(destination, t)
+    saved = load_result(destination)
+    before = copy.deepcopy(saved)
+    text = "\n".join(quality_lines([(saved, c) for c in saved["cases"]]))
+    assert text.count("条件组") == 4
+    assert text.count("Prompt lcsts-v2") == 1
+    assert text.count("Prompt 未记录/自定义") == 3
+    assert saved == before
+
+
 def test_saved_extremes_ties_missing_p99_and_failed_cases():
     t = task()
     rows = [record(), record(2), record(3, 999, "failed")]

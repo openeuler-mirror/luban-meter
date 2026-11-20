@@ -31,8 +31,6 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     CHOICE_LETTERS,
-    render_choice_prompt,
-    validate_prompt_version,
 )
 from luban_meter.log import get_logger
 from luban_meter.runtime.thinking import response_facts
@@ -57,6 +55,10 @@ def validate_choice_parameters(
     parameters: Mapping[str, Any],
     benchmark_definition: ChoiceBenchmarkDefinition,
 ) -> dict[str, Any]:
+    eval_mode = enum_value(parameters, "eval_mode", ("ppl", "gen"), "ppl")
+    revision = 4 if eval_mode == "gen" else 1
+    version = f"{benchmark_definition.benchmark_name}-v{revision}"
+    fixed_value(parameters, "prompt_version", version)
     config = {
         "service_url": string_value(
             parameters, "service_url", "http://127.0.0.1:8000"
@@ -70,18 +72,11 @@ def validate_choice_parameters(
         "seed": non_negative_integer(parameters, "seed", 42),
         "few_shot_path": string_value(parameters, "few_shot_path", ""),
         "few_shot": non_negative_integer(parameters, "few_shot", 5),
-        "eval_mode": enum_value(
-            parameters, "eval_mode", ("ppl", "gen"), "ppl"
-        ),
+        "eval_mode": eval_mode,
         "prompt_format": enum_value(
             parameters, "prompt_format", ("chat", "base"), "chat"
         ),
-        "prompt_version": string_value(
-            parameters,
-            "prompt_version",
-            f"{benchmark_definition.benchmark_name}-"
-            f"v{3 if parameters.get('eval_mode') == 'gen' else 1}",
-        ),
+        "prompt_version": version,
         "max_tokens": positive_integer(parameters, "max_tokens", 8),
         "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -96,9 +91,6 @@ def validate_choice_parameters(
         raise ValueError("dataset_path must not be empty")
     if config["few_shot"] > 0 and not config["few_shot_path"]:
         raise ValueError("few_shot_path is required when few_shot > 0")
-    validate_prompt_version(
-        benchmark_definition.benchmark_name, config["prompt_version"]
-    )
     return config
 
 
@@ -167,11 +159,8 @@ def collect_sample(
         config,
         sample,
         few_shot_samples,
-        lambda: render_choice_prompt(
-            sample,
-            few_shot_samples=few_shot_samples,
-            strict_final_answer=not config["prompt_version"].endswith("-v1"),
-            answer_only=config["prompt_version"].endswith("-v3"),
+        lambda: template_adapters.render_choice_input(
+            sample, few_shot_samples, config
         ),
     )
     prompt = rendered["prompt"]
@@ -182,6 +171,7 @@ def collect_sample(
         "prompt_version": config["prompt_version"],
         "prompt_format": config["prompt_format"],
         "prompt": prompt,
+        "boundary_markers": rendered.get("boundary_markers", []),
         "choice_scores": None,
         "raw_output": None,
         "final_output": None,

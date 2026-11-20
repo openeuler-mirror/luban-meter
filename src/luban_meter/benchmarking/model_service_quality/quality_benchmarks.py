@@ -23,6 +23,7 @@ from luban_meter.core.template_contracts import TemplatePipeline
 from luban_meter.data import DatasetLoader
 from luban_meter.data.engine import select_few_shot
 from luban_meter.data.sources import sources
+from luban_meter.log import get_logger, log_parameters
 from luban_meter.runtime.http_client import http_settings
 from luban_meter.runtime.request_params import validate_request_params
 
@@ -34,6 +35,16 @@ from . import (
     text_summarization,
 )
 from .common import choice
+from .common.prompt_protocol import (
+    annotate_record,
+    example_manifest,
+    file_hash,
+    fingerprint,
+    input_fingerprint,
+    resolve_protocol,
+)
+
+logger = get_logger(__name__)
 
 
 class QualityBenchmark(ModelServiceQualityBenchmark):
@@ -62,7 +73,9 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         )
         parser = parameters.get("answer_parser") or cls.default_answer_parser
         if not cls.default_input_template:
-            if template or parser:
+            if parameters.get("input_template") or parameters.get(
+                "answer_parser"
+            ):
                 raise ValueError(
                     "this specialized workflow owns its templates"
                 )
@@ -101,7 +114,24 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
             prompt_format=cls._prompt_format(parameters),
             max_concurrency=parameters.get("max_concurrency", 8),
         )
-        return cls.domain_module.validate_parameters(values)
+        config = cls.domain_module.validate_parameters(values)
+        return cls.bind_protocol(config, parameters)
+
+    @classmethod
+    def bind_protocol(cls, config, parameters):
+        protocol = resolve_protocol(cls, parameters, config)
+        config.update(
+            _protocol=protocol, answer_parser=protocol["answer_parser"]
+        )
+        return config
+
+    @classmethod
+    def select_metrics(cls, parameters):
+        selected = super().select_metrics(parameters)
+        if (cls.default_input_template and not parameters["metrics"]
+                and parameters.get("eval_mode") == "gen"):
+            selected.append("answer_output_quality")
+        return selected
 
     @classmethod
     def validate(cls, parameters):
@@ -124,7 +154,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         self.config.update(
             {
                 key: context.parameters[key]
-                for key in ("input_format", "field_mapping", "answer_parser")
+                for key in ("input_format", "field_mapping")
             }
         )
         self.config["_pipeline"] = self.pipeline(context.parameters)
@@ -157,10 +187,52 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
                 DatasetLoader(self.config["few_shot_path"]).load()
             )
 
+        self.evaluation_metadata = {
+            **self.config["_protocol"],
+            "model": context.parameters["model"],
+            "base_url": context.parameters["base_url"],
+            "endpoint": context.parameters["endpoint"],
+            "eval_mode": self.config["eval_mode"],
+            "scorer_revision": self.domain_module.SCORER_VERSION,
+            "scoring_metrics": context.parameters["metrics"],
+            "dataset_sha256": file_hash(context.parameters["dataset_path"]),
+            "selected_samples": example_manifest(self.records),
+            "selected_samples_sha256": fingerprint(self.records),
+            "few_shot_source_sha256": file_hash(self.config["few_shot_path"])
+            if self.few_shot else None,
+            "generation": {
+                "temperature": context.parameters["temperature"],
+                "max_tokens": context.parameters["output_tokens"],
+                "stop": context.parameters["stop"],
+                "request_params": context.parameters["request_params"],
+            },
+            "selection": {
+                key: context.parameters.get(key)
+                for key in ("seed", "shuffle", "max_samples")
+            } | {
+                "few_shot": self.config.get("few_shot", 0)
+            },
+        }
+        logger.info("Effective prompt protocol: %s",
+                    log_parameters(self.config["_protocol"]))
+        # Only the bounded defaults enforce disjoint example inputs.
+        protocol = self.config["_protocol"]
+        bounded = (
+            protocol["prompt_source"] == "builtin"
+            and self.config["eval_mode"] == "gen"
+            and protocol["input_template"] in ("choice", "summarization")
+        )
+        if bounded and self.few_shot:
+            selected = {input_fingerprint(row) for row in self.records}
+            for record in self.records:
+                if any(input_fingerprint(row) in selected
+                       for row in self.examples_for(record)):
+                    raise ValueError("few-shot inputs overlap test inputs")
+
         if self.config["_pipeline"]:
             for record in self.records:
                 self.config["_pipeline"].render(
-                    record, self.few_shot, self.config
+                    record, self.examples_for(record), self.config
                 )
 
     def close(self):
@@ -171,9 +243,20 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
         return iter(self.records)
 
     def evaluate(self, sample, context):
-        return self.domain_module.collect_sample(
+        record = self.domain_module.collect_sample(
             self.client, sample, self.config
         )
+        return self.finish_record(record, sample, [])
+
+    def examples_for(self, sample):
+        return self.few_shot[:self.config.get("few_shot", 0)]
+
+    def finish_record(self, record, sample, examples):
+        rendered = {
+            "prompt": record.get("prompt", record.get("text", "")),
+            "boundary_markers": record.get("boundary_markers", []),
+        }
+        return annotate_record(record, sample, examples, self.config, rendered)
 
     def metadata(self, context):
         return {
@@ -182,6 +265,7 @@ class QualityBenchmark(ModelServiceQualityBenchmark):
             "model": context.parameters["model"],
             "eval_mode": self.config["eval_mode"],
             "template": context.parameters.get("template"),
+            "evaluation": self.evaluation_metadata,
         }
 
 
@@ -219,18 +303,24 @@ class ChoiceBenchmark(QualityBenchmark):
             max_tokens=parameters["output_tokens"],
             prompt_format=cls._prompt_format(parameters),
         )
-        return module.validate_choice_parameters(values, definition)
+        return cls.bind_protocol(
+            module.validate_choice_parameters(values, definition), parameters
+        )
 
-    def evaluate(self, sample, context):
-        examples = select_few_shot(
+    def examples_for(self, sample):
+        return select_few_shot(
             self.few_shot,
             "subject",
             sample.get("subject"),
             self.config["few_shot"],
         )
-        return self.domain_module.collect_sample(
+
+    def evaluate(self, sample, context):
+        examples = self.examples_for(sample)
+        record = self.domain_module.collect_sample(
             self.client, sample, examples, self.config
         )
+        return self.finish_record(record, sample, examples)
 
 
 def choice_definition(name):
@@ -255,12 +345,14 @@ class FewShotQualityBenchmark(QualityBenchmark):
     }
 
     def evaluate(self, sample, context):
-        return self.domain_module.collect_sample(
+        examples = self.examples_for(sample)
+        record = self.domain_module.collect_sample(
             self.client,
             sample,
-            self.few_shot[: self.config["few_shot"]],
+            examples,
             self.config,
         )
+        return self.finish_record(record, sample, examples)
 
 
 @benchmarks.register("gsm8k")
@@ -352,9 +444,10 @@ class HumanEvalBenchmark(QualityBenchmark):
         )
 
     def evaluate(self, sample, context):
-        return self.domain_module.collect_sample(
+        record = self.domain_module.collect_sample(
             self.client, self.sandbox, self.semaphore, sample, self.config
         )
+        return self.finish_record(record, sample, [])
 
     def metadata(self, context):
         return {

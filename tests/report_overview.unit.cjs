@@ -467,6 +467,26 @@ function qualityCase(id,key,value,unit='ratio') {
     metrics:{quality:{values:{task_view:{scores:{[key]:{value,unit,sample_count:10}}}}}}};
 }
 const qualityTask=(scenario,cases)=>({name:'ability',scenario,category:'model_service_quality',cases});
+const versionOld=qualityCase('old','accuracy',.5),versionNew=qualityCase('new','accuracy',.5);
+versionOld.metrics.quality.metadata={evaluation:{prompt_version:'ceval-v3',answer_parser:'choice'}};
+versionNew.metrics.quality.metadata={evaluation:{prompt_version:'ceval-v4',answer_parser:'choice'}};
+versionOld.metrics.answer_output_quality={values:{answer_parse_rate:{value:1,unit:'ratio'}}};
+assert.equal(call('qualityComparisonGroups',[qualityTask('ceval',[versionOld,versionNew])]).length,2);
+assert.equal(call('qualityScoreMetrics',versionOld).length,1);
+const summaries=[
+  {prompt_version:'lcsts-v2',input_format_sha256:null},
+  {prompt_version:null,input_format_sha256:'custom-a'},
+  {prompt_version:null,input_format_sha256:'custom-b'},
+  null,
+].map((evaluation,i)=>{
+  const c=qualityCase('summary-'+i,'rougeL',50,'score');
+  if(evaluation)c.metrics.quality.metadata={evaluation};
+  return c;
+});
+assert.equal(call('qualityComparisonGroups',[qualityTask('lcsts',summaries)]).length,4);
+assert.equal(call('recordedPromptVersion',summaries[0]),'lcsts-v2');
+assert.equal(call('recordedPromptVersion',summaries[1]),null);
+assert.equal(context.recordedPromptVersion(summaries[3]),undefined);
 const qa=qualityCase('a','accuracy',.2),qb=qualityCase('b','accuracy',.8);
 const qf=qualityCase('failed','accuracy',.99);qf.status='failed';
 let qualityGroups=call('qualityComparisonGroups',[qualityTask('cmmlu',[qa,qb,qf])]);

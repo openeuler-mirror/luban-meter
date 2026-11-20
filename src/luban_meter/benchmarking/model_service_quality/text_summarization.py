@@ -25,7 +25,6 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
     extract_final_output,
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
-    render_lcsts_prompt,
     validate_prompt_version,
 )
 from luban_meter.benchmarking.model_service_quality.common.records import (
@@ -41,7 +40,6 @@ logger = get_logger(__name__)
 MEASUREMENT = "lcsts_rouge_online_service"
 PROTOCOL = "openai_compatible_chat_and_completions"
 SCORER_VERSION = "metrics-v1"
-LCSTS_DEFAULT_PROMPT = "阅读以下文章，并给出简短的摘要：{content}\n摘要如下："
 
 
 def validate_parameters(
@@ -113,17 +111,10 @@ def validate_parameters(
         "prompt_version": enum_value(
             parameters,
             "prompt_version",
-            ("lcsts-v1",),
-            "lcsts-v1",
+            ("lcsts-v2",),
+            "lcsts-v2",
         ),
-        "prompt_template": (
-            string_value(
-                parameters,
-                "prompt_template",
-                LCSTS_DEFAULT_PROMPT,
-            )
-            or LCSTS_DEFAULT_PROMPT
-        ),
+        "prompt_template": string_value(parameters, "prompt_template", ""),
         "max_tokens": non_negative_integer(
             parameters,
             "max_tokens",
@@ -164,6 +155,7 @@ def prepare_samples(
             raise ValueError("sample abst must be a non-empty string")
         prepared.append(
             {
+                **record,
                 "content": content.strip(),
                 "abst": abst.strip(),
             }
@@ -186,12 +178,15 @@ def collect_sample(
     try:
         rendered = template_adapters.render_input(
             config, sample, few_shot_samples,
-            lambda: render_lcsts_prompt(
-                sample, few_shot_samples=few_shot_samples,
-                template=config["prompt_template"],
+            lambda: template_adapters.render_summary_input(
+                sample, few_shot_samples, config
             ),
         )
         prompt = rendered["prompt"]
+        record.update(
+            prompt=prompt,
+            boundary_markers=rendered.get("boundary_markers", []),
+        )
         if config["prompt_format"] == "chat":
             messages = [
                 {
