@@ -35,6 +35,7 @@ from luban_meter.reporting.terminal_details import (
     SORT_FIELDS,
     render_details,
 )
+from luban_meter.utils.json_io import write_json_atomic
 from luban_meter.utils.run_id import create_run_id
 
 logger = get_logger("luban_meter.cli")
@@ -59,13 +60,22 @@ def _build_parser():
     metric_list = commands.add_parser("metrics")
     metric_list.add_argument("action", choices=("list",))
     schedule = add_parser(commands)
-    for command in ("run", "plan"):
+    for command in ("run", "plan", "search-capacity"):
         run = commands.add_parser(command, allow_abbrev=False)
-        run.add_argument("--scenario", default=argparse.SUPPRESS)
-        run.add_argument("--config", type=Path)
-        run.add_argument("--task", action="append", default=[])
+        if command == "search-capacity":
+            run.add_argument("--scenario", default="online_serving")
+            run.add_argument(
+                "--verify", action=argparse.BooleanOptionalAction,
+                default=False,
+                help="搜索出稳定档后，按该速率追加恒定负载复验运行",
+            )
+        else:
+            run.add_argument("--scenario", default=argparse.SUPPRESS)
+            run.add_argument("--config", type=Path)
+            run.add_argument("--task", action="append", default=[])
         run.add_argument("--result-dir", type=Path, default=Path("runs"))
-        run.add_argument("--fail-fast", action="store_true")
+        if command != "search-capacity":
+            run.add_argument("--fail-fast", action="store_true")
         run.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
                          default=argparse.SUPPRESS,
                          help="终端和文件日志级别")
@@ -151,9 +161,12 @@ def main(argv=None):
         else:
             positional.append(token)
     command = positional[0] if positional else None
-    run_id = create_run_id("run" if command == "run" else "cli")
-    fallback = (Path(options.get("--result-dir", "runs")) / run_id / "log"
-                if command == "run" else None)
+    prefix = {"run": "run", "search-capacity": "search"}.get(command, "cli")
+    run_id = create_run_id(prefix)
+    fallback = (
+        Path(options.get("--result-dir", "runs")) / run_id / "log"
+        if command in ("run", "search-capacity") else None
+    )
     level = options.get("--log-level", "info")
     with configure_logging(
         resolve_log_dir(options.get("--log-dir"), fallback=fallback),
@@ -170,6 +183,218 @@ def main(argv=None):
         add_log_secrets(secrets)
         logger.info("Parsed command and options: %s", parsed)
         return _execute(args, schema, run_id, log_file)
+
+
+def _capacity_metric(result):
+    """Find the first successful capacity_search metric in a run."""
+    for task in result.get("tasks", []):
+        for case in task.get("cases", []):
+            metric = (case.get("metrics") or {}).get("capacity_search")
+            if metric and metric.get("status") == "success":
+                return task["name"], case, metric
+    return None, None, None
+
+
+def _render_conclusion(conclusion):
+    lines = ["容量搜索（capacity search）结论"]
+    status = conclusion.get("status", "unknown")
+    lines.append(f"  状态: {status}")
+    rate = conclusion.get("max_stable_request_rate") or {}
+    if rate.get("value") is not None:
+        lines.append(
+            f"  最大稳定 Request Rate: {rate['value']} {rate['unit']}"
+        )
+    stage = conclusion.get("max_stable_stage")
+    if stage and stage.get("value") is not None:
+        lines.append(f"  最大稳定阶段: {stage['value']}")
+    reason = (conclusion.get("search") or {}).get("reason") or (
+        conclusion.get("reason")
+    )
+    if reason:
+        lines.append(f"  原因: {reason}")
+    verification = conclusion.get("verification")
+    if verification:
+        lines.append(
+            f"  复验: {verification['status']} @ {verification['rate']} "
+            "req/s"
+        )
+    stages = conclusion.get("stages") or []
+    if stages:
+        lines.append("  阶段判定:")
+        lines.append(
+            "    阶段  速率(req/s)  准入  成功  失败  超时  "
+            "SLO达标率  判定"
+        )
+        for entry in stages:
+            satisfied = (entry.get("slo") or {}).get("satisfied_rate") or {}
+            slo_text = (
+                str(satisfied["value"])
+                if satisfied.get("value") is not None else "N/A"
+            )
+            lines.append(
+                "    {:>4}  {:>10}  {:>4}  {:>4}  {:>4}  {:>4}  "
+                "{:>8}  {}".format(
+                    entry["stage_index"],
+                    entry["offered_request_rate"]["value"],
+                    entry["admitted_requests"]["value"],
+                    entry["successful_requests"]["value"],
+                    entry["failed_requests"]["value"],
+                    entry["timeout_requests"]["value"],
+                    slo_text,
+                    entry["verdict"],
+                )
+            )
+    judgment = conclusion.get("judgment")
+    if judgment:
+        lines.append(
+            "  判据: SLO达标率>={} 成功率>={} 超时率<={} "
+            "阶段最小样本>={}".format(
+                judgment["stage_min_slo_rate"]["value"],
+                judgment["stage_min_success_rate"]["value"],
+                judgment["stage_max_timeout_rate"]["value"],
+                judgment["stage_min_requests"]["value"],
+            )
+        )
+    if conclusion.get("result"):
+        lines.append(f"  结果: {conclusion['result']}")
+    return "\n".join(lines)
+
+
+def _run_capacity_plan(plan, args, run_id):
+    add_log_secrets(task_secrets(plan["tasks"]))
+    observation = (
+        {"url": args.observe_url, "interval": args.observe_interval}
+        if args.observe
+        else None
+    )
+    return RunCoordinator().run(
+        plan, args.result_dir, fail_fast=False, observation=observation,
+        progress=TerminalProgress(plan), log_level=args.log_level,
+        log_dir=args.log_dir, run_id=run_id,
+    )
+
+
+def _verify_capacity(base, plan, conclusion, args, run_id):
+    rate = conclusion["search"]["max_stable_request_rate"]["value"]
+    if rate is None:
+        return conclusion
+    parameters = plan["tasks"][0]["cases"][0]["parameters"]
+    duration = 2.0 * float(parameters["step_stage_duration"])
+    min_requests = int(parameters["stage_min_requests"])
+    verify_base = dict(base)
+    verify_base.update(
+        profile="step",
+        step_start_rate=rate,
+        step_rate_increment=0.0,
+        step_stage_duration=duration,
+        step_max_rate=rate,
+        num_requests=max(min_requests, math.ceil(rate * duration)),
+        # The search run just warmed the service; sustained-load
+        # confirmation needs no separate warmup window.
+        num_warmups=0,
+    )
+    logger.info(
+        "Capacity verification started: rate=%s req/s duration=%s s",
+        rate, duration,
+    )
+    verify_plan = build_plan(verify_base, None)
+    result, directory = _run_capacity_plan(
+        verify_plan, args, create_run_id("verify"),
+    )
+    task_name, case, metric = _capacity_metric(result)
+    if metric is None:
+        verification = {
+            "status": "failed",
+            "rate": rate,
+            "run_id": result["id"],
+            "result": str(directory / "result.json"),
+            "reason": (
+                "capacity_search metric unavailable; inspect the "
+                "verification run result and log"
+            ),
+        }
+    else:
+        stage = metric["values"]["stages"][0]
+        verification = {
+            "status": (
+                "confirmed" if stage["verdict"] == "stable" else "unstable"
+            ),
+            "rate": rate,
+            "duration_s": duration,
+            "run_id": result["id"],
+            "result": str(directory / "result.json"),
+            "stage": stage,
+        }
+    logger.info(
+        "Capacity verification finished: status=%s rate=%s",
+        verification["status"], rate,
+    )
+    return {**conclusion, "verification": verification}
+
+
+def _search_capacity(args, schema, run_id, log_file):
+    values = vars(args)
+    base = {
+        key: values[key] for key in (*schema, "scenario") if key in values
+    }
+    if base.get("profile") is not None and base["profile"] != "step":
+        raise ValueError("search-capacity uses the step profile")
+    base["profile"] = "step"
+    if (
+        not math.isfinite(args.observe_interval)
+        or args.observe_interval <= 0
+    ):
+        raise ValueError("observe-interval must be positive")
+    if args.observe_url and not args.observe:
+        raise ValueError("observe-url requires --observe prometheus")
+    plan = build_plan(base, None, observe=bool(args.observe))
+    logger.info("Capacity search started: cases=%s", plan["case_count"])
+    result, directory = _run_capacity_plan(plan, args, run_id)
+    task_name, case, metric = _capacity_metric(result)
+    if metric is None:
+        conclusion = {
+            "kind": "capacity_search",
+            "status": "failed",
+            "run_id": result["id"],
+            "reason": (
+                "capacity_search metric unavailable; inspect the case "
+                "status and log for collection or service failures"
+            ),
+            "result": str(directory / "result.json"),
+        }
+    else:
+        search = metric["values"]["search"]
+        conclusion = {
+            "kind": "capacity_search",
+            "status": search["status"],
+            "run_id": result["id"],
+            "task": task_name,
+            "case": case["id"],
+            "max_stable_request_rate": search["max_stable_request_rate"],
+            "max_stable_stage": search.get("max_stable_stage"),
+            "search": search,
+            "judgment": metric["values"]["judgment"],
+            "stages": metric["values"]["stages"],
+            "result": str(directory / "result.json"),
+        }
+    if args.verify and conclusion["status"] == "found":
+        conclusion = _verify_capacity(base, plan, conclusion, args, run_id)
+    write_json_atomic(directory / "capacity-search.json", conclusion)
+    logger.info("Capacity search conclusion saved: %s",
+                directory / "capacity-search.json")
+    print(_render_conclusion(conclusion))
+    logger.info(
+        "Search-capacity completed: status=%s result=%s log=%s",
+        conclusion["status"], directory / "result.json", log_file,
+    )
+    verification_status = (conclusion.get("verification") or {}).get(
+        "status"
+    )
+    if conclusion["status"] in ("found", "bounded") and (
+        verification_status not in ("unstable", "failed")
+    ):
+        return 0
+    return 1
 
 
 def _execute(args, schema, run_id, log_file):
@@ -251,6 +476,8 @@ def _execute(args, schema, run_id, log_file):
                     "完整报告含已保存的原始输入输出；未采集字段不补造。"
                 )
             return 0
+        if args.command == "search-capacity":
+            return _search_capacity(args, schema, run_id, log_file)
         values = vars(args)
         base = {
             key: values[key] for key in (*schema, "scenario") if key in values

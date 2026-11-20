@@ -24,6 +24,7 @@ from luban_meter.runtime.request_params import (
     validate_request_params,
 )
 
+from .capacity_search import select_capacity_metrics
 from .common.lengths import assess_lengths
 from .common.phase_timing import select_phase_metrics
 from .common.time_windows import TrendWindowParameter
@@ -108,8 +109,11 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
 
     @classmethod
     def select_metrics(cls, parameters):
-        return select_phase_metrics(
-            parameters, super().select_metrics(parameters),
+        return select_capacity_metrics(
+            parameters,
+            select_phase_metrics(
+                parameters, super().select_metrics(parameters),
+            ),
         )
 
     @classmethod

@@ -5,6 +5,10 @@ import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass(frozen=True)
 class RequestPlan:
@@ -99,6 +103,45 @@ class AsyncGammaStrategy(_IntervalStrategy):
     def interval(self):
         shape = self.parameters["burstiness"]
         return self.random.gammavariate(shape, 1.0 / (self.rate * shape))
+
+
+class StepStrategy(SchedulingStrategy):
+    """Escalate the offered rate across fixed-duration planned stages.
+
+    Stage k spans planned offsets ``[k*stage_duration,
+    (k+1)*stage_duration)`` and offers ``min(start_rate + k*increment,
+    max_rate)`` requests per second. The time axis is deterministic and
+    never depends on completion times; an increment of zero keeps the
+    rate constant for staged confirmation runs.
+    """
+
+    def __init__(self, parameters):
+        self.start_rate = float(parameters["step_start_rate"])
+        self.increment = float(parameters["step_rate_increment"])
+        self.stage_duration = float(parameters["step_stage_duration"])
+        max_rate = parameters.get("step_max_rate")
+        self.max_rate = None if max_rate is None else float(max_rate)
+        self.next_offset = 0.0
+        self._reported_stage = None
+
+    def stage_rate(self, offset):
+        """Return the stage index and offered rate at a planned offset."""
+        stage = math.floor(offset / self.stage_duration)
+        rate = self.start_rate + stage * self.increment
+        if self.max_rate is not None:
+            rate = min(rate, self.max_rate)
+        return stage, rate
+
+    def plan(self, metadata):
+        offset = self.next_offset
+        stage, rate = self.stage_rate(offset)
+        if stage != self._reported_stage:
+            self._reported_stage = stage
+            logger.info(
+                "Step stage planned: index=%s rate=%s req/s", stage, rate
+            )
+        self.next_offset = offset + 1.0 / rate
+        return RequestPlan(offset)
 
 
 def rate_strategy(parameters):

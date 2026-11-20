@@ -11,6 +11,7 @@ from luban_meter.runtime.scheduling_strategies import (
     AsyncPoissonStrategy,
     ConcurrentStrategy,
     ImmediateStrategy,
+    StepStrategy,
     SynchronousStrategy,
     ThroughputStrategy,
     TraceReplayStrategy,
@@ -39,6 +40,10 @@ class Profile(ABC):
         for base in reversed(cls.__mro__):
             schema.update(base.__dict__.get("parameters", {}))
         return schema
+
+    @classmethod
+    def validate(cls, parameters):
+        """Check profile parameter relationships at planning time."""
 
     @abstractmethod
     def create_strategy(self):
@@ -92,6 +97,54 @@ class ConstantProfile(_ArrivalProfile):
 class PoissonProfile(_ArrivalProfile):
     def create_strategy(self):
         return AsyncPoissonStrategy(self.parameters)
+
+
+@profiles.register("step")
+class StepProfile(Profile):
+    """Deterministic staged rate escalation for capacity search."""
+
+    summary_fields = (
+        "max_concurrency",
+        "step_start_rate",
+        "step_rate_increment",
+        "step_stage_duration",
+        "step_max_rate",
+    )
+
+    parameters = {
+        "step_start_rate": Parameter(
+            float, 1.0, minimum=1e-12, matrix=True
+        ),
+        "step_rate_increment": Parameter(
+            float, 1.0, minimum=0.0, matrix=True
+        ),
+        "step_stage_duration": Parameter(
+            float, 30.0, minimum=0.001, matrix=True
+        ),
+        "step_max_rate": Parameter(float, None, minimum=1e-12, matrix=True),
+        "max_concurrency": Parameter(int, 32, minimum=1, matrix=True),
+        "stage_min_requests": Parameter(int, 20, minimum=1),
+        "stage_min_slo_rate": Parameter(
+            float, 0.99, minimum=0.0, maximum=1.0
+        ),
+        "stage_min_success_rate": Parameter(
+            float, 0.99, minimum=0.0, maximum=1.0
+        ),
+        "stage_max_timeout_rate": Parameter(
+            float, 0.01, minimum=0.0, maximum=1.0
+        ),
+    }
+
+    @classmethod
+    def validate(cls, parameters):
+        max_rate = parameters.get("step_max_rate")
+        if max_rate is None:
+            return
+        if float(max_rate) < float(parameters["step_start_rate"]):
+            raise ValueError("step_max_rate must be >= step_start_rate")
+
+    def create_strategy(self):
+        return StepStrategy(self.parameters)
 
 
 @profiles.register("concurrent")

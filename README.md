@@ -146,6 +146,7 @@ C-Eval/CMMLU的`gen`、GSM8K、LCSTS和SQuAD支持两种类型。
 | `throughput` | `--max-concurrency 32` | 在并发容量内持续尽快发送，无到达速率等待 |
 | `replay` | `--replay-speed 2 --max-concurrency 32` | 按轨迹时间的1/2安排请求，详见轨迹回放 |
 | `synchronous` | 无需额外参数 | 请求逐个执行，并发容量固定为1 |
+| `step` | `--step-start-rate 2 --step-rate-increment 2 --step-stage-duration 30` | 单Case内按阶段线性升压，速率封顶于`--step-max-rate`，详见阶梯加压与自动容量搜索 |
 
 例如，将在线命令的负载参数改为`--profile throughput --max-concurrency 32`，
 即可执行有界尽力发送；改为`--profile synchronous`即可串行执行。
@@ -176,6 +177,84 @@ luban-meter run --scenario offline_vllm_engine \
 ```
 
 最后一批不足8条时保存实际批大小。Engine内部时间和客户端时间分别计算，不混为同一种TTFT。
+
+## 阶梯加压与自动容量搜索
+
+`step`负载在单个Case内按阶段升压：阶段k覆盖计划时间
+`[k×step_stage_duration, (k+1)×step_stage_duration)`，供压速率为
+`min(step_start_rate + k×step_rate_increment, step_max_rate)`。计划时间轴由
+`plan()`确定性生成，不依赖完成时间，同参数重放得到相同计划序列；请求事实保存
+`scheduled_offset_s`，阶段归属与分阶段指标可从原始事实离线复算。
+`step_rate_increment=0`表示恒定速率，供复验运行使用。
+
+| CLI参数 | 任务JSON字段 | 默认值 | 含义 |
+|---|---|---|---|
+| `--step-start-rate` | `step_start_rate` | 1.0 | 阶段0供压速率（req/s），必须为正 |
+| `--step-rate-increment` | `step_rate_increment` | 1.0 | 每阶段递增量（req/s），≥0 |
+| `--step-stage-duration` | `step_stage_duration` | 30.0 | 每阶段时长（秒），必须为正 |
+| `--step-max-rate` | `step_max_rate` | null | 速率上限；null不封顶 |
+| `--stage-min-requests` | `stage_min_requests` | 20 | 阶段最小准入请求数，低于判`insufficient_samples` |
+| `--stage-min-slo-rate` | `stage_min_slo_rate` | 0.99 | 阶段SLO达标率下限 |
+| `--stage-min-success-rate` | `stage_min_success_rate` | 0.99 | 阶段成功率下限 |
+| `--stage-max-timeout-rate` | `stage_max_timeout_rate` | 0.01 | 阶段超时率上限 |
+
+前四项可按Case矩阵变化；`step_max_rate`必须不小于`step_start_rate`，非法组合在
+规划阶段报错。多轮与异步Engine等请求级Profile场景均可选择`step`。
+
+### 阶段判定与capacity_search指标
+
+选择`--profile step`且未显式配置`metrics`时，在线服务场景默认追加`capacity_search`
+指标；显式metrics列表时以显式为准，非step负载显式选择该指标报错。指标只读取已
+保存的正式请求事实：阶段归属按`scheduled_offset_s`；SLO沿用`--goodput`阈值与
+GuideLLM口径（失败请求计入已判定分母，`tpot`约束ITL）；成功率为阶段内成功/准入
+请求数；超时失败指错误类型名含"timeout"的已保存请求，其余失败单独计数。
+
+阶段判定规则：准入数达到`stage_min_requests`且三条判据全部通过为`stable`；
+任一判据不达标为`unstable`并记录`violated_criteria`；样本不足为
+`insufficient_samples`；配置了SLO但该阶段没有任何可判定结果为`undetermined`。
+搜索结论保存在`metrics.capacity_search.values`：
+
+- `stages`：逐阶段的速率、窗口、准入/成功/失败/超时计数、SLO计数与达标率、判定；
+- `judgment`：判据阈值、SLO配置与各口径定义的快照；
+- `search`：`status`（`found`/`not_found`/`bounded`/`inconclusive`）、
+  `max_stable_request_rate`（首个unstable之前的最后稳定档速率；第一档即失稳为
+  `not_found`；全部稳定且达到`step_max_rate`为`bounded`，容量至少为该速率；
+  预算耗尽或样本不足为`inconclusive`，只给出下界）及原因字段。
+
+### search-capacity命令
+
+```bash
+luban-meter search-capacity \
+  --scenario online_serving --model Qwen3.5-9B \
+  --base-url http://127.0.0.1:8000 --tokenizer /data/models/Qwen3.5-9B \
+  --input-tokens 1024 --output-tokens 128 \
+  --step-start-rate 2 --step-rate-increment 2 \
+  --step-stage-duration 30 --step-max-rate 64 \
+  --num-requests 5000 --max-duration 900 --num-warmups 8 \
+  --goodput ttft:1000 tpot:50 e2el:10000 --result-dir runs
+```
+
+该命令强制使用step负载，其余参数与`run`一致。执行完成后在运行目录写
+`capacity-search.json`（搜索结论、判据、逐阶段证据与结果路径），并在终端打印
+结论摘要。退出码：`found`/`bounded`为0（复验失稳或失败为1）；
+`not_found`/`inconclusive`/指标缺失为1；参数错误为2。
+
+`--verify`在结论为`found`时追加恒定速率复验：以最大稳定速率持续
+`2×step_stage_duration`，请求数按速率×时长计算，`num_warmups=0`（搜索轮刚
+加载过服务）。复验结果写入结论的`verification`（`confirmed`/`unstable`/
+`failed`），复验运行使用独立的`runs/verify-*/`目录。
+
+任务JSON示例见[examples/tasks-step-search.json](examples/tasks-step-search.json)，
+可用`luban-meter run --config`执行阶梯加压并产出`capacity_search`指标与报告。
+
+阅读结果时注意：
+
+- 阶梯Case的整体混合指标（TTFT均值等）混合了所有档位，不可与恒定速率Case直接
+  比较；分阶段统计才是有效输出。
+- 阶段归属按计划时间划分，过载时在途请求的完成时间可能落入后续阶段，属预期。
+- 连续加压下高档位结果受前序阶段服务状态影响；结论是"当前判据下的最大稳定
+  Request Rate"，不是服务极限吞吐。
+- 未配置`--goodput`时判定仅依据成功率与超时率。
 
 本地真实输入可选择`json`、`jsonl`、`csv`或`sharegpt`，例如：
 
