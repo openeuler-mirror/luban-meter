@@ -15,7 +15,7 @@ def read_trace(path, *, skip_invalid=False):
     with path.open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         names = reader.fieldnames
-        if not names or len(names) != len(set(names)):
+        if not names or "" in names or len(names) != len(set(names)):
             raise ValueError(f"{path}: trace requires unique named columns")
         for row in reader:
             converted = {}

@@ -1215,6 +1215,7 @@ git diff --check
 ## BurstGPT长度采样与轨迹回放
 
 CSV使用`timestamp,input_token,output_token`列，时间单位为秒，长度必须为正整数。
+如果 CSV 表头有空列名或重复列名，加载器会在读取数据行前报错。
 默认遇到非法记录立即报错，包含文件、行号、字段和值；`--skip-invalid`允许跳过，
 准备摘要中保留跳过数量和原因。跳过不改变其他记录的原始时间戳。
 
