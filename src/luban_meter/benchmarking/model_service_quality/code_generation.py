@@ -29,9 +29,6 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
     extract_final_output,
     extract_humaneval_completion,
 )
-from luban_meter.benchmarking.model_service_quality.common.prompts import (
-    validate_prompt_version,
-)
 from luban_meter.benchmarking.model_service_quality.common.records import (
     object_list,
     scalar,
@@ -46,7 +43,6 @@ logger = get_logger(__name__)
 
 
 MEASUREMENT = "humaneval_pass_at_1_online_service"
-PROTOCOL = "humaneval-completion-v1"
 TRANSPORT = "openai_compatible_completions"
 SCORER_VERSION = "humaneval-scorer-v1"
 SANDBOX_PROTOCOL = "humaneval-sandbox-v1"
@@ -71,9 +67,6 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
         "max_samples": positive_integer(parameters, "max_samples", 164),
         "shuffle": boolean_value(parameters, "shuffle", False),
         "seed": non_negative_integer(parameters, "seed", 42),
-        "prompt_version": non_empty_string(
-            parameters, "prompt_version", "humaneval-completion-v1"
-        ),
         "max_tokens": positive_integer(parameters, "max_tokens", 1024),
         "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -127,7 +120,6 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
             "allow_host_fallback": False,
         }
     )
-    validate_prompt_version("humaneval", config["prompt_version"])
     if not config["docker_host"].startswith("unix://"):
         raise ValueError("docker_host must use a unix:// socket")
     return config
@@ -194,7 +186,6 @@ def collect_sample(
         "task_id": task_id,
         "sample_id": 0,
         "mode": "gen",
-        "prompt_version": config["prompt_version"],
         "prompt_format": "base",
         "prompt": prompt,
         "raw_output": None,

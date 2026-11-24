@@ -131,4 +131,5 @@ def test_quality_template_configuration_runs_in_worker(service, tmp_path):
     assert case["status"] == "success", case
     raw = json.loads(Path(case["raw"]).read_text())
     assert raw["samples"][0]["facts"]["correct"]
+    assert "prompt_version" not in raw["samples"][0]["facts"]
     assert Handler.posts[-1][1]["prompt"] == "Question: pick"

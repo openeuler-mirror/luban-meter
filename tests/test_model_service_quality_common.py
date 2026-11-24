@@ -134,12 +134,6 @@ def test_render_choice_ppl() -> None:
     assert prompt.endswith("答案：")
 
 
-def test_validate_prompt_version() -> None:
-    prompts.validate_prompt_version("ceval", "ceval-v1")
-    with pytest.raises(ValueError):
-        prompts.validate_prompt_version("ceval", "unknown")
-
-
 def test_dataset_loading_and_sampling(tmp_path: Path) -> None:
     file = tmp_path / "data.jsonl"
     lines = [

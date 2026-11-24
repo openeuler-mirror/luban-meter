@@ -42,32 +42,32 @@ def task(category="generation_performance"):
             "status": "success", "cases": [], "kind": "task"}
 
 
-def test_effective_prompt_versions_are_separate_comparison_groups():
-    from luban_meter.reporting.best_summary import quality_protocol
-
-    first, second = record(), record(2)
-    for case, version in ((first, "ceval-v3"), (second, "ceval-v4")):
-        case["parameters"]["prompt_version"] = ""
+def test_historical_templates_are_grouped_without_displaying_old_labels():
+    cases = [record(), record(2), record(3)]
+    for case, version in zip(cases, ("ceval-v3", "ceval-v4", None)):
+        evidence = {"input_template": "choice", "prompt_source": "builtin",
+                    "answer_parser": "choice"}
+        if version:
+            evidence["prompt_version"] = version
         case["metrics"] = {"choice_accuracy": {
-            "metadata": {"evaluation": {
-                "prompt_version": version, "answer_parser": "choice",
-            }},
+            "metadata": {"evaluation": evidence},
             "values": {"accuracy": {"value": 0.5, "unit": "ratio"}},
         }}
-    assert quality_protocol(first)["prompt_version"] == "ceval-v3"
     t = task("model_service_quality")
-    text = "\n".join(quality_lines([(t, first), (t, second)]))
-    assert "Prompt ceval-v3" in text
-    assert "Prompt ceval-v4" in text
-    assert text.count("条件组") == 2
+    text = "\n".join(quality_lines([(t, case) for case in cases]))
+    assert "ceval-v" not in text
+    assert text.count("输入模板 choice · 来源 builtin · 解析器 choice") == 3
+    assert text.count("条件组") == 3
 
 
 def test_summary_prompt_grouping_preserves_historical_identity(tmp_path):
     t = task("model_service_quality")
     identities = (
-        {"prompt_version": "lcsts-v2", "input_format_sha256": None},
-        {"prompt_version": None, "input_format_sha256": "custom-a"},
-        {"prompt_version": None, "input_format_sha256": "custom-b"},
+        {"input_template": "summarization", "prompt_source": "builtin"},
+        {"input_template": "format_string", "prompt_source": "custom",
+         "input_format_sha256": "custom-a"},
+        {"input_template": "format_string", "prompt_source": "custom",
+         "input_format_sha256": "custom-b"},
         None,
     )
     for index, identity in enumerate(identities, 1):
@@ -84,8 +84,9 @@ def test_summary_prompt_grouping_preserves_historical_identity(tmp_path):
     before = copy.deepcopy(saved)
     text = "\n".join(quality_lines([(saved, c) for c in saved["cases"]]))
     assert text.count("条件组") == 4
-    assert text.count("Prompt lcsts-v2") == 1
-    assert text.count("Prompt 未记录/自定义") == 3
+    assert text.count("输入模板 summarization · 来源 builtin") == 1
+    assert text.count("输入模板 format_string · 来源 custom") == 2
+    assert text.count("输入模板 未记录 · 来源 未记录") == 1
     assert saved == before
 
 

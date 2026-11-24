@@ -28,7 +28,6 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_math_prompt,
-    validate_prompt_version,
 )
 from luban_meter.benchmarking.model_service_quality.common.records import (
     number_value,
@@ -65,9 +64,6 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
         "prompt_format": enum_value(
             parameters, "prompt_format", ("chat", "base"), "chat"
         ),
-        "prompt_version": string_value(
-            parameters, "prompt_version", "gsm8k-v1"
-        ),
         "max_tokens": positive_integer(parameters, "max_tokens", 512),
         "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -77,7 +73,6 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("dataset_path must not be empty")
     if config["few_shot"] > 0 and not config["few_shot_path"]:
         raise ValueError("few_shot_path is required when few_shot > 0")
-    validate_prompt_version("gsm8k", config["prompt_version"])
     return config
 
 
@@ -112,7 +107,6 @@ def collect_sample(
         "id": sample_id,
         "subject": "math",
         "mode": config["eval_mode"],
-        "prompt_version": config["prompt_version"],
         "prompt_format": config["prompt_format"],
         "prompt": prompt,
         "raw_output": None,

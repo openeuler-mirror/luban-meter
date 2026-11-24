@@ -17,25 +17,28 @@ PROTOCOL_KEYS = (
     "data", "dataset_path", "split", "eval_mode", "few_shot",
     "few_shot_path", "input_template", "input_format", "answer_parser",
     "template", "field_mapping", "max_samples", "num_requests", "seed",
-    "shuffle",
-    "prompt_version", "endpoint", "temperature", "output_tokens", "stop",
+    "shuffle", "endpoint", "temperature", "output_tokens", "stop",
     "request_params",
 )
 
 
 def quality_protocol(case):
     """Use recorded effective identity; never infer historical defaults."""
-    protocol = {key: case.get("parameters", {}).get(key)
-                for key in PROTOCOL_KEYS}
+    parameters = case.get("parameters", {})
+    protocol = {key: parameters.get(key) for key in PROTOCOL_KEYS}
+    historical = parameters.get("prompt_version")
     for metric in case.get("metrics", {}).values():
         evaluation = (metric.get("metadata") or {}).get("evaluation")
         if evaluation:
             protocol.update({key: evaluation.get(key) for key in (
-                "prompt_version", "input_template", "answer_parser",
+                "prompt_source", "input_template", "answer_parser",
                 "parser_revision", "input_format_sha256",
                 "selected_samples_sha256", "few_shot_source_sha256",
             ) if key in evaluation})
+            historical = evaluation.get("prompt_version", historical)
             break
+    if historical:
+        protocol["prompt_version"] = historical
     return protocol
 
 
@@ -207,9 +210,10 @@ def quality_lines(records):
     for index, (task, parameters, metrics) in enumerate(groups.values(), 1):
         dataset = parameters.get("dataset_path") or parameters.get("data")
         yield f"{task['name']} · 条件组 {index} · 数据集 {dataset or 'N/A'}"
-        version = parameters.get("prompt_version") or "未记录/自定义"
+        template = parameters.get("input_template") or "未记录"
+        source = parameters.get("prompt_source") or "未记录"
         parser = parameters.get("answer_parser") or "未记录/不适用"
-        yield f"Prompt {version} · 解析器 {parser}"
+        yield f"输入模板 {template} · 来源 {source} · 解析器 {parser}"
         if not metrics:
             yield "最佳得分: N/A（无可用核心得分）"
         for (_, path, unit, direction), points in metrics.items():

@@ -22,7 +22,6 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_wikitext_prompt,
-    validate_prompt_version,
 )
 from luban_meter.benchmarking.model_service_quality.common.records import (
     number_value,
@@ -95,9 +94,6 @@ def validate_parameters(
         "prompt_format": enum_value(
             parameters, "prompt_format", ("base",), "base"
         ),
-        "prompt_version": string_value(
-            parameters, "prompt_version", "wikitext-v1"
-        ),
         "max_context_length": max_context_length,
         "stride": _nullable_stride(parameters, max_context_length),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -106,7 +102,6 @@ def validate_parameters(
     fixed_value(parameters, "few_shot", 0)
     if not config["dataset_path"]:
         raise ValueError("dataset_path must not be empty")
-    validate_prompt_version("wikitext", config["prompt_version"])
     return config
 
 
@@ -288,7 +283,6 @@ def collect_sample(
         "id": sample_id,
         "mode": "loss",
         "prompt_format": "base",
-        "prompt_version": config["prompt_version"],
         "text": text,
         "raw_text": raw_text,
         "bytes": byte_count,

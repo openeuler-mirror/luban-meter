@@ -69,7 +69,6 @@ def test_strict_choice_parser(text, expected):
     }
 
 
-@pytest.mark.parametrize("name", ["ceval", "cmmlu"])
 @pytest.mark.parametrize(
     ("text", "expected", "status"),
     [
@@ -78,23 +77,20 @@ def test_strict_choice_parser(text, expected):
         ("答案：A\n答案：D", None, "parse_failed"),
     ],
 )
-def test_choice_collection_keeps_raw_output(name, text, expected, status):
+def test_choice_collection_keeps_raw_output(text, expected, status):
     class Client:
         def chat(self, messages, **kwargs):
             assert "只输出一行，格式为“答案：X”" in messages[0]["content"]
             assert kwargs["stop"] == []
             return {"text": text, "input_tokens": 100, "output_tokens": 50}
 
-    definition = choice.ChoiceBenchmarkDefinition(name, name, name)
     config = choice.validate_choice_parameters(
         {
             "dataset_path": "unused.jsonl",
             "few_shot": 0,
             "eval_mode": "gen",
         },
-        definition,
     )
-    assert config["prompt_version"] == f"{name}-v4"
     sample = {
         "id": "anatomy-43",
         "question": "全身最复杂的关节是",
@@ -108,8 +104,7 @@ def test_choice_collection_keeps_raw_output(name, text, expected, status):
     assert result["correct"] is (True if expected else None)
 
 
-@pytest.mark.parametrize("name", ["ceval", "cmmlu"])
-def test_choice_ppl_keeps_original_scoring_input(name):
+def test_choice_ppl_scores_each_continuation():
     sample = {
         "question": "题目", "choices": ["甲", "乙", "丙", "丁"], "answer": "B",
     }
@@ -135,10 +130,8 @@ def test_choice_ppl_keeps_original_scoring_input(name):
             "dataset_path": "unused.jsonl", "few_shot": 0,
             "eval_mode": "ppl", "prompt_format": "base",
         },
-        choice.ChoiceBenchmarkDefinition(name, name, name),
     )
     result = choice.collect_sample(Client(), sample, [example], config)
-    assert config["prompt_version"] == f"{name}-v1"
     assert result["prompt"] == expected
     assert calls == [expected + f" {letter}. {option}"
                      for letter, option in zip("ABCD", sample["choices"])]
@@ -146,8 +139,7 @@ def test_choice_ppl_keeps_original_scoring_input(name):
     assert result["correct"] is True
 
 
-@pytest.mark.parametrize("name", ["ceval", "cmmlu"])
-def test_choice_collection_preserves_generation_budget(name):
+def test_choice_collection_preserves_generation_budget():
     class Client:
         def chat(self, messages, **kwargs):
             assert kwargs["max_tokens"] == 8192
@@ -161,7 +153,6 @@ def test_choice_collection_preserves_generation_budget(name):
             "eval_mode": "gen",
             "max_tokens": 8192,
         },
-        choice.ChoiceBenchmarkDefinition(name, name, name),
     )
     sample = {
         "id": "q1",

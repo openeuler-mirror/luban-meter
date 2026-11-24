@@ -149,7 +149,6 @@ class ScoringTests(unittest.TestCase):
             ("few_shot", 1),
             ("max_samples", 0),
             ("max_samples", True),
-            ("prompt_version", "wrong"),
             ("max_concurrency", 0),
             ("request_timeout", float("nan")),
             ("temperature", 1),

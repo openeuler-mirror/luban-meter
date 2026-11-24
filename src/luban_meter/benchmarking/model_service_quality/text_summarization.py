@@ -24,9 +24,6 @@ from luban_meter.benchmarking.model_service_quality.common.parameters import (
 from luban_meter.benchmarking.model_service_quality.common.parsers import (
     extract_final_output,
 )
-from luban_meter.benchmarking.model_service_quality.common.prompts import (
-    validate_prompt_version,
-)
 from luban_meter.benchmarking.model_service_quality.common.records import (
     object_list,
     scalar,
@@ -108,12 +105,6 @@ def validate_parameters(
             ("chat", "base"),
             "chat",
         ),
-        "prompt_version": enum_value(
-            parameters,
-            "prompt_version",
-            ("lcsts-v2",),
-            "lcsts-v2",
-        ),
         "prompt_template": string_value(parameters, "prompt_template", ""),
         "max_tokens": non_negative_integer(
             parameters,
@@ -131,10 +122,6 @@ def validate_parameters(
             8,
         ),
     }
-    validate_prompt_version(
-        "lcsts",
-        config["prompt_version"],
-    )
     if config["few_shot"] > 0 and not config["few_shot_path"]:
         raise ValueError(
             "few_shot_path is required when few_shot > 0",

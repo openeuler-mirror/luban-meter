@@ -10,15 +10,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 CHOICE_LETTERS = ("A", "B", "C", "D")
-SUPPORTED_PROMPT_VERSIONS = {
-    "squad": ("squad2-gen-v1",),
-    "ceval": ("ceval-v1", "ceval-v4"),
-    "cmmlu": ("cmmlu-v1", "cmmlu-v4"),
-    "gsm8k": ("gsm8k-v1",),
-    "humaneval": ("humaneval-completion-v1",),
-    "lcsts": ("lcsts-v2",),
-    "wikitext": ("wikitext-v1",),
-}
+
 
 def render_choice_generation(sample, examples=()):
     subject = sample.get("subject") or "综合知识"
@@ -101,15 +93,6 @@ def _render_bounded(sample, examples, instruction, ending, *, choice=False):
     }
 
 
-def validate_prompt_version(benchmark_name: str, prompt_version: str) -> None:
-    allowed = SUPPORTED_PROMPT_VERSIONS.get(benchmark_name, ())
-    if prompt_version not in allowed:
-        raise ValueError(
-            f"prompt_version must be one of {list(allowed)} "
-            f"for {benchmark_name}"
-        )
-
-
 def render_choice_question(sample: Mapping[str, Any]) -> str:
     """Render question and choices lines for a four-choice sample."""
     question = str(sample["question"]).strip()
@@ -129,7 +112,7 @@ def render_choice_ppl(
     instruction_prefix: str = "以下是中国关于",
     instruction_suffix: str = "的单项选择题，请选出其中的正确答案。",
 ) -> str:
-    """Render the original choice continuation for logprob scoring."""
+    """Render the choice continuation for logprob scoring."""
     subject = str(sample.get("subject") or "综合知识")
     header = f"{instruction_prefix}{subject}{instruction_suffix}\n"
     blocks: list[str] = []

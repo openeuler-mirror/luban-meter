@@ -18,14 +18,6 @@ from luban_meter.benchmarking.model_service_quality.common import (
 from luban_meter.benchmarking.model_service_quality.common import choice_result
 from tests.domain_runtime import collect_domain
 
-SPEC = cmmlu.ChoiceBenchmarkDefinition(
-    "cmmlu", "cmmlu_choice_accuracy_online_service", "cmmlu"
-)
-
-
-def validate_parameters(parameters):
-    return cmmlu.validate_choice_parameters(parameters, SPEC)
-
 
 def process_result(raw):
     return choice_result.process_choice_result(raw, "cmmlu")
@@ -69,17 +61,14 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
 
 
 def test_validate_parameters(tmp_path: Path) -> None:
-    config = validate_parameters(base_parameters(tmp_path))
+    config = cmmlu.validate_choice_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "ppl"
-    assert config["prompt_version"] == "cmmlu-v1"
     with pytest.raises(ValueError):
-        validate_parameters(
-            {**base_parameters(tmp_path), "prompt_version": "ceval-v1"}
+        cmmlu.validate_choice_parameters(
+            {**base_parameters(tmp_path), "temperature": 1.0}
         )
     with pytest.raises(ValueError):
-        validate_parameters({**base_parameters(tmp_path), "temperature": 1.0})
-    with pytest.raises(ValueError):
-        validate_parameters(
+        cmmlu.validate_choice_parameters(
             {**base_parameters(tmp_path), "prompt_format": "chat"}
         )
 

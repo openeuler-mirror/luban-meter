@@ -1,4 +1,4 @@
-"""Rendering contracts for the default bounded prompts."""
+"""Rendering contracts for choice and summary prompts."""
 
 from luban_meter.benchmarking.model_service_quality.common import prompts
 

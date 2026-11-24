@@ -5,7 +5,6 @@ family.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
 from luban_meter.benchmarking.model_service_quality.common import (
@@ -42,23 +41,9 @@ PROTOCOL = "openai_compatible_chat_and_completions"
 SCORER_VERSION = "metrics-v1"
 
 
-@dataclass(frozen=True)
-class ChoiceBenchmarkDefinition:
-    """Dataset-family constants for a four-choice benchmark."""
-
-    benchmark_name: str
-    measurement: str
-    dataset_label: str
-
-
 def validate_choice_parameters(
     parameters: Mapping[str, Any],
-    benchmark_definition: ChoiceBenchmarkDefinition,
 ) -> dict[str, Any]:
-    eval_mode = enum_value(parameters, "eval_mode", ("ppl", "gen"), "ppl")
-    revision = 4 if eval_mode == "gen" else 1
-    version = f"{benchmark_definition.benchmark_name}-v{revision}"
-    fixed_value(parameters, "prompt_version", version)
     config = {
         "service_url": string_value(
             parameters, "service_url", "http://127.0.0.1:8000"
@@ -72,11 +57,12 @@ def validate_choice_parameters(
         "seed": non_negative_integer(parameters, "seed", 42),
         "few_shot_path": string_value(parameters, "few_shot_path", ""),
         "few_shot": non_negative_integer(parameters, "few_shot", 5),
-        "eval_mode": eval_mode,
+        "eval_mode": enum_value(
+            parameters, "eval_mode", ("ppl", "gen"), "ppl"
+        ),
         "prompt_format": enum_value(
             parameters, "prompt_format", ("chat", "base"), "chat"
         ),
-        "prompt_version": version,
         "max_tokens": positive_integer(parameters, "max_tokens", 8),
         "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -168,7 +154,6 @@ def collect_sample(
         "id": sample_id,
         "subject": subject,
         "mode": config["eval_mode"],
-        "prompt_version": config["prompt_version"],
         "prompt_format": config["prompt_format"],
         "prompt": prompt,
         "boundary_markers": rendered.get("boundary_markers", []),

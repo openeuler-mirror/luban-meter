@@ -85,20 +85,12 @@ def base_parameters(tmp_path: Path) -> dict[str, Any]:
 def test_validate_parameters(tmp_path: Path) -> None:
     config = lcsts.validate_parameters(base_parameters(tmp_path))
     assert config["eval_mode"] == "gen"
-    assert config["prompt_version"] == "lcsts-v2"
     assert config["prompt_format"] == "chat"
     assert config["max_tokens"] == 512
     assert config["few_shot"] == 0
     with pytest.raises(ValueError):
         lcsts.validate_parameters(
             {**base_parameters(tmp_path), "eval_mode": "ppl"}
-        )
-    with pytest.raises(ValueError):
-        lcsts.validate_parameters(
-            {
-                **base_parameters(tmp_path),
-                "prompt_version": "gsm8k-v1",
-            }
         )
     with pytest.raises(ValueError):
         lcsts.validate_parameters({**base_parameters(tmp_path), "few_shot": 4})

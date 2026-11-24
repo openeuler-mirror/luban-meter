@@ -18,10 +18,7 @@ def collect_domain(name, request, parameters):
     implementation = benchmarks.get(name)
     domain = implementation.domain_module
     if name in ("ceval", "cmmlu"):
-        spec = domain.ChoiceBenchmarkDefinition(
-            name, f"{name}_choice_accuracy_online_service", name
-        )
-        parameters = domain.validate_choice_parameters(parameters, spec)
+        parameters = domain.validate_choice_parameters(parameters)
     else:
         parameters = domain.validate_parameters(parameters)
     supplied = dict(parameters)

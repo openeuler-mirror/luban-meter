@@ -87,10 +87,6 @@ def test_validate_parameters(tmp_path: Path) -> None:
             {**base_parameters(tmp_path), "eval_mode": "ppl"}
         )
     with pytest.raises(ValueError):
-        gsm8k.validate_parameters(
-            {**base_parameters(tmp_path), "prompt_version": "ceval-v1"}
-        )
-    with pytest.raises(ValueError):
         gsm8k.validate_parameters({**base_parameters(tmp_path), "few_shot": 8})
 
 

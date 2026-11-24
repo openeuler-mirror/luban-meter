@@ -292,11 +292,6 @@ class ChoiceBenchmark(QualityBenchmark):
             raise ValueError(
                 "eval_mode=ppl supports only endpoint='completion'"
             )
-        module = cls.domain_module
-        template = parameters["template"]
-        definition = module.ChoiceBenchmarkDefinition(
-            template, f"{template}_choice_accuracy", template
-        )
         values = dict(parameters)
         values.update(
             service_url=parameters["base_url"],
@@ -304,7 +299,7 @@ class ChoiceBenchmark(QualityBenchmark):
             prompt_format=cls._prompt_format(parameters),
         )
         return cls.bind_protocol(
-            module.validate_choice_parameters(values, definition), parameters
+            cls.domain_module.validate_choice_parameters(values), parameters
         )
 
     def examples_for(self, sample):
