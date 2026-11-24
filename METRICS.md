@@ -5,6 +5,26 @@
 [README](README.md)；本文不以客户端时间替代引擎内部时间。
 图文计算示例及其他在线观测指标见[HTML指标说明](METRICS.html)。
 
+整体指标可以通过`metrics`选择完整的`streaming_performance`组，也可独立选择
+`ttft`、`tpot`、`itl`、`e2el`、`request_throughput`、
+`input_token_throughput`、`output_token_throughput`和
+`total_token_throughput`。独立指标适用于单轮、多轮及前缀缓存在线场景，沿用
+下文公式、样本资格及加权方法；吞吐量单项均指Case窗口级速率。
+显式列表替换默认列表，只保存和展示所选指标与必要计数；原始事实不裁剪。
+省略或空列表保持原默认行为。整轮总吞吐量仅汇总选择了该项或包含该项指标组的
+性能任务，保存纳入与排除台账；不选择时不生成该整轮指标。
+
+独立指标在`benchmarking/generation_performance/streaming_metrics.py`注册，
+声明`client_stream_timing`能力，并读取同一次正式采集保存的请求事实。
+延迟计算复用`guidellm_token_latencies`及公共统计函数，总Token吞吐量复用
+`formal_throughput`；离线Engine保留独立的观察边界。
+结果沿用`values.request_view`和`values.service_view`结构，报告只读取已保存
+的值，不重新计算指标分布。参与整轮总吞吐量汇总的Metric需声明
+`aggregate_run_throughput=True`，并提供`service_view.total_tokens`、
+`benchmark_duration`和`total_token_throughput`。运行器把该布尔选择保存到
+Case及任务结果，包括失败和恢复结果；报告和整轮汇总按保存的标记确定范围，
+不依赖当前注册名称。缺少标记的历史结果保留原自动汇总行为。
+
 ## 1. 观察位置与原始事实
 
 在线性能使用客户端单调时钟。一次请求的时间符号如下，均以客户端观察为准：

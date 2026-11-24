@@ -50,6 +50,123 @@ assert.ok(Number.isFinite(call('loadChartScale',1.7e308).high));
 const localScale=call('loadChartScale',35,33,true);
 assert.ok(localScale.low>0 && localScale.low<33 && localScale.high>35);
 assert.deepEqual(call('loadChartScale',1,.95,true,true),{low:0,high:1,tickCount:4});
+// Individually selected metrics contribute their own saved view fields.
+const independentNames=['ttft','tpot','itl','e2el','request_throughput',
+  'input_token_throughput','output_token_throughput','total_token_throughput'];
+const independent={id:'independent',status:'success',collection_complete:true,
+  metrics_status:'complete',parameters:{metrics:independentNames,max_concurrency:2},
+  metrics:Object.fromEntries(independentNames.map((name,index)=>{
+    const latency=index<4,unit=latency?(index===1||index===2?'ms/token':'ms'):
+      name==='request_throughput'?'req/s':'token/s';
+    return [name,{status:'success',observation_boundary:'client',values:{
+      ...(latency?{request_view:{[name]:{mean:index+1,p99:index+1,count:2,unit}}}:{}),
+      service_view:{total_requests:scalar(2,'request'),
+        successful_requests:scalar(2,'request'),failed_requests:scalar(0,'request'),
+        ...(!latency?{[name]:scalar(index+1,unit)}:{})}}}];
+  }))};
+const independentBefore=JSON.stringify(independent);
+for(const candidate of [independent,{...independent,metrics:
+  Object.fromEntries(Object.entries(independent.metrics).reverse())}]) {
+  assert.deepEqual(call('corePerformanceMetrics',candidate).map(m=>m.key),independentNames);
+  assert.deepEqual(call('summaryMetrics',{category:'generation_performance',
+    cases:[candidate]}).map(m=>m.key),independentNames);
+  assert.equal(call('servingMetric',candidate).values.request_view.ttft.p99,1);
+  const record={task:{name:'selected'},ti:0,ci:0,c:candidate};
+  const cards=call('performanceOverviewCards',[record]);
+  assert.ok(cards.some(card=>card.id==='selected-itl' && card.value===3));
+  assert.ok(cards.some(card=>card.id==='selected-input_token_throughput' && card.value===6));
+}
+for(const name of independentNames) {
+  const candidate={...independent,parameters:{metrics:[name],max_concurrency:2},
+    metrics:{[name]:independent.metrics[name]}};
+  assert.deepEqual(call('corePerformanceMetrics',candidate).map(m=>m.key),[name]);
+  const cards=call('performanceOverviewCards',[
+    {task:{name:'selected'},ti:0,ci:0,c:candidate}]);
+  assert.equal(cards.length,3,'one chosen metric plus success and concurrency');
+  if(name==='ttft')assert.ok(!cards.some(card=>/throughput/i.test(card.id)));
+}
+assert.equal(JSON.stringify(independent),independentBefore);
+for(const name of ['prefix_cache_hit_rate','streaming_phase_timing']) {
+  const groupedOnly={...independent,aggregate_run_throughput:false,
+    parameters:{metrics:[name]},metrics:{[name]:{status:'success',values:{}}}};
+  const cards=call('performanceOverviewCards',[
+    {task:{name:'grouped-only'},ti:0,ci:0,c:groupedOnly}]);
+  assert.deepEqual(cards.map(card=>card.id),['success-rate','max-concurrency']);
+}
+// Prefix-cache panels also omit unselected metric tables and placeholders.
+context.names={success:'成功'};
+context.link=(text,href)=>context.el('a',text);
+context.selectedCache=JSON.stringify({...independent,
+  parameters:{metrics:['ttft'],prefix_cache_target:.5,max_concurrency:2},
+  metrics:{ttft:independent.metrics.ttft}});
+const cacheNodeStart=domNodes.length;
+vm.runInContext('renderCacheSummary(document.createElement("div"),'+
+  '{name:"selected",scenario:"prefix_cache",category:"generation_performance",cases:[]},'+
+  'JSON.parse(selectedCache),0,0)',context);
+const selectedCacheText=domNodes.slice(cacheNodeStart).map(node=>node.textContent).join('\n');
+assert.ok(selectedCacheText.includes('TTFT 均值'));
+assert.ok(!selectedCacheText.includes('TPOT 均值'));
+assert.ok(!selectedCacheText.includes('输出吞吐'));
+assert.ok(!selectedCacheText.includes('缓存命中'));
+// Exercise the remaining comparison, peak-summary and failure panels.
+{
+  const observed={tables:[],overview:[]},elements={},selects={};
+  const node=(tag,text)=>({tag,text,value:'',children:[],
+    append(...items){this.children.push(...items);},
+    replaceChildren(){this.children=[];},
+    setAttribute(key,value){if(key==='aria-label')selects[value]=this;},
+    querySelector(){return {textContent:''};}});
+  const panels=vm.createContext({el:node,$:id=>elements[id]||(elements[id]=node('div')),
+    taskDisplayName:name=>name,link:text=>node('a',text),
+    document:{createTextNode:text=>node('#text',text)},
+    option(select,value,label){
+      if(!select.children.length)select.value=value;
+      select.children.push({value,label});
+    }});
+  for(const name of ['case_analysis.js','report_overview.js'])
+    vm.runInContext(fs.readFileSync(path.join(source,name),'utf8'),panels);
+  panels.barChart=()=>{};
+  panels.dataTable=(parent,columns)=>observed.tables.push(columns.map(c=>c.title));
+  panels.overviewMetric=(parent,label,value)=>observed.overview.push({label,value});
+  panels.concurrencyChart=panels.renderSuccessCounts=()=>{};
+  const chosen=(name,target=.5)=>({...independent,aggregate_run_throughput:false,
+    parameters:{metrics:[name],prefix_cache_target:target,max_concurrency:1,
+      model:'mock',profile:'concurrent'},metrics:{[name]:independent.metrics[name]}});
+  panels.input={scenario:'prefix_cache',cases:[chosen('ttft'),chosen('output_token_throughput',.75)]};
+  vm.runInContext('renderCacheComparison(el("div"),input)',panels);
+  assert.deepEqual(selects['缓存对比指标'].children.map(o=>o.value),['ttft']);
+  selects['缓存对比条件组'].value='1';selects['缓存对比条件组'].onchange();
+  assert.deepEqual(selects['缓存对比指标'].children.map(o=>o.value),['output_token_throughput']);
+  assert.ok(!observed.tables.flat().some(t=>/实际缓存命中率|理论共享比例|测量有效性|目标达标/.test(t)));
+  const performanceOnly={...chosen('ttft'),aggregate_run_throughput:true,
+    parameters:{...chosen('ttft').parameters,metrics:['streaming_performance']},
+    metrics:{streaming_performance:independent.metrics.ttft}};
+  panels.input={scenario:'prefix_cache',cases:[performanceOnly]};
+  observed.tables=[];
+  vm.runInContext('renderCacheComparison(el("div"),input)',panels);
+  assert.ok(!selects['缓存对比指标'].children.some(o=>o.value==='actual_hit_rate'));
+  assert.ok(!observed.tables.flat().some(t=>/实际缓存命中率|理论共享比例|测量有效性|目标达标/.test(t)));
+  observed.tables=[];
+  panels.input={...chosen('ttft'),metrics:{},setup_diagnostic:{
+    warmup_policy:'strict',warmup_status:'failed',reason:'HTTPStatusError'}};
+  vm.runInContext('renderCacheDetails(el("div"),input)',panels);
+  assert.ok(!observed.tables.flat().some(t=>/测量有效性|目标达标/.test(t)));
+  for(const name of ['output_token_throughput','input_token_throughput','total_token_throughput']){
+    const single=chosen(name);
+    delete single.parameters.prefix_cache_target;
+    panels.tasks=[{name:'selected',category:'generation_performance',
+      scenario:'online_serving',cases:[single]}];
+    const group=vm.runInContext('summaryScopeGroups(tasks)[0]',panels);
+    panels.group=group;
+    panels.selectedName=name;
+    const description=vm.runInContext('loadComparisonDescription(group)',panels);
+    assert.ok(!description.includes('TTFT'));
+    assert.equal(description.includes('输出吞吐量'),name==='output_token_throughput');
+    observed.tables=[];
+    vm.runInContext('renderLoadComparison(el("div"),group,loadRelatedMetrics.find(spec=>spec[2]===selectedName))',panels);
+    assert.ok(!observed.tables.flat().some(t=>/TTFT|E2EL/.test(t)));
+  }
+}
 // Phase metrics are selectable even at zero or unavailable; they never
 // replace the provider of whole-request throughput and latency metrics.
 const phaseKeys=['reasoning_duration','content_duration','first_content_latency'];
@@ -672,7 +789,7 @@ for(const index of [0,1,2,3]){
 // by the user, and a wholly unavailable category has an explicit empty state.
 const selection={options:[],value:'15',replaceChildren(){this.options=[];},disabled:false};
 const controls={'analysis-load-metric':selection,
-  'analysis-load-category':{value:'可靠性'},'analysis-group':{value:'0'}};
+  'analysis-load-category':{...selection,options:[],value:'可靠性'},'analysis-group':{value:'0'}};
 for(const record of context.GROUP.task.cases){
   const service=record.metrics.streaming_performance.values.service_view;
   service.total_requests=scalar(1,'request');
@@ -696,6 +813,17 @@ domNodes.length=0;
 vm.runInContext("analysisView='load'; renderAnalysis()",context);
 assert.match(domTexts(),/没有该类别的有效 Case 级指标/);
 assert.equal(domNodes.filter(node=>node.tag==='svg').length,0);
+const singleTotal={...independent,parameters:{model:'mock',profile:'concurrent',
+  max_concurrency:1,metrics:['total_token_throughput']},
+  metrics:{total_token_throughput:independent.metrics.total_token_throughput}};
+context.totalOnlyTask={name:'total',scenario:'online_serving',category:'generation_performance',
+  cases:[singleTotal]};
+controls['analysis-load-category'].value='Token 吞吐';
+vm.runInContext('analysisLoadGroups=summaryScopeGroups([totalOnlyTask]);updateAnalysisLoadMetricOptions()',context);
+assert.deepEqual(controls['analysis-load-category'].options.map(o=>o.value).sort(),['Token 吞吐','可靠性'].sort());
+assert.equal(selection.options.length,1);
+assert.match(selection.options[0].textContent,/总 Token 吞吐量/);
+assert.equal(selection.disabled,false);
 console.log('PASS: condition grouping, peak identity/ties, failure exclusions, '+
   'zero/missing data, observed trends, subject scores and scoring denominators; '+
   'independent optimum sources, single Case metrics, P99 units, request ratios; '+

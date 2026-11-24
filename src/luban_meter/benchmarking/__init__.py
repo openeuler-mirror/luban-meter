@@ -7,6 +7,7 @@ from .generation_performance import (
     multi_turn_serving,
     prefix_cache,
     prefix_cache_metrics,
+    streaming_metrics,
 )
 from .model_service_quality import quality_benchmarks
 from .model_service_quality.common import template_adapters
@@ -17,6 +18,7 @@ __all__ = [
     "prefix_cache",
     "prefix_cache_metrics",
     "capacity_search",
+    "streaming_metrics",
     "quality_benchmarks",
     "benchmark_metrics",
     "template_adapters",

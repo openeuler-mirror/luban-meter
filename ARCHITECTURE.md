@@ -12,6 +12,11 @@ case.metrics.stability_trends.values 包含 window_seconds 与 windows。每行�
 
 reporting/trends.js 直接读取窗口，在 Case 内切换指标。reporting/report_overview.js 使用 servingMetric 选择 Case 指标提供者，分别读取 service_view.output_token_throughput.value、request_view.ttft.mean/p99、request_view.e2el.p99。速率轴仅用于显式支持有限计划速率的 Profile；其他轴见 README。Case 失败或采集不完整不参与性能峰值。稳定性窗口的失败计数仍按原始正式请求计算。SLO 和 Goodput 保留各自的阈值与分母。
 
+在线指标可以独立选择。各计算器共用正式请求与 Case 窗口；终端和 HTML 按所选指标合并
+已保存的 request_view、service_view，并为负载曲线提供相应的时延或吞吐字段。
+显式 metrics 列表可同时选择 stability_trends 和 step Profile 的 capacity_search。
+需要整轮 Token 吞吐时选择 total_token_throughput 或包含该值的完整性能指标组。
+
 ## 显式 Auto 窗口
 
 trend_window_seconds 继续默认 60，正整数为 Fixed，字符串 auto 为显式 Auto。

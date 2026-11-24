@@ -44,18 +44,45 @@ def numeric(value):
 
 
 def serving_metric(case):
-    for metric in case.get("metrics", {}).values():
-        values = metric.get("values", {}) if isinstance(metric, dict) else {}
+    providers = []
+    selected = case.get("parameters", {}).get("metrics") or []
+    for name, metric in case.get("metrics", {}).items():
+        if name == "token_throughput" or not isinstance(metric, dict):
+            continue
+        values = metric.get("values", {})
         request = values.get("request_view") or {}
         service = values.get("service_view") or {}
         if (
             any(key in request for key in ("ttft", "tpot", "itl", "e2el"))
             or any(key in service for key in (
-                "request_throughput", "output_token_throughput"
+                "request_throughput", "output_token_throughput",
             ))
+            or (metric.get("observation_boundary") == "client"
+                and any(key in service for key in (
+                    "input_token_throughput", "total_token_throughput",
+                )))
         ):
-            return metric
-    return {}
+            providers.append((name, metric))
+    if not providers:
+        return {}
+    chosen = [metric for name, metric in providers if name in selected]
+    providers = chosen or [providers[0][1]]
+    if len(providers) == 1:
+        return providers[0]
+    combined = {**providers[0], "values": {}}
+    for metric in providers:
+        for view, fields in metric.get("values", {}).items():
+            if isinstance(fields, dict):
+                combined["values"][view] = {
+                    **fields, **combined["values"].get(view, {}),
+                }
+            else:
+                combined["values"].setdefault(view, fields)
+        if metric.get("status") in ("failed", "partial_failed"):
+            combined["status"] = metric["status"]
+        if metric.get("error"):
+            combined["error"] = metric["error"]
+    return combined
 
 
 def completed(case):
@@ -100,10 +127,28 @@ def performance_lines(records):
         ("最大已测配置并发", "并发", False),
     ]
     points = [[] for _ in specs]
+    keys = ["output_token_throughput", "total_token_throughput", "ttft",
+            "tpot", "e2el", None, None]
+    selected = {name for _, case in records
+                for name in case.get("parameters", {}).get("metrics", [])}
+    extras = [
+        ("itl", "最低 ITL P99", "ms/token", True),
+        ("request_throughput", "最大请求吞吐量", "req/s", False),
+        ("input_token_throughput", "最大输入 Token 吞吐量", "token/s", False),
+    ]
+    for key, label, unit, minimum in extras:
+        if key in selected:
+            keys.append(key)
+            specs.append((label, unit, minimum))
+            points.append([])
+    present = set()
     for task, case in records:
         metric = serving_metric(case)
         values = metric.get("values", {})
         service = values.get("service_view") or {}
+        request = values.get("request_view") or {}
+        present.update(service)
+        present.update(request)
         if not completed(case) or not cache_eligible(case):
             continue
 
@@ -161,9 +206,26 @@ def performance_lines(records):
                     and (count is None or (type(count) is int and count > 0))
                     and (weight is None or (numeric(weight) and weight > 0))):
                 add(index, value * factor)
+        for index, key in enumerate(keys[7:], 7):
+            if key == "itl":
+                node = request.get(key) or {}
+                value = node.get("p99")
+                if (node.get("unit") == "ms/token" and numeric(value)
+                        and node.get("count", 0) > 0):
+                    add(index, value)
+            else:
+                add(index, scalar(service, key, specs[index][1]))
     yield "最佳性能指标"
     yield "各项独立择优，不代表同一工作点；并发为配置上限。"
-    for spec, candidates in zip(specs, points):
+    restricted = (
+        bool(selected.intersection(key for key in keys if key))
+        or any(case.get("aggregate_run_throughput") is False
+               for _, case in records)
+    )
+    for key, spec, candidates in zip(keys, specs, points):
+        if (restricted and key is not None
+                and key not in present and key not in selected):
+            continue
         label, unit, minimum = spec
         yield best_line(label, candidates, unit, minimum)
 

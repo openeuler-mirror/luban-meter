@@ -382,7 +382,6 @@ def test_real_cli_pipeline_preserves_saved_results(
             "--output-tokens", "2", "--num-requests", "3",
             "--num-warmups", "1" if mode == "ok" else "0",
             "--profile", "synchronous",
-            # This test asserts both saved metrics. Phase timing is opt-in.
             "--thinking-metrics",
             "--request-timeout", "3", "--task-timeout", "30",
             "--result-dir", str(tmp_path / "runs"),
@@ -438,7 +437,7 @@ def test_real_cli_pipeline_preserves_saved_results(
     assert len(json.loads(raw_before)["requests"]) == 3
     assert (path.parent / "report.html").is_file()
     assert set(case["metrics"]) == {
-        "streaming_performance", "streaming_phase_timing",
+        "streaming_performance", "stability_trends", "streaming_phase_timing",
     }
     metric = case["metrics"]["streaming_performance"]
     case_path = raw.with_name(raw.stem + ".result.json")

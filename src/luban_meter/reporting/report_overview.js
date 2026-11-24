@@ -37,7 +37,20 @@ const loadRelatedMetrics = [
   ['Request Throughput','req/s','request_throughput','value','请求吞吐'],
   ['Success Rate','ratio','success_rate','value','可靠性'],
   ['Timeout Rate','ratio','timeout_rate','value','可靠性'],
+  ['输入 Token 吞吐量','token/s','input_token_throughput','value','Token 吞吐'],
+  ['总 Token 吞吐量','token/s','total_token_throughput','value','Token 吞吐'],
 ];
+function selectedLoadFields(records) {
+  if(!records.some(({c})=>hasSelectivePerformance(c)))return null;
+  const fields=new Set();
+  for(const {c} of records) {
+    const values=servingMetric(c)?.values;
+    for(const key of [...(c.parameters?.metrics||[]),...Object.keys(values?.request_view||{}),
+      ...Object.keys(values?.service_view||{})])fields.add(key);
+    if(savedRequestCounts(c).valid)fields.add('success_rate');
+  }
+  return fields;
+}
 function loadAxis(parameters) {
   return ['rate','constant','poisson'].includes(parameters.profile) &&
     numeric(parameters.request_rate) && parameters.request_rate>0 ?
@@ -338,7 +351,7 @@ function performanceOverviewCards(records,bestMode=true) {
       const counts=savedRequestCounts(best.c);
       cards[index].source+=' · '+counts.success+' / '+counts.total+' 请求';
     }
-    if(index===7||index===8) {
+    if(['best-slo-attainment','best-goodput-throughput'].includes(cards[index].id)) {
       const thresholds=sloConfigText(best.c);
       if(thresholds)cards[index].source+=' · SLO '+thresholds;
     }
@@ -383,7 +396,37 @@ function performanceOverviewCards(records,bestMode=true) {
       cards[5].href='#summary-'+record.ti+'-'+record.ci;
     }
   }
-  return cards;
+  const selected=new Set(records.flatMap(({c})=>c.parameters?.metrics||[]));
+  const selective=records.some(({c})=>hasSelectivePerformance(c));
+  if(!selective)return cards;
+  for(const [key,title,unit,view,minimum] of [
+    ['itl','Best ITL P99','ms/token','request_view',true],
+    ['request_throughput','Peak Request Throughput','req/s','service_view',false],
+    ['input_token_throughput','Peak Input Throughput','token/s','service_view',false]
+  ]) {
+    if(!selected.has(key))continue;
+    const card={id:'selected-'+key,title,unit,tone:'cyan',value:null,
+      source:'缺少可用的已保存数据',href:'#summary-section',
+      description:minimum?'lower is better · 已保存P99':'higher is better · 已保存速率'};
+    cards.push(card);
+    extreme(cards.length-1,usable.flatMap(record=>{
+      const node=servingMetric(record.c)?.values?.[view]?.[key];
+      const value=minimum?node?.p99:node?.value;
+      return node?.unit===unit && numeric(value) && value>=0?
+        [{...record,value}]:[];
+    }),minimum);
+  }
+  const fields={
+    'peak-throughput':['service_view','output_token_throughput'],
+    'peak-total-throughput':['service_view','total_token_throughput'],
+    'best-ttft-p99':['request_view','ttft'],
+    'best-tpot-p99':['request_view','tpot'],
+    'best-e2e-p99':['request_view','e2el']
+  };
+  return cards.filter(card=>!fields[card.id] || selected.has(fields[card.id][1]) || records.some(({c})=>{
+    const [view,key]=fields[card.id];
+    return Object.hasOwn(servingMetric(c)?.values?.[view]||{},key);
+  }));
 }
 // The SLO section's own two cards; best values over the saved goodput
 // blocks.  Prefix-cache warm-up and observe Cases only join through the
@@ -557,10 +600,12 @@ function loadComparisonDescription(group) {
     const minimum=Math.min(...values),maximum=Math.max(...values);
     return minimum===maximum?valueText(minimum):valueText(minimum)+'–'+valueText(maximum);
   };
+  const selected=selectedLoadFields(summaryGroupRecords(group));
   const text=[points.length+' 个 Case',axisLabel(group.axis)+' '+loads[0]+
-    (loads.length>1?' → '+loads.at(-1):'（单点，无法描述负载变化）'),
-    '输出吞吐量 '+range(throughput)+' token/s'];
-  if(latency.length)text.push('TTFT Mean '+valueText(latency[0].value)+
+    (loads.length>1?' → '+loads.at(-1):'（单点，无法描述负载变化）')];
+  if(!selected || selected.has('output_token_throughput'))
+    text.push('输出吞吐量 '+range(throughput)+' token/s');
+  if(latency.length && (!selected || selected.has('ttft')))text.push('TTFT Mean '+valueText(latency[0].value)+
     (loads.length>1?' → '+valueText(latency.at(-1).value):'')+' ms');
   if(loads.length!==points.length)text.push('重复负载分别保留，不合并均值');
   return text.join(' · ');
@@ -598,17 +643,20 @@ function renderLoadComparison(parent,group,spec=loadMetrics[1],scaleMode='local'
     const node=servingMetric(record.c)?.values?.service_view?.[key];
     return numeric(node?.value)?node.value:null;
   };
+  const selected=selectedLoadFields(records);
+  const baseMetrics=loadMetrics.filter(metric=>!selected || selected.has(metric[2]));
   dataTable(parent,[
     {title:'Case',get:record=>record.c.id},
     {title:axisLabel(group.axis),numeric:true,get:record=>record.c.parameters[group.axis]},
     {title:'状态',get:record=>names[record.c.status]||record.c.status},
-    {title:'平均并发',numeric:true,get:record=>service(record,'average_concurrency')},
-    {title:'峰值并发',numeric:true,get:record=>service(record,'peak_concurrent_requests')},
+    ...[['平均并发','average_concurrency'],['峰值并发','peak_concurrent_requests']]
+      .filter(([,key])=>!selected || selected.has(key))
+      .map(([title,key])=>({title,numeric:true,get:record=>service(record,key)})),
     {title:'正式请求数',numeric:true,get:record=>savedRequestCounts(record.c).total},
     {title:'成功请求数',numeric:true,get:record=>savedRequestCounts(record.c).success},
-    ...loadMetrics.map(metric=>({title:metric[0]+'（'+metric[1]+'）',
+    ...baseMetrics.map(metric=>({title:metric[0]+'（'+metric[1]+'）',
       numeric:true,get:record=>loadMeasurement(record.c,metric).value})),
-    ...(!loadMetrics.some(metric=>metric[2]===spec[2] && metric[3]===spec[3] &&
+    ...(!baseMetrics.some(metric=>metric[2]===spec[2] && metric[3]===spec[3] &&
       metric[1]===spec[1])?[{
       title:'当前选择：'+spec[0]+'（'+displayUnit(spec[1])+'）',
       numeric:true,unit:spec[1],get:record=>loadMeasurement(record.c,spec).value,
