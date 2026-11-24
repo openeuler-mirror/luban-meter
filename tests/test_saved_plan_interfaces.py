@@ -1,4 +1,4 @@
-"""Saved interface values are rejected before any scheduled model call."""
+"""Stale saved parameters fail before any scheduled model call."""
 
 import copy
 import json
@@ -47,11 +47,18 @@ def test_quality_domain_keeps_completion_only_restriction(tmp_path, scenario):
 
 
 @pytest.mark.parametrize("task_count", [1, 2])
-@pytest.mark.parametrize("endpoint", [
-    "/v1/chat/completions", "/v1/completions",
+@pytest.mark.parametrize("stale, error", [
+    ({"endpoint": "/v1/chat/completions"},
+     "endpoint must be one of ('completion', 'chat')"),
+    ({"endpoint": "/v1/completions"},
+     "endpoint must be one of ('completion', 'chat')"),
+    ({"profile": "rate"}, "unknown profile 'rate'"),
+    ({"arrival_process": "constant"}, "unknown parameters: arrival_process"),
+    ({"profile": "constant", "request_rate": "inf"},
+     "request_rate must be finite"),
 ])
 def test_old_saved_schedule_fails_without_requests_then_can_be_updated(
-    tmp_path, service, endpoint, task_count,
+    tmp_path, service, stale, error, task_count,
 ):
     parameters = task_parameters(
         tmp_path, "cmmlu", base_url=service, endpoint="chat",
@@ -69,7 +76,7 @@ def test_old_saved_schedule_fails_without_requests_then_can_be_updated(
         saved = copy.deepcopy(records.get_plan(plan["id"]))
         saved["resolved"]["tasks"][-1]["cases"][0][
             "parameters"
-        ]["endpoint"] = endpoint
+        ].update(stale)
         saved = records.save_plan(saved, now)
     original = copy.deepcopy(saved["resolved"])
     # The source JSON already uses the new name; saved snapshots are separate.
@@ -91,7 +98,7 @@ def test_old_saved_schedule_fails_without_requests_then_can_be_updated(
             ] == original
         log_path = Path(failed["log_path"])
         log = log_path.read_text()
-        assert "endpoint must be one of ('completion', 'chat')" in log
+        assert error in log
         assert "Saved Case parameter validation failed" in log
         assert "update or recreate the schedule with a valid task JSON" in log
         assert f"task=task_{task_count} case=case_1 phase=validate" in log

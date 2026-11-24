@@ -302,15 +302,22 @@ def logged_script(main):
 def task_secrets(tasks):
     """Collect declared secret strings without logging the task plan."""
     from luban_meter.core.benchmark import benchmarks
-    from luban_meter.core.planning import schema_for
+    from luban_meter.runtime.load_profiles import profiles
 
     values = []
+    registered_profiles = dict(profiles.items())
     for task in tasks:
         scenario = benchmarks.get(task["scenario"])
         for case in task["cases"]:
             parameters = case["parameters"]
             log_parameters(parameters, secrets=values)
-            for name, spec in schema_for(scenario, parameters).items():
+            schema = scenario.parameter_schema()
+            profile_name = parameters.get("profile", schema["profile"].default)
+            profile = registered_profiles.get(profile_name)
+            # Stale Profiles must fail after instance logging is configured.
+            if profile is not None:
+                schema.update(profile.parameter_schema())
+            for name, spec in schema.items():
                 value = parameters.get(name)
                 if spec.secret and isinstance(value, str) and value:
                     values.append(value)

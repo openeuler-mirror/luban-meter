@@ -90,7 +90,7 @@ def test_sample_identity_independent_of_scheduling_and_warmup(tmp_path):
             **p,
             "max_concurrency": 16,
             "request_rate": 123,
-            "arrival_process": "poisson",
+            "profile": "poisson",
             "num_warmups": 20,
         },
     )
@@ -391,9 +391,8 @@ def test_online_formal_inputs_survive_profile_and_warmup_changes(
         (
             {"profile": "concurrent", "num_warmups": 0},
             {
-                "profile": "rate",
                 "request_rate": 100,
-                "arrival_process": "poisson",
+                "profile": "poisson",
                 "num_warmups": 2,
                 "max_concurrency": 1,
                 "seed": 999,

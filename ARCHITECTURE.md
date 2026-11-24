@@ -10,7 +10,7 @@ case.metrics.stability_trends.values 包含 window_seconds 与 windows。每行�
 
 对有效正式时长 D 和窗口 W 建立 ceil(D/W) 个窗口。内部边界属于右侧，恰好结束于 D 的请求计入末窗。有效非负延迟按完成时间选样本；P99 使用排序后 (n−1)×0.99 位置线性插值。延迟和吞吐保留三位小数，比率保留四位。失败请求按 error.type 精确匹配 ConnectTimeout、ReadTimeout、WriteTimeout、PoolTimeout、TimeoutException、TimeoutError，其他失败归 other_failed。无成功产出时吞吐可为零，缺失成功 Token 计数时为 null。无有效延迟返回 count=0 和 null，无完成请求时两项比率为 null。无效正式时长返回 unavailable 和空窗口列表。
 
-reporting/trends.js 直接读取窗口，在 Case 内切换指标。reporting/report_overview.js 使用 servingMetric 选择 Case 指标提供者，分别读取 service_view.output_token_throughput.value、request_view.ttft.mean/p99、request_view.e2el.p99。速率轴仅用于显式支持有限计划速率的 Profile；其他轴见 README。Case 失败或采集不完整不参与性能峰值。稳定性窗口的失败计数仍按原始正式请求计算。SLO 和 Goodput 保留各自的阈值与分母。
+reporting/trends.js 直接读取窗口，在 Case 内切换指标。reporting/report_overview.js 使用 servingMetric 选择 Case 指标提供者，分别读取 service_view.output_token_throughput.value、request_view.ttft.mean/p99、request_view.e2el.p99。constant、poisson、gamma 以及已保存的旧 rate 结果使用有限计划速率作为速率轴，其他轴见 README。Case 失败或采集不完整不参与性能峰值。稳定性窗口的失败计数仍按原始正式请求计算。SLO 和 Goodput 保留各自的阈值与分母。
 
 ## 显式 Auto 窗口
 

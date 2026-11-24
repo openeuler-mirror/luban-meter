@@ -67,7 +67,7 @@ def make_request_record(
 def make_raw_case(
     *,
     request_rate: float = 2.0,
-    arrival_process: str = "gamma",
+    profile: str = "gamma",
     burstiness: float | None = 1.0,
     num_prompts: int = 10,
     max_tokens: int = 2048,
@@ -80,7 +80,7 @@ def make_raw_case(
         requests = []
     case = {
         "request_rate": request_rate,
-        "arrival_process": arrival_process,
+        "profile": profile,
         "num_prompts": num_prompts,
         "max_tokens": max_tokens,
         "benchmark_duration_seconds": duration_seconds,
@@ -147,7 +147,7 @@ class ResultProcessingTest(unittest.TestCase):
     def test_case_metadata_preserved(self) -> None:
         raw_case = make_raw_case(
             request_rate=4.0,
-            arrival_process="poisson",
+            profile="poisson",
             burstiness=None,
             num_prompts=50,
             max_tokens=1024,
@@ -162,7 +162,7 @@ class ResultProcessingTest(unittest.TestCase):
 
         case = result["metrics"]["cases"][0]
         self.assertEqual(case["request_rate"], 4.0)
-        self.assertEqual(case["arrival_process"], "poisson")
+        self.assertEqual(case["profile"], "poisson")
         self.assertEqual(case["num_prompts"], 50)
         self.assertEqual(case["max_tokens"], 1024)
 

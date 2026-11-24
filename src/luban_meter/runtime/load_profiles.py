@@ -8,6 +8,7 @@ from luban_meter.core.parameters import Parameter
 from luban_meter.core.registry import Registry
 from luban_meter.runtime.scheduling_strategies import (
     AsyncConstantStrategy,
+    AsyncGammaStrategy,
     AsyncPoissonStrategy,
     ConcurrentStrategy,
     ImmediateStrategy,
@@ -15,14 +16,12 @@ from luban_meter.runtime.scheduling_strategies import (
     SynchronousStrategy,
     ThroughputStrategy,
     TraceReplayStrategy,
-    rate_strategy,
 )
 
 
 class Profile(ABC):
     summary_fields = (
         "request_rate",
-        "arrival_process",
         "burstiness",
         "max_concurrency",
         "batch_size",
@@ -61,23 +60,6 @@ class Profile(ABC):
 profiles = Registry("profile", Profile)
 
 
-@profiles.register("rate")
-class RateProfile(Profile):
-    parameters = {
-        "request_rate": Parameter(
-            float, 1.0, minimum=1e-12, allow_infinity=True, matrix=True
-        ),
-        "arrival_process": Parameter(
-            str, "constant", choices=("constant", "poisson", "gamma")
-        ),
-        "burstiness": Parameter(float, 1.0, minimum=1e-12),
-        "max_concurrency": Parameter(int, 32, minimum=1, matrix=True),
-    }
-
-    def create_strategy(self):
-        return rate_strategy(self.parameters)
-
-
 class _ArrivalProfile(Profile):
     """Finite arrival rates with explicit distribution-specific entrypoints."""
 
@@ -97,6 +79,16 @@ class ConstantProfile(_ArrivalProfile):
 class PoissonProfile(_ArrivalProfile):
     def create_strategy(self):
         return AsyncPoissonStrategy(self.parameters)
+
+
+@profiles.register("gamma")
+class GammaProfile(_ArrivalProfile):
+    parameters = {
+        "burstiness": Parameter(float, 1.0, minimum=1e-12),
+    }
+
+    def create_strategy(self):
+        return AsyncGammaStrategy(self.parameters)
 
 
 @profiles.register("step")

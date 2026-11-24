@@ -39,7 +39,7 @@ const loadRelatedMetrics = [
   ['Timeout Rate','ratio','timeout_rate','value','可靠性'],
 ];
 function loadAxis(parameters) {
-  return ['rate','constant','poisson'].includes(parameters.profile) &&
+  return ['rate','constant','poisson','gamma'].includes(parameters.profile) &&
     numeric(parameters.request_rate) && parameters.request_rate>0 ?
     'request_rate':'max_concurrency';
 }

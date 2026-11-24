@@ -20,7 +20,12 @@ from luban_meter.core.planning import bootstrap, build_plan
 from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.reporting.html import load_result, write_html
 from luban_meter.runtime.evaluation_session import run_case
-from luban_meter.runtime.load_profiles import ConcurrentProfile, RateProfile
+from luban_meter.runtime.load_profiles import (
+    ConcurrentProfile,
+    ConstantProfile,
+    GammaProfile,
+    profiles,
+)
 from luban_meter.runtime.request_scheduler import (
     AdmissionStopped,
     RequestScheduler,
@@ -221,8 +226,8 @@ def test_flat_cli_plan(capsys):
                 "mock",
                 "--input-tokens",
                 "128",
-                "--request-rate",
-                "inf",
+                "--profile",
+                "throughput",
                 "--http-max-connections",
                 "128",
                 "--http-keepalive-expiry",
@@ -234,6 +239,8 @@ def test_flat_cli_plan(capsys):
     output = json.loads(capsys.readouterr().out)
     assert output["tasks"][0]["cases"][0]["parameters"]["input_tokens"] == 128
     parameters = output["tasks"][0]["cases"][0]["parameters"]
+    assert parameters["profile"] == "throughput"
+    assert "request_rate" not in parameters
     assert parameters["http_max_connections"] == 128
     assert parameters["http_keepalive_expiry"] == 7.5
     with pytest.raises(SystemExit) as error:
@@ -303,13 +310,12 @@ def test_public_inheritance_and_custom_metric(base, tmp_path):
 def test_scheduler_request_budget_and_seed():
     p = {
         "request_rate": 1000,
-        "arrival_process": "gamma",
         "burstiness": 0.5,
         "seed": 9,
         "max_concurrency": 2,
         "num_requests": 2,
     }
-    first, second = (RateProfile(p).create_strategy() for _ in range(2))
+    first, second = (GammaProfile(p).create_strategy() for _ in range(2))
     assert [first.plan({}).offset_s for _ in range(5)] == [
         second.plan({}).offset_s for _ in range(5)
     ]
@@ -455,12 +461,14 @@ def test_profile_arrivals_are_positive_reproducible(process):
     p = {
         "scenario": "online_serving",
         "model": "mock",
-        "arrival_process": process,
+        "profile": process,
         "request_rate": 10,
-        "burstiness": 0.5,
+        **({"burstiness": 0.5} if process == "gamma" else {}),
     }
     values = build_plan(p)["tasks"][0]["cases"][0]["parameters"]
-    first, second = (RateProfile(values).create_strategy() for _ in range(2))
+    first, second = (
+        profiles.get(process)(values).create_strategy() for _ in range(2)
+    )
     offsets = [first.plan({}).offset_s for _ in range(101)]
     intervals = [b - a for a, b in zip(offsets, offsets[1:])]
     assert all(value > 0 for value in intervals)
@@ -489,13 +497,15 @@ def test_new_profile_works_without_core_scenario_branch():
     from luban_meter.api import profiles
 
     @profiles.register("test_constant")
-    class CustomProfile(RateProfile):
+    class CustomProfile(ConstantProfile):
         parameters = {"tick": Parameter(float, 0.1, minimum=0.001)}
 
         def create_strategy(self):
-            from luban_meter.runtime.scheduling_strategies import RateStrategy
+            from luban_meter.runtime.scheduling_strategies import (
+                AsyncConstantStrategy,
+            )
 
-            return RateStrategy({
+            return AsyncConstantStrategy({
                 **self.parameters,
                 "request_rate": 1 / self.parameters["tick"],
             })
@@ -517,7 +527,7 @@ def test_new_profile_works_without_core_scenario_branch():
 
 def test_duration_stops_admission_and_drains(service, tmp_path):
     p = serving(service)
-    p.update(profile="rate", request_rate=0.5, max_duration=0.05)
+    p.update(profile="constant", request_rate=0.5, max_duration=0.05)
     result, _ = RunCoordinator().run(build_plan(p), tmp_path)
     case = result["tasks"][0]["cases"][0]
     assert case["status"] == "success", case

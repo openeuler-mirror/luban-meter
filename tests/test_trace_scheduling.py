@@ -260,7 +260,7 @@ def test_sync_batch_rejects_replay_before_engine_start(tmp_path):
 @pytest.mark.parametrize(
     "scenario,profile",
     [
-        ("online_serving", "rate"),
+        ("online_serving", "constant"),
         ("online_serving", "replay"),
         ("offline_vllm_engine", "batch"),
         ("offline_vllm_async", "concurrent"),

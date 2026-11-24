@@ -24,7 +24,7 @@ const groups=call('cacheComparisonGroups',task);
 assert.equal(groups.length,2); // Only concurrency differs.
 assert.equal(groups[0].cases.length,14);
 for(const [key,value] of [['model','other'],['input_tokens',512],['output_tokens',64],
-  ['profile','rate'],['request_rate',8],['base_url','other-server'],
+  ['profile','constant'],['request_rate',8],['base_url','other-server'],
   ['request_params',{temperature:0}],['kv_cache_block_size',32]]) {
   const a=structuredClone(find('target-50')),b=structuredClone(a);
   b.parameters[key]=value;
