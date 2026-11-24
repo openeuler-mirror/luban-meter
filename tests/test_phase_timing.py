@@ -366,6 +366,7 @@ def test_thinking_supplement_preserves_overall_metrics_and_population():
         b'data: {"choices":[],"usage":{"prompt_tokens":10,'
         b'"completion_tokens":6,"completion_tokens_details":'
         b'{"reasoning_tokens":4}}}\n\n',
+        b"data: [DONE]\n\n",
     ])
     clock = iter([10.4, 13, 13.2, 14.2])
     observation = collect_chat_stream(io.BytesIO(wire), lambda: next(clock))
@@ -486,7 +487,7 @@ def test_successful_records_require_both_channel_timestamp_fields(field):
 def test_embedded_think_tags_do_not_create_a_reasoning_channel():
     observation = collect_chat_stream(io.BytesIO(
         event({"content": "<think>thought</think>answer"})
-        + event(finish="stop")
+        + event(finish="stop") + b"data: [DONE]\n\n"
     ), clock=lambda: 2.0)
     assert observation.reasoning_event_times == ()
     assert observation.content_event_times == (2.0,)

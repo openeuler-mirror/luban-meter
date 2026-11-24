@@ -16,6 +16,9 @@ from luban_meter.benchmarking.generation_performance.common.statistics import (
     scalar,
     summarize,
 )
+from luban_meter.log import get_logger
+
+logger = get_logger(__name__)
 
 
 def _object_list(value: Any, name: str) -> list[Mapping[str, Any]]:
@@ -50,23 +53,50 @@ def _aggregate_counter_rate(
     duration_seconds: float,
     unit: str,
 ) -> dict[str, Any] | None:
-    first_val: float | None = None
-    last_val: float | None = None
+    first: dict[tuple, float] | None = None
+    previous: dict[tuple, float] = {}
+    reset = labels_changed = False
     for snap in snapshots:
         entry = select_metric(snap.get("metrics", {}), metric_name)
-        metric_value = counter_value(entry)
-        if metric_value is None:
+        values = {
+            tuple(sorted(sample.get("labels", {}).items())):
+            float(sample["value"])
+            for sample in (entry or {}).get("samples", [])
+        }
+        if not values:
+            labels_changed = True
             continue
-        if first_val is None:
-            first_val = metric_value
-        last_val = metric_value
-    if first_val is None or last_val is None:
+        if first is None:
+            first = values
+        if previous:
+            labels_changed |= values.keys() != previous.keys()
+            reset |= any(
+                value < previous[key]
+                for key, value in values.items() if key in previous
+            )
+        previous = values
+    if first is None:
         return None
-    if last_val < first_val:
-        return scalar(0, unit, precision=3)
-    if duration_seconds <= 0:
+    reason = (
+        "counter reset between snapshots" if reset
+        else "counter label series changed between snapshots"
+        if labels_changed else None
+    )
+    if reason:
+        logger.warning(
+            "Service counter unavailable: metric=%s reason=%s",
+            metric_name, reason, extra={"phase": "observation"},
+        )
+        return {**scalar(None, unit), "reason": reason}
+    if len(snapshots) < 2 or duration_seconds <= 0:
         return None
-    rate = (last_val - first_val) / duration_seconds
+    rate = sum(previous[key] - value for key, value in first.items())
+    rate /= duration_seconds
+    logger.info(
+        "Service counter summarized: metric=%s series=%s duration_s=%s",
+        metric_name, len(first), duration_seconds,
+        extra={"phase": "observation"},
+    )
     return scalar(rate, unit, precision=3)
 
 
@@ -75,17 +105,21 @@ def _aggregate_histogram_quantiles(
     metric_name: str,
     unit: str,
 ) -> dict[str, Any] | None:
-    all_samples: list[dict[str, Any]] = []
-    for snap in snapshots:
+    for snap in reversed(snapshots):
         entry = select_metric(snap.get("metrics", {}), metric_name)
-        if entry is not None:
-            all_samples.extend(entry.get("samples", []))
-
-    if not all_samples:
+        if entry is not None and any(
+            "le" in sample.get("labels", {})
+            for sample in entry.get("samples", [])
+        ):
+            break
+    else:
         return None
 
-    quantiles = histogram_quantiles(all_samples, (0.50, 0.90, 0.99))
-    result: dict[str, Any] = {"unit": unit}
+    quantiles = histogram_quantiles(entry["samples"], (0.50, 0.90, 0.99))
+    result: dict[str, Any] = {
+        "unit": unit,
+        "condition": "last valid cumulative histogram snapshot",
+    }
     for quantile_name in ("p50", "p90", "p99"):
         metric_value = quantiles.get(quantile_name)
         result[quantile_name] = (
@@ -97,6 +131,12 @@ def _aggregate_histogram_quantiles(
         result["count"] = int(total_count)
     if total_sum is not None:
         result["sum"] = round(float(total_sum), 3)
+    logger.info(
+        "Service histogram summarized: metric=%s snapshot=%s count=%s "
+        "scope=last_cumulative",
+        metric_name, snap.get("finished_at"), result.get("count"),
+        extra={"phase": "observation"},
+    )
     return result
 
 

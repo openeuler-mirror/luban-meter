@@ -347,6 +347,12 @@ HTTP生成请求默认显式发送`stop: []`，不注入换行停止符；显式
 PPL/logprobs评分必需字段保持原有行为，也可通过`request_params`追加服务扩展。
 空停止列表不会禁用EOS或绕过输出预算，也不能保证清除服务端自行配置的停止规则。
 
+在线Completion和Chat流均须收到`[DONE]`才算完整结束；即使已经收到
+`finish_reason`或非空输出，缺少`[DONE]`仍记为请求失败。HTTP200流中的非null
+`error`事件同样记为失败，不纳入成功请求的延迟、Token或Goodput统计。
+多轮在失败轮停止，后续轮记为未开始；失败前的部分正文不追加到会话历史。
+失败原因和堆栈沿现有请求编号、任务及Case上下文写入同一实例日志。
+
 chat性能采集同时识别`delta.reasoning`、`delta.reasoning_content`和`delta.content`。
 `delta.tool_calls`中任一调用的`function.name`或`function.arguments`为非空
 字符串时，也作为有效输出；只有`id`、`type`、`index`或空字段的片段不计时。
@@ -1013,6 +1019,18 @@ luban-meter run --scenario online_serving --model served-model \
 
 服务端经典直方图的分位数落入 `+Inf` 桶时，按 Prometheus 规则返回最高有限桶边界，
 不对无界区间插值；只有 `+Inf` 桶、没有有限桶边界时，分位数标为不可用。
+服务端延迟及Token长度的分位数、`count`与`sum`统一使用该指标最后一次有效
+含桶样本的快照，口径为服务启动以来的累计分布（`condition=last valid cumulative histogram
+snapshot`），不拼接不同时间的累计桶。同一快照内按相同桶边界合并全部标签序列，
+同时求和桶计数、`count`和`sum`。观测数为零时保留实际计数与总和，分位数为空。
+桶边界不一致时报告观测计算失败及原因。
+累计分布包含服务的历史请求及其他流量，不等同于本Case客户端请求分布。
+
+服务端输入/输出Token及请求吞吐量按观测窗口首末Counter增量计算，汇总各标签
+序列；逐对检查采样可见的计数回退。任何序列发生重置，或标签集合在有效快照间
+发生变化（包括整组消失）时，该项吞吐量保存为`value=null`并给出`reason`，不将重置当作零吞吐，
+也不估算缺失增量。正常Counter没有增长时仍保存真实0。实例日志记录汇总参数、
+直方图快照时间以及Counter不可用的原因。
 
 服务端观测聚合保存在Case的`observation.metrics`。其中`latency_decomposition.queue_time_window`（s）
 是等待队列中平均每个请求的等待时间（分母为窗口内全部完成请求，含等待约等于0的），

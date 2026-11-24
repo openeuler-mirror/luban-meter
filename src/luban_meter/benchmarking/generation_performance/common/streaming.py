@@ -156,6 +156,7 @@ def collect_chat_stream(
     prompt_token_ids = None
     output_token_id_chunks = []
     token_ids_error = None
+    done = False
 
     for raw_line in stream:
         line = raw_line.decode("utf-8").strip()
@@ -165,11 +166,15 @@ def collect_chat_stream(
         if not data:
             continue
         if data == "[DONE]":
+            done = True
             break
 
         payload = json.loads(data)
         if not isinstance(payload, Mapping):
             raise TypeError("stream event must contain a JSON object")
+
+        if payload.get("error") is not None:
+            raise RuntimeError("stream reported an error")
 
         # Keep ID-only events as facts, without adding output timestamps.
         # Validation/counting belongs after the original request timer.
@@ -232,6 +237,8 @@ def collect_chat_stream(
         raise RuntimeError(
             "stream ended before the first non-empty generated output"
         )
+    if not done:
+        raise RuntimeError("stream ended before [DONE]")
     input_tokens, output_tokens = usage if usage is not None else (None, None)
     if output_tokens is not None and output_tokens <= 0:
         raise RuntimeError("stream reported no output tokens")

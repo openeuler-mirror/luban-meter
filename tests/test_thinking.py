@@ -77,6 +77,157 @@ def test_one_event_with_both_channels_and_duplicate_aliases_counts_once():
     assert observation.output_tokens is None
 
 
+@pytest.mark.parametrize("delta", [
+    {"content": "partial"},
+    {"reasoning_content": "partial"},
+    {"tool_calls": [{"function": {"name": "lookup"}}]},
+])
+def test_chat_error_after_output_is_rejected(delta):
+    wire = (
+        sse(delta)
+        + sse(error={"message": "synthetic backend failure"})
+        + b"data: [DONE]\n"
+    )
+    with pytest.raises(RuntimeError, match="stream reported an error"):
+        collect_chat_stream(io.BytesIO(wire))
+
+
+@pytest.mark.parametrize("finish_reason", [None, "stop"])
+@pytest.mark.parametrize("delta", [
+    {"content": "partial"},
+    {"reasoning_content": "partial"},
+    {"tool_calls": [{"function": {"name": "lookup"}}]},
+])
+def test_chat_eof_without_done_is_rejected(delta, finish_reason):
+    wire = sse(delta)
+    if finish_reason:
+        wire += (
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n'
+        )
+    with pytest.raises(RuntimeError, match=r"stream ended before \[DONE\]"):
+        collect_chat_stream(io.BytesIO(wire))
+
+
+@pytest.mark.parametrize("failure", ["error", "eof"])
+def test_incomplete_chat_streams_fail_single_and_multi_workers(
+    tmp_path, monkeypatch, failure,
+):
+    monkeypatch.setenv("NO_PROXY", "*")
+    posts = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_HEAD(self):
+            self.send_response(200)
+            self.end_headers()
+
+        def do_POST(self):
+            payload = json.loads(self.rfile.read(
+                int(self.headers["Content-Length"])
+            ))
+            posts.append(payload)
+            prompt = payload["messages"][-1]["content"]
+            wire = sse({"content": "private-response"})
+            if prompt == "private-prompt-ok":
+                wire += (
+                    b'data: {"choices":[{"delta":{},'
+                    b'"finish_reason":"stop"}]}\n\n'
+                    + sse(usage={
+                        "prompt_tokens": 2, "completion_tokens": 2,
+                    })
+                    + b"data: [DONE]\n\n"
+                )
+            elif failure == "error":
+                wire += sse(error={"message": "private-error-body"})
+                wire += b"data: [DONE]\n\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(wire)))
+            self.end_headers()
+            self.wfile.write(wire)
+
+    single = tmp_path / "single.jsonl"
+    single.write_text("\n".join(json.dumps({"prompt": prompt}) for prompt in (
+        "private-prompt-ok", "private-prompt-bad",
+    )))
+    multi = tmp_path / "multi.json"
+    multi.write_text(json.dumps([{"conversations": [
+        {"from": "human", "value": "private-prompt-bad"},
+        {"from": "gpt", "value": "reference"},
+        {"from": "human", "value": "must-not-be-sent"},
+        {"from": "gpt", "value": "reference"},
+    ]}]))
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    common = {
+        "model": "mock", "base_url": f"http://127.0.0.1:{server.server_port}",
+        "endpoint": "chat", "profile": "synchronous", "num_warmups": 0,
+        "output_tokens": 2, "ignore_eos": False, "thinking_metrics": True,
+        "api_key": "review-private-key", "request_timeout": 3,
+        "task_timeout": 30, "goodput": ["ttft:1000000"],
+    }
+    config = tmp_path / "tasks.json"
+    config.write_text(json.dumps({"tasks": [
+        {**common, "name": "single", "scenario": "online_serving",
+         "dataset_path": str(single), "data": "jsonl", "num_requests": 2},
+        {**common, "name": "multi", "scenario": "multi_turn_serving",
+         "dataset_path": str(multi), "multi_num_sessions": 1,
+         "multi_max_turns": 2},
+    ]}))
+    try:
+        result, directory = RunCoordinator().run(
+            build_plan({}, config), tmp_path / "runs",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+    single_case, multi_case = [task["cases"][0] for task in result["tasks"]]
+    assert single_case["status"] == "partial_failed"
+    assert multi_case["status"] == "failed"
+    values = single_case["metrics"]["streaming_performance"]["values"]
+    service = values["service_view"]
+    assert service["successful_requests"]["value"] == 1
+    assert service["failed_requests"]["value"] == 1
+    assert service["goodput"]["failed_count"]["value"] == 1
+    assert service["goodput"]["slo_satisfied_rate"]["value"] == 0.5
+    assert values["request_view"]["ttft"]["count"] == 1
+    for name in ("single", "multi"):
+        raw = json.loads((
+            directory / "tasks" / name / "raw" / "case_1.json"
+        ).read_text())
+        response = raw["requests"][-1]["response"]
+        assert response["status"] == "failed"
+        assert "ttft_ms" not in response
+        assert "content_event_offsets_ms" not in response
+        assert response["phase_timing"]["status"] == "failed"
+    session = raw["samples"][0]["facts"]
+    assert session["abort_reason"] == "turn_failed"
+    assert session["completed_turns"] == 0
+    assert session["sent_failed_turns"] == 1
+    assert session["not_started_turns"] == 1
+    assert len(posts) == 3
+    logs = list((directory / "log").glob("*.log"))
+    assert len(logs) == 1
+    text = logs[0].read_text()
+    assert "Worker started:" in text
+    assert "Case result saved" in text
+    assert "task=single case=case_1" in text
+    assert "task=multi case=case_1" in text
+    assert "Streaming request failed:" in text
+    assert "Traceback (most recent call last)" in text
+    assert ("stream reported an error" if failure == "error" else
+            "stream ended before [DONE]") in text
+    for private in ("review-private-key", "private-prompt-ok",
+                    "private-prompt-bad", "private-response",
+                    "private-error-body"):
+        assert private not in text
+
+
 @pytest.mark.parametrize("reported", [
     {"queue_time_ms": 12.3},
     {"queue_time_ms": 0},

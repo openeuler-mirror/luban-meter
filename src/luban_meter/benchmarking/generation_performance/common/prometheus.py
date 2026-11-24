@@ -194,35 +194,55 @@ def histogram_quantiles(
     """Estimate quantiles from Prometheus histogram bucket samples.
 
     Accepts the raw ``samples`` list from a histogram metric entry.
+    Pool label series with matching bucket boundaries before estimating
+    quantiles. Incompatible boundaries cannot form one distribution.
     Returns a dict mapping quantile key (e.g. "p50") to the
     estimated value in the same unit as the histogram buckets, or
     None if the data is insufficient.
     """
-    buckets: list[tuple[float, float]] = []
-    total_count: float | None = None
-    total_sum: float | None = None
-
+    series: dict[tuple, dict[str, Any]] = {}
     for sample in samples:
         metric_name = str(sample.get("_metric_name", ""))
-        bucket_upper_bound = sample.get("labels", {}).get("le")
+        labels = sample.get("labels", {})
+        key = tuple(sorted((k, v) for k, v in labels.items() if k != "le"))
+        values = series.setdefault(key, {"buckets": {}})
+        bucket_upper_bound = labels.get("le")
         if bucket_upper_bound is not None:
-            buckets.append((float(bucket_upper_bound), float(sample["value"])))
+            values["buckets"][float(bucket_upper_bound)] = float(
+                sample["value"]
+            )
         elif metric_name.endswith("_sum"):
-            total_sum = float(sample["value"])
+            values["sum"] = float(sample["value"])
         elif metric_name.endswith("_count"):
-            total_count = float(sample["value"])
+            values["count"] = float(sample["value"])
 
-    if not buckets:
+    if not any(values["buckets"] for values in series.values()):
         return {f"p{int(quantile * 100)}": None for quantile in quantiles}
 
-    buckets.sort(key=lambda bucket: bucket[0])
+    boundaries = {frozenset(values["buckets"]) for values in series.values()}
+    if len(boundaries) != 1:
+        raise ValueError("histogram series have different bucket boundaries")
+    pooled: dict[float, float] = {}
+    for values in series.values():
+        for bound, count in values["buckets"].items():
+            pooled[bound] = pooled.get(bound, 0.0) + count
+    buckets = sorted(pooled.items())
+    total_count = sum(
+        values.get("count", values["buckets"][buckets[-1][0]])
+        for values in series.values()
+    )
+    total_sum = (
+        sum(values["sum"] for values in series.values())
+        if all("sum" in values for values in series.values()) else None
+    )
     finite_bounds = [bound for bound, _ in buckets if bound < float("inf")]
     highest_finite_bound = finite_bounds[-1] if finite_bounds else None
-    if total_count is None:
-        total_count = buckets[-1][1]
 
     if total_count <= 0:
-        return {f"p{int(quantile * 100)}": None for quantile in quantiles}
+        return {
+            **{f"p{int(quantile * 100)}": None for quantile in quantiles},
+            "_count": total_count, "_sum": total_sum,
+        }
 
     result: dict[str, float | None] = {}
     for quantile in quantiles:

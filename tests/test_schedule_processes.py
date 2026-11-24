@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from luban_meter.core.schedule_commands import update
 from luban_meter.core.schedule_store import ScheduleStore
 from luban_meter.core.schedule_time import display_time, stamp, timestamp
 from tests import test_extension_worker
@@ -28,12 +29,13 @@ def cli(project, environment, *args, ok=True):
     return result
 
 
-def config(project, name, delay=0.02, requests=1):
+def config(project, name, delay=0.02, requests=1, gate_file=""):
     path = project / f"{name}.json"
     path.write_text(json.dumps({"tasks": [{
         "name": name, "scenario": "fixture", "delay": delay,
         "num_requests": requests, "max_concurrency": 1,
         "fixture_secret": "schedule-test-secret",
+        "gate_file": str(gate_file),
     }]}))
     return path
 
@@ -42,6 +44,14 @@ def register(project, environment, path, due):
     result = cli(project, environment, "--at", stamp(due), "--timezone", "UTC",
                  str(path))
     return result.stdout.split()[1]
+
+
+def arm(project, *plans):
+    """Trigger registered plans after setup, using the public clock seam."""
+    due = time.time()
+    for plan in plans:
+        update(ScheduleStore(project), plan, at=stamp(due), now=due - 1)
+    return due
 
 
 def rows(project):
@@ -104,17 +114,20 @@ def stop(process):
 def test_daily_storage_serial_queue_modify_cancel_and_list(
     extension, tmp_path,
 ):
-    first_config = config(tmp_path, "first", delay=0.3, requests=10)
+    release = tmp_path / "release"
+    first_config = config(tmp_path, "first", requests=10, gate_file=release)
     second_config = config(tmp_path, "second")
     third_config = config(tmp_path, "third")
     process = serve(tmp_path, extension)
     try:
-        due = time.time() + 3
+        # Each of the three registration commands has a 15-second timeout.
+        due = time.time() + 60
         first = register(tmp_path, extension, first_config, due)
         # Running uses the snapshot, even if the source JSON disappears.
         first_config.unlink()
         second = register(tmp_path, extension, second_config, due)
         third = register(tmp_path, extension, third_config, due)
+        due = arm(tmp_path, first, second, third)
         wait_until(lambda: len(rows(tmp_path)) == 3
                    and any(r["status"] == "running" for r in rows(tmp_path)))
         listing = cli(tmp_path, extension, "list").stdout
@@ -127,6 +140,7 @@ def test_daily_storage_serial_queue_modify_cancel_and_list(
         cli(tmp_path, extension, "update", second, str(updated))
         cli(tmp_path, extension, "cancel", third)
         cli(tmp_path, extension, "cancel", third)
+        release.touch()
         wait_until(lambda: sum(r["status"] == "success"
                                for r in rows(tmp_path)) == 2)
         completed = {r["plan_id"]: r for r in rows(tmp_path)
@@ -173,10 +187,12 @@ def test_daily_storage_serial_queue_modify_cancel_and_list(
 def test_cancel_running_releases_queue_and_never_revives(extension, tmp_path):
     process = serve(tmp_path, extension)
     try:
-        due = time.time() + 2
+        due = time.time() + 60
         first = register(tmp_path, extension,
-                         config(tmp_path, "first", 0.4, 10), due)
+                         config(tmp_path, "first", requests=10,
+                                gate_file=tmp_path / "unreleased"), due)
         second = register(tmp_path, extension, config(tmp_path, "second"), due)
+        arm(tmp_path, first, second)
         wait_until(lambda: any(
             r["plan_id"] == first and r["status"] == "running"
             for r in rows(tmp_path)))
@@ -201,10 +217,13 @@ def test_cancel_running_releases_queue_and_never_revives(extension, tmp_path):
 def test_restart_retests_from_start_and_preserves_queue(extension, tmp_path):
     process = serve(tmp_path, extension)
     try:
-        due = time.time() + 2
+        due = time.time() + 60
+        release = tmp_path / "release"
         first = register(tmp_path, extension,
-                         config(tmp_path, "first", 0.2, 10), due)
+                         config(tmp_path, "first", requests=10,
+                                gate_file=release), due)
         second = register(tmp_path, extension, config(tmp_path, "second"), due)
+        arm(tmp_path, first, second)
         original = wait_until(lambda: next(
             (r for r in rows(tmp_path)
              if r["plan_id"] == first and r["status"] == "running"), None,
@@ -212,6 +231,10 @@ def test_restart_retests_from_start_and_preserves_queue(extension, tmp_path):
         os.kill(process.pid, signal.SIGKILL)
         process.wait(timeout=10)
         process = serve(tmp_path, extension)
+        wait_until(lambda: any(r["retry_of"] == original["execution_id"]
+                               and r["status"] == "running"
+                               for r in rows(tmp_path)))
+        release.touch()
         wait_until(lambda: sum(r["status"] == "success"
                                for r in rows(tmp_path)) == 2)
         history = rows(tmp_path)
@@ -244,10 +267,11 @@ def test_failure_keeps_traceback_and_continues_queue(extension, tmp_path):
     log_dir = tmp_path / "chosen-logs"
     process = serve(tmp_path, extension, level="error", log_dir=log_dir)
     try:
-        due = time.time() + 2
+        due = time.time() + 60
         first = register(tmp_path, extension, failing, due)
         second = register(tmp_path, extension, config(tmp_path, "following"),
                           due)
+        arm(tmp_path, first, second)
         wait_until(lambda: any(
             r["plan_id"] == second and r["status"] == "success"
             for r in rows(tmp_path)))

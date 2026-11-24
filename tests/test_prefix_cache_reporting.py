@@ -206,6 +206,7 @@ def test_projection_keeps_calculated_values_and_old_json(tmp_path):
     assert saved["request_details"][0][2]["status"] == "available"
     assert '<script src=' not in html
     assert html.count('class="report-page"') == 7
+    assert '<section id="slo-section" class="report-page"' in html
     legacy = browser_fixture()
     assert report_data(legacy)["result"] == legacy
 
