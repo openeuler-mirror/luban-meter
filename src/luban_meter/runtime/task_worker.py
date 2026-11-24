@@ -41,7 +41,8 @@ def main():
     ):
         logger.debug("Worker logging configured: level=%s",
                      payload["log_level"])
-        logger.info("Worker initializing: scenario=%s", task["scenario"])
+        logger.info("Worker initializing: scenario=%s id=%s",
+                    task["scenario"], task.get("id", "-"))
         bootstrap()
         _run_task(payload)
 
@@ -59,6 +60,8 @@ def _run_task(payload):
         "cases": [],
         "status": "running",
     }
+    if "id" in task:
+        result["id"] = task["id"]
     stop_reason = None
     for case in task["cases"]:
         if stop_file.exists() or stop_reason:

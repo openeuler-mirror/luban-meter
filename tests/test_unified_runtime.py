@@ -1,9 +1,16 @@
 """Public extension and real subprocess tests using a synthetic service."""
 
 import json
+import sqlite3
+import subprocess
+import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -246,6 +253,160 @@ def test_flat_cli_plan(capsys):
     with pytest.raises(SystemExit) as error:
         main(["plan", "--module", "generate"])
     assert error.value.code == 2
+
+
+def test_task_id_plan_preview(capsys, tmp_path):
+    config = tmp_path / "task.json"
+    config.write_text(json.dumps({
+        "tasks": [{"name": "c2-ctx64", "id": "kfa-a1"}, {"name": "next"}],
+    }))
+    args = [
+        "plan", "--config", str(config), "--scenario", "online_serving",
+        "--model", "mock", "--log-dir", str(tmp_path / "log"),
+        "--result-dir", str(tmp_path / "runs"),
+    ]
+    assert main(args) == 0
+    tasks = json.loads(capsys.readouterr().out)["tasks"]
+    assert tasks[0]["id"] == "kfa-a1"
+    assert "id" not in tasks[0]["cases"][0]["parameters"]
+    assert "id" not in tasks[1]
+    assert main([*args, "--task", "c2-ctx64", "--task-id", "kfa-a1"]) == 0
+    assert json.loads(capsys.readouterr().out)["tasks"] == [tasks[0]]
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.parametrize("value", [None, 123, "", "a/b", "a ", "é", "-abc"])
+def test_invalid_json_task_id(tmp_path, value):
+    config = tmp_path / "task.json"
+    config.write_text(json.dumps({"tasks": [{"id": value}]}))
+    with pytest.raises(ValueError, match="invalid id"):
+        build_plan({"scenario": "online_serving", "model": "mock"}, config)
+
+
+@pytest.mark.parametrize(("entries", "selected", "task_id", "message"), [
+    ([{}], (), "", "invalid --task-id"),
+    ([{}, {}], (), "kfa-a1", "requires exactly one selected task"),
+    ([{"id": "kfa-a1"}], (), "kfa-a2", "conflicts with id"),
+    ([{"id": "a"}, {"id": "a"}], ("task_1",), None, "duplicate task id"),
+    ([{}, {"id": "a"}], ("task_1",), "a", "duplicate task id"),
+])
+def test_invalid_task_ids(tmp_path, entries, selected, task_id, message):
+    config = tmp_path / "task.json"
+    config.write_text(json.dumps({"tasks": entries}))
+    with pytest.raises(ValueError, match=message):
+        build_plan(
+            {"scenario": "online_serving", "model": "mock"},
+            config, selected, task_id=task_id,
+        )
+
+
+def test_run_checks_task_directories_before_registering_ids(
+    service, tmp_path, capsys,
+):
+    probe = tmp_path / "CaseProbe"
+    probe.mkdir()
+    ignores_case = (tmp_path / "caseprobe").is_dir()
+    config = tmp_path / "task.json"
+    config.write_text(json.dumps({"tasks": [
+        {"name": "TaskA", "id": "first", **serving(service)},
+        {"name": "taska", "id": "second", **serving(service)},
+    ]}))
+    root = tmp_path / "runs"
+    args = [
+        "run", "--config", str(config), "--result-dir", str(root),
+        "--log-dir", str(tmp_path / "log"), "--no-summary", "--no-progress",
+    ]
+    if ignores_case:
+        assert main(args) == 2
+        assert "task directory collision" in capsys.readouterr().err
+        assert not (root / "task-index.sqlite3").exists()
+        assert Handler.posts == []
+        assert main([*args, "--task", "TaskA"]) == 0
+    else:
+        assert main(args) == 0
+        directory, = root.glob("run-*")
+        first = directory / "tasks" / "TaskA" / "result.json"
+        second = directory / "tasks" / "taska" / "result.json"
+        assert not first.samefile(second)
+
+
+def test_concurrent_cli_task_id_registration(service, tmp_path, capsys):
+    config = tmp_path / "task.json"
+    entries = [
+        {"name": "first", **serving(service)},
+        {"name": "next", "id": "kfa-config", **serving(service)},
+    ]
+    config.write_text(json.dumps({"tasks": entries}))
+    result_dir = tmp_path / "runs"
+    log_dir = tmp_path / "external-log"
+    args = [
+        "run", "--config", str(config), "--result-dir", str(result_dir),
+        "--log-dir", str(log_dir), "--no-summary", "--no-progress",
+        "--api-key", "task-id-test-secret",
+    ]
+    command = [
+        sys.executable, "-m", "luban_meter.cli", *args,
+        "--task", "first", "--task-id", "kfa-7821-a1",
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        runs = [
+            pool.submit(subprocess.run, command, capture_output=True,
+                        text=True, timeout=60)
+            for _ in range(2)
+        ]
+    outputs = [run.result() for run in runs]
+    statuses = {output.returncode: output for output in outputs}
+    assert set(statuses) == {0, 2}, statuses
+    assert "duplicate task id: kfa-7821-a1" in statuses[2].stderr
+    assert "Traceback" in statuses[2].stderr
+
+    index = result_dir / "task-index.sqlite3"
+    with closing(sqlite3.connect(index)) as connection:
+        connection.row_factory = sqlite3.Row
+        row, = connection.execute("SELECT * FROM tasks").fetchall()
+        assert row["id"] == "kfa-7821-a1"
+        directory = Path(row["run_dir"])
+        assert row["run_id"] == directory.name
+        assert row["task_name"] == "first"
+        for path in (
+            directory / "plan.json", directory / "result.json",
+            Path(row["result_path"]),
+        ):
+            payload = json.loads(path.read_text())
+            task = payload["tasks"][0] if "tasks" in payload else payload
+            assert task["id"] == row["id"]
+        assert Path(row["events_path"]).is_file()
+        log_file = Path(row["log_path"])
+        assert log_file.parent == log_dir.resolve()
+        logfile_text = log_file.read_text()
+        registered = logfile_text.index("Task ID registered: id=kfa-7821-a1")
+        worker = logfile_text.index(
+            "Worker initializing: scenario=online_serving id=kfa-7821-a1"
+        )
+        assert registered < worker
+        assert "task-id-test-secret" not in logfile_text
+
+        # Collision on the second Task rolls back the first new ID as well.
+        request_count = len(Handler.posts)
+        entries[0]["id"] = "kfa-unclaimed"
+        entries[1]["id"] = "kfa-7821-a1"
+        config.write_text(json.dumps({"tasks": entries}))
+        assert main(args) == 2
+        assert "duplicate task id: kfa-7821-a1" in capsys.readouterr().err
+        count, = connection.execute("SELECT count(*) FROM tasks").fetchone()
+        assert count == 1
+        assert len(Handler.posts) == request_count
+
+        del entries[0]["id"]
+        entries[1]["id"] = "kfa-config"
+        config.write_text(json.dumps({"tasks": entries}))
+        assert main(args) == 0
+        ids = dict(connection.execute("SELECT id, task_name FROM tasks"))
+        assert ids.pop("kfa-config") == "next"
+        assert ids.pop("kfa-7821-a1") == "first"
+        (generated, name), = ids.items()
+        assert name == "first"
+        assert str(UUID(generated, version=4)) == generated
 
 
 def test_metric_requires_facts():

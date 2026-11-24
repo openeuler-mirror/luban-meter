@@ -7,6 +7,7 @@ import itertools
 import json
 import re
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.metric import metrics
@@ -21,7 +22,27 @@ from luban_meter.runtime.load_profiles import profiles
 logger = get_logger(__name__)
 
 
-TASK_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+TASK_IDENTIFIER = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]*")
+
+
+def validate_task_directories(tasks, output):
+    """Verify potential name aliases on the actual results filesystem."""
+    names = [task["name"] for task in tasks]
+    if len({name.casefold() for name in names}) == len(names):
+        return
+    output = Path(output).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(
+        prefix=".task-directory-check-", dir=output,
+    ) as directory:
+        probe = Path(directory)
+        for name in names:
+            try:
+                (probe / name).mkdir()
+            except FileExistsError as exc:
+                logger.exception("Task directory collision: name=%s root=%s",
+                                 name, output)
+                raise ValueError(f"task directory collision: {name}") from exc
 
 
 def bootstrap():
@@ -50,6 +71,8 @@ def cli_schema():
                 "scenario",
                 "config",
                 "task",
+                "task_id",
+                "id",
                 "result_dir",
                 "log_level",
                 "log_dir",
@@ -122,21 +145,54 @@ def expand_cases(definition, schema):
     return items
 
 
-def build_plan(base, config=None, selected=(), *, observe=False):
+def _selected_tasks(entries, selected, task_id):
+    named = {}
+    for index, entry in enumerate(entries):
+        name = entry.get("name", f"task_{index + 1}")
+        if not isinstance(name, str) or not TASK_IDENTIFIER.fullmatch(name):
+            raise ValueError(f"invalid task name: {name!r}")
+        if name in named:
+            raise ValueError(f"duplicate task name: {name}")
+        named[name] = entry
+    chosen = set(selected) or set(named)
+    unknown = chosen - named.keys()
+    if unknown:
+        raise ValueError(f"unknown task selection: {sorted(unknown)}")
+    if task_id is not None:
+        if len(chosen) != 1:
+            raise ValueError("--task-id requires exactly one selected task")
+        if (
+            not isinstance(task_id, str)
+            or not TASK_IDENTIFIER.fullmatch(task_id)
+        ):
+            raise ValueError(f"invalid --task-id: {task_id!r}")
+
+    used_ids = set()
+    for name, entry in named.items():
+        identity = entry.get("id")
+        if "id" in entry and (
+            not isinstance(identity, str)
+            or not TASK_IDENTIFIER.fullmatch(identity)
+        ):
+            raise ValueError(f"task {name}: invalid id: {identity!r}")
+        if task_id is not None and name in chosen:
+            if identity is not None and identity != task_id:
+                raise ValueError(f"task {name}: --task-id conflicts with id")
+            identity = task_id
+        if identity is not None:
+            if identity in used_ids:
+                raise ValueError(f"task {name}: duplicate task id: {identity}")
+            used_ids.add(identity)
+        if name in chosen:
+            yield name, identity, entry
+
+
+def build_plan(base, config=None, selected=(), *, observe=False, task_id=None):
     bootstrap()
     entries, directory = load_tasks(config)
     common = copy.deepcopy(base)
-    names = []
     tasks = []
-    for index, entry in enumerate(entries):
-        name = entry.get("name", f"task_{index + 1}")
-        if not isinstance(name, str) or not TASK_NAME.fullmatch(name):
-            raise ValueError(f"invalid task name: {name!r}")
-        if name in names:
-            raise ValueError(f"duplicate task name: {name}")
-        names.append(name)
-        if selected and name not in selected:
-            continue
+    for name, identity, entry in _selected_tasks(entries, selected, task_id):
         try:
             supplied = {**common, **copy.deepcopy(entry)}
             scenario_name = supplied.pop("scenario", None)
@@ -144,6 +200,7 @@ def build_plan(base, config=None, selected=(), *, observe=False):
                 raise ValueError("scenario is required")
             scenario = benchmarks.get(scenario_name)
             supplied.pop("name", None)
+            supplied.pop("id", None)
             case_definition = supplied.pop("cases", None)
             schema = schema_for(scenario, supplied)
             add_log_secrets(
@@ -190,23 +247,21 @@ def build_plan(base, config=None, selected=(), *, observe=False):
                         "Prometheus observer requires an HTTP backend"
                     )
                 case_parameters.append(parameters)
-            tasks.append(
-                {
-                    "name": name,
-                    "scenario": scenario_name,
-                    "category": scenario.category,
-                    "cases": [
-                        {"id": f"case_{i + 1}", "parameters": p}
-                        for i, p in enumerate(case_parameters)
-                    ],
-                }
-            )
+            task = {
+                "name": name,
+                "scenario": scenario_name,
+                "category": scenario.category,
+                "cases": [
+                    {"id": f"case_{i + 1}", "parameters": p}
+                    for i, p in enumerate(case_parameters)
+                ],
+            }
+            if identity is not None:
+                task["id"] = identity
+            tasks.append(task)
         except (ValueError, TypeError) as exc:
             logger.exception("Task parameter resolution failed")
             raise ValueError(f"task {name}: {exc}") from exc
-    unknown = set(selected) - set(names)
-    if unknown:
-        raise ValueError(f"unknown task selection: {sorted(unknown)}")
     return {"tasks": tasks, "case_count": sum(len(t["cases"]) for t in tasks)}
 
 

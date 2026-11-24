@@ -431,7 +431,7 @@ def wait_for_request(process, tmp_path):
 @pytest.mark.parametrize("force", [False, True])
 def test_interrupt_discards_incomplete_evidence(extension, tmp_path, force):
     process = subprocess.Popen(
-        command(tmp_path, "--delay", "0.5"),
+        command(tmp_path, "--delay", "0.5", "--task-id", "kfa-interrupt-a1"),
         env=extension,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -451,6 +451,7 @@ def test_interrupt_discards_incomplete_evidence(extension, tmp_path, force):
             process.wait()
     result, path = read_result(tmp_path)
     assert result["status"] == "interrupted"
+    assert result["tasks"][0]["id"] == "kfa-interrupt-a1"
     run_log = instance_log(path)
     assert "Interrupt requested" in run_log
     assert "Run finished: status=interrupted" in run_log
@@ -462,6 +463,59 @@ def test_interrupt_discards_incomplete_evidence(extension, tmp_path, force):
     assert not (raw / "case_1.json").exists()
     for events in tmp_path.rglob("events.jsonl"):
         assert '"case_id": "case_1"' not in events.read_text()
+
+    if not force:
+        for task_id, expected in [("kfa-interrupt-a1", 2),
+                                  ("kfa-interrupt-a2", 0)]:
+            resumed = subprocess.run(
+                command(tmp_path, "--num-requests", "1", "--task-id", task_id),
+                env=extension, capture_output=True, text=True, timeout=15,
+            )
+            assert resumed.returncode == expected, resumed.stderr
+        reports = [json.loads(target.read_text())
+                   for target in tmp_path.glob("*/result.json")]
+        assert {report["tasks"][0]["id"]: report["status"]
+                for report in reports} == {
+                    "kfa-interrupt-a1": "interrupted",
+                    "kfa-interrupt-a2": "success",
+                }
+
+
+def test_delete_requires_run_to_finish(extension, tmp_path):
+    run = command(tmp_path, "--task-id", "kfa-active", "--gate-file",
+                  str(tmp_path / "gate"))
+    delete = [
+        sys.executable, "-m", "luban_meter.cli", "delete", "kfa-active",
+        "--result-dir", str(tmp_path),
+        "--log-dir", str(tmp_path / "delete-log"),
+    ]
+    with subprocess.Popen(run, env=extension, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True) as process:
+        try:
+            wait_for_request(process, tmp_path)
+            blocked = subprocess.run(
+                delete, env=extension, capture_output=True,
+                text=True, timeout=10,
+            )
+            assert blocked.returncode == 2, blocked.stderr
+            assert "task run has not finished" in blocked.stderr
+            process.send_signal(signal.SIGINT)
+            _, stderr = process.communicate(timeout=10)
+            assert process.returncode == 130, stderr
+        finally:
+            if process.poll() is None:
+                process.kill()
+    result, result_path = read_result(tmp_path)
+    assert result["status"] == "interrupted"
+    log_before = instance_log(result_path)
+    removed = subprocess.run(delete, env=extension, capture_output=True,
+                             text=True, timeout=10)
+    assert removed.returncode == 0, removed.stderr
+    assert json.loads(removed.stdout) == {
+        "id": "kfa-active", "status": "deleted",
+    }
+    assert not (result_path.parent / "tasks" / "task_1").exists()
+    assert instance_log(result_path) == log_before
 
 
 @pytest.mark.parametrize("fail_fast", [False, True])
@@ -496,6 +550,9 @@ def test_timeout_recovers_and_continues(extension, tmp_path, fail_fast):
         "skipped" if fail_fast else "success",
     ]
     assert "task timeout" in report["tasks"][0]["errors"]
+    for task in report["tasks"]:
+        result_path = path.parent / "tasks" / task["name"] / "result.json"
+        assert json.loads(result_path.read_text())["id"] == task["id"]
     run_log = instance_log(path)
     assert "task=slow" in run_log and "Task timeout; killing worker" in run_log
     assert "Recovering Case results" in run_log
