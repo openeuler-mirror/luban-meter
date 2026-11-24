@@ -89,7 +89,7 @@ class OnlineServingBenchmark(GenerationPerformanceBenchmark):
         **TREND_PARAMETERS,
         "data": Parameter(str, "random_token"),
         "dataset_path": Parameter(str, "", path=True),
-        "profile": Parameter(str, "rate"),
+        "profile": Parameter(str, "constant"),
         **LENGTH_PARAMETERS,
         "num_requests": Parameter(int, 100, minimum=1),
         "tokenizer": Parameter(str, ""),

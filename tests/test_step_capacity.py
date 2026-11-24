@@ -101,6 +101,10 @@ class TestStepProfile:
     def test_unrelated_options_are_rejected(self):
         with pytest.raises(ValueError, match="unknown parameters"):
             resolve("step", arrival_process="poisson")
+        with pytest.raises(ValueError, match="unknown parameters: burstiness"):
+            resolve("step", burstiness=0.5)
+        with pytest.raises(ValueError, match="unknown parameters: step_"):
+            resolve("gamma", step_start_rate=2)
 
     def test_capacity_metric_is_selected_for_step_profile(self):
         _, parameters = resolve("step")
@@ -113,7 +117,7 @@ class TestStepProfile:
 
     def test_capacity_metric_requires_step_profile(self):
         with pytest.raises(ValueError, match="step profile"):
-            resolve("rate", metrics=["capacity_search"])
+            resolve("gamma", metrics=["capacity_search"])
 
 
 def request_record(offset, *, status="success", error_type=None):
@@ -381,7 +385,7 @@ class TestSearchCapacityCli:
 
         assert main([
             "search-capacity",
-            *search_args(service, "--profile", "rate"),
+            *search_args(service, "--profile", "gamma"),
             "--result-dir", str(tmp_path / "runs"),
         ]) == 2
 
@@ -486,6 +490,9 @@ class TestVerificationPlanning:
         assert result["verification"]["rate"] == 10.0
         assert result["verification"]["duration_s"] == 60.0
         parameters = captured["plan"]["tasks"][0]["cases"][0]["parameters"]
+        assert parameters["profile"] == "step"
+        assert "arrival_process" not in parameters
+        assert "burstiness" not in parameters
         assert parameters["step_start_rate"] == 10.0
         assert parameters["step_rate_increment"] == 0.0
         assert parameters["step_max_rate"] == 10.0

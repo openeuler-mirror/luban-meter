@@ -439,7 +439,7 @@ def test_every_request_profile_plans_without_session_fields(tmp_path):
     dataset = write_dataset(
         tmp_path, [multi_turn_conversation(0, 3)], "d.json"
     )
-    for profile in ("concurrent", "constant", "poisson", "rate",
+    for profile in ("concurrent", "constant", "poisson", "gamma",
                     "throughput"):
         plan = build_plan(
             {

@@ -98,7 +98,7 @@ class AsyncPoissonStrategy(_IntervalStrategy):
 
 
 class AsyncGammaStrategy(_IntervalStrategy):
-    """Preserve Gamma arrivals with burstiness as the shape parameter."""
+    """Schedule Gamma intervals with burstiness as the shape parameter."""
 
     def interval(self):
         shape = self.parameters["burstiness"]
@@ -142,32 +142,6 @@ class StepStrategy(SchedulingStrategy):
             )
         self.next_offset = offset + 1.0 / rate
         return RequestPlan(offset)
-
-
-def rate_strategy(parameters):
-    """Resolve legacy rate options without changing their timing facts."""
-    if math.isinf(float(parameters["request_rate"])):
-        # Preserve the legacy all-zero targets, including for poisson/gamma.
-        return AsyncConstantStrategy(parameters)
-    implementations = {
-        "constant": AsyncConstantStrategy,
-        "poisson": AsyncPoissonStrategy,
-        "gamma": AsyncGammaStrategy,
-    }
-    return implementations[parameters.get("arrival_process", "constant")](
-        parameters
-    )
-
-
-class RateStrategy(SchedulingStrategy):
-    """Compatibility adapter for extensions using the former rate class."""
-
-    def __init__(self, parameters):
-        self.parameters = parameters
-        self.strategy = rate_strategy(parameters)
-
-    def plan(self, metadata):
-        return self.strategy.plan(metadata)
 
 
 class TraceReplayStrategy(SchedulingStrategy):

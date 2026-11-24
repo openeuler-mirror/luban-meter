@@ -9,7 +9,7 @@
 报告的「离线派生分析」说明列出来源运行、原始窗口、分析请求模式和实际窗口；
 来源文件及代码校验信息随分析产物保存。派生分析不代表重新执行了压测。
 
-在「Case 分析 → 负载对比」选择任务及固定条件组。使用单张动态曲线，默认 TTFT Mean；通过类别和具体指标选择器展示 Case 输出 Token 吞吐量（token/s）、 TTFT/E2EL 的 Mean、P50、P95、P99（ms），TPOT/ITL 的 Mean、P99（ms/token），请求吞吐量（req/s）和成功率（%）。TPOT/ITL 沿用保存的 Token 权重与分位数定义。成功率复用保存的成功/全部请求计数；未保存 Case 级超时率时明确显示不可用，不用分时值替代。可切换完整刻度与局部缩放，非零起点明确标示；比例指标固定 0–100%。每点对应一个正式 Case。rate、constant、poisson 有有限正 request_rate 时以计划到达速率（req/s）为横轴；其他可用配置以 max_concurrency 为横轴。配置并发上限与实际平均、峰值并发分别展示。rate 配置为 "inf" 时适合扫描并发上限。
+在「Case 分析 → 负载对比」选择任务及固定条件组。使用单张动态曲线，默认 TTFT Mean；通过类别和具体指标选择器展示 Case 输出 Token 吞吐量（token/s）、 TTFT/E2EL 的 Mean、P50、P95、P99（ms），TPOT/ITL 的 Mean、P99（ms/token），请求吞吐量（req/s）和成功率（%）。TPOT/ITL 沿用保存的 Token 权重与分位数定义。成功率复用保存的成功/全部请求计数；未保存 Case 级超时率时明确显示不可用，不用分时值替代。可切换完整刻度与局部缩放，非零起点明确标示；比例指标固定 0–100%。每点对应一个正式 Case。constant、poisson、gamma 有有限正 request_rate 时以计划到达速率（req/s）为横轴；其他可用配置以 max_concurrency 为横轴。配置并发上限与实际平均、峰值并发分别展示。历史 rate 结果仍按记录的有限速率或并发上限展示。
 
 曲线只比较同任务、同 Profile、其余保存参数相同的 Case，另一负载参数也须固定。trend_window_seconds 和 Prefix Cache 的旧环境注记不参与分组。外部服务的启动参数、缓存状态和其他流量需要实验者单独控制。重复负载点分别列入明细，组内用散点展示；连线只连接实测点。缺少指标时查看明细，缺失处断线。
 
@@ -62,8 +62,7 @@ luban-meter run \
   --model served-model --tokenizer /models/your-model \
   --data random_token \
   --input-tokens 1024 --output-tokens 128 \
-  --profile rate --request-rate 10 --max-concurrency 32 \
-  --arrival-process poisson \
+  --profile poisson --request-rate 10 --max-concurrency 32 \
   --num-requests 1000 --num-warmups 32 \
   --goodput ttft:1000 tpot:50 e2el:10000 \
   --result-dir results
@@ -135,13 +134,22 @@ C-Eval/CMMLU的`gen`、GSM8K、LCSTS和SQuAD支持两种类型。
 已知上限时提前校验采样范围，Chat输入还计入本地聊天模板；超限不自动缩短。
 在线未指定时不猜测服务上限，也不把Tokenizer的占位极大值视为可信上限。
 
+`scenario`选择评测流程，`dataset_path`选择输入文件，`profile`选择请求调度
+方式。场景名称与数据集同名时，也不表示该数据集与某个Profile固定绑定。
+
+| 适用评测场景（scenario） | Profile可选值 | 默认Profile |
+| --- | --- | --- |
+| `online_serving` | `constant`、`poisson`、`gamma`、`step`、`concurrent`、`throughput`、`synchronous`；`replay`仅限`data=burstgpt` | `constant` |
+| `prefix_cache` | `constant`、`poisson`、`gamma`、`step`、`concurrent`、`throughput`、`synchronous` | `constant` |
+| `multi_turn_serving`及七个质量评测场景 | `constant`、`poisson`、`gamma`、`step`、`concurrent`、`throughput`、`synchronous` | `concurrent` |
+
 逐请求负载提供以下明确入口，CLI与任务JSON使用相同参数：
 
 | Profile | CLI参数示例 | 行为 |
 | --- | --- | --- |
 | `constant` | `--request-rate 10 --max-concurrency 32` | 从时间0开始，每0.1秒计划一次请求 |
 | `poisson` | `--request-rate 10 --max-concurrency 32` | 首次计划在0，后续指数间隔，平均每秒10次 |
-| `rate` | `--request-rate 10 --arrival-process gamma` | 兼容入口，按到达过程安排请求，详见下文 |
+| `gamma` | `--request-rate 10 --burstiness 0.5` | Gamma分布间隔，平均每秒10次，形状由burstiness控制 |
 | `concurrent` | `--max-concurrency 8` | 最多8个请求并发，样本完成后补充 |
 | `throughput` | `--max-concurrency 32` | 在并发容量内持续尽快发送，无到达速率等待 |
 | `replay` | `--replay-speed 2 --max-concurrency 32` | 按轨迹时间的1/2安排请求，详见轨迹回放 |
@@ -150,24 +158,29 @@ C-Eval/CMMLU的`gen`、GSM8K、LCSTS和SQuAD支持两种类型。
 
 例如，将在线命令的负载参数改为`--profile throughput --max-concurrency 32`，
 即可执行有界尽力发送；改为`--profile synchronous`即可串行执行。
-`constant`和`poisson`默认速率为1、并发上限为32；速率必须有限且为正。
+`online_serving`和`prefix_cache`默认使用`constant`。`constant`、`poisson`和
+`gamma`默认速率为1、并发上限为32；速率必须有限且为正。
 `concurrent`默认并发上限为8，`throughput`为32；并发上限均须为正整数。
 `synchronous`只允许省略`max_concurrency`或设为1，其他值提前报错。
 输入准备、评分和客户端调度会影响实际请求间隔及并发，不能保证始终满并发。
 相同容量下，`concurrent`与`throughput`共享即时准入行为；后者不会自动搜索最佳并发。
 
-现有`--profile rate --arrival-process constant/poisson/gamma`继续可用。
-Gamma通过`--burstiness`控制间隔分布形状：小于1更易扎堆，等于1与指数分布相同，
-大于1更均匀；平均间隔仍为`1/request_rate`。例如：
+`gamma`通过专有参数`--burstiness`控制间隔分布形状，默认1且必须有限、为正：
+小于1更易扎堆，等于1与指数分布相同，大于1更均匀；平均间隔仍为
+`1/request_rate`。其他Profile不接受`burstiness`。例如：
 
 ```bash
 luban-meter run --scenario online_serving --model served-model \
-  --profile rate --request-rate 10 --arrival-process gamma --burstiness 0.5
+  --profile gamma --request-rate 10 --burstiness 0.5
 ```
 
-旧的`--profile rate --request-rate inf`继续可用，仍受`max_concurrency`限制，
-所有请求的计划时间保持为Case起点。新增`throughput`的计划时间取实际准入时间，
-因此两者的`scheduling_delay_s`含义不同，不应直接对比；请求延迟和吞吐计算方式不变。
+旧`rate`入口、`arrival_process`参数和`request_rate="inf"`已移除，配置预检
+会拒绝这些写法。速率调度直接选择`constant`、`poisson`或`gamma`；无限速率
+发送改用`throughput`并保留原并发上限。`throughput`以实际准入时间记录计划
+时间，旧无限速率写法以Case起点记录计划时间，因此两者的`scheduling_delay_s`
+和`submission_delay_s`不可直接对比。旧定时计划需用新任务JSON显式更新或
+重新登记；执行前会校验保存的快照，不自动转换旧参数。
+
 `batch`继续用于同步离线Engine：
 
 ```bash
@@ -952,8 +965,9 @@ assistant消息切分：参考回答只作分隔符，**从不回放**，历史�
 3. **请求准入**沿用现有Profile和`RequestScheduler`。`--num-requests`按
    **模型调用**计数，一个会话不算一次请求；不要求预算覆盖全部会话的所有轮次。
 
-多轮只接受请求级Profile（`constant`、`poisson`、`concurrent`、`throughput`、
-`synchronous`），`batch`和`replay`会在预检阶段被拒绝，无需任何专有并发字段。
+多轮只接受请求级Profile（`constant`、`poisson`、`gamma`、`step`、`concurrent`、
+`throughput`、`synchronous`），`batch`和`replay`会在预检阶段被拒绝，
+无需任何专有并发字段。
 会话样本工作线程数取有效请求容量，因此`--profile concurrent
 --max-concurrency 4`表示同时最多4个会话、4个在途请求；会话结束或失败后再
 领取下一个。请求准备、轮间等待和数据尾部可能使实际并发低于上限。
@@ -1227,7 +1241,7 @@ CSV使用`timestamp,input_token,output_token`列，时间单位为秒，长度�
 luban-meter run --scenario online_serving --model served-model \
   --base-url http://127.0.0.1:8000 --tokenizer /models/your-model \
   --data burstgpt --dataset-path /data/trace.csv --num-requests 100 \
-  --profile rate --request-rate 10 --max-concurrency 32
+  --profile constant --request-rate 10 --max-concurrency 32
 ```
 
 轨迹回放使用`--profile replay`，稳定排序后取连续片段，首条为时间零点，禁止shuffle。

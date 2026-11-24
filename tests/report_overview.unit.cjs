@@ -146,7 +146,7 @@ const cases=[point('c16',16,270),point('c4',4,70),point('c8',8,140),
   point('other_model',16,700,{model:'another-model'}),
   point('other_profile',16,800,{profile:'constant',request_rate:2})];
 const before=JSON.stringify(cases),summary=summarize(cases);
-for(const profile of ['concurrent','rate','constant','poisson']) {
+for(const profile of ['concurrent','rate','constant','poisson','gamma']) {
   const rate=profile!=='concurrent';
   const synthetic=[10,2,2,4].map((load,index)=>{
     const record=point('synthetic-test-'+index,rate?8:load,index,{profile,

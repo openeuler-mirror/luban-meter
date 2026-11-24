@@ -686,7 +686,7 @@ def process_case(
         request_outcome = "partial_failed"
 
     case_info: dict[str, Any] = {"request_rate": request_rate}
-    for name in ("arrival_process", "burstiness", "num_prompts", "max_tokens"):
+    for name in ("profile", "burstiness", "num_prompts", "max_tokens"):
         if raw_case.get(name) is not None:
             case_info[name] = raw_case[name]
 
