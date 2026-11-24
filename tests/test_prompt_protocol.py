@@ -71,7 +71,7 @@ def test_cli_rejects_removed_version_flag(command, capsys):
     parser, _ = _build_parser()
     with pytest.raises(SystemExit) as error:
         parser.parse_args([
-            command, "--scenario", "ceval", "--prompt-version", "ceval-v4"
+            command, "--scenario", "ceval", "--prompt-version", "obsolete"
         ])
     assert error.value.code == 2
     assert "unrecognized arguments: --prompt-version" in (
@@ -82,16 +82,18 @@ def test_cli_rejects_removed_version_flag(command, capsys):
 def test_task_json_rejects_removed_version_key(tmp_path):
     config = tmp_path / "tasks.json"
     config.write_text(json.dumps({"tasks": [{
-        "scenario": "ceval", "prompt_version": "ceval-v4",
+        "scenario": "ceval", "prompt_version": "obsolete",
     }]}))
     with pytest.raises(ValueError, match="unknown parameters: prompt_version"):
         build_plan(dataset(tmp_path), config)
 
 
-@pytest.mark.parametrize("endpoint", [
-    "/v1/completions", "/v1/chat/completions",
+@pytest.mark.parametrize(("endpoint", "path"), [
+    ("completion", "/v1/completions"), ("chat", "/v1/chat/completions"),
 ])
-def test_worker_choice_rates_and_wire_prompt(service, tmp_path, endpoint):
+def test_worker_choice_rates_and_wire_prompt(
+    service, tmp_path, endpoint, path
+):
     url, handler = service
     case, raw, directory = run(tmp_path, {
         **dataset(tmp_path), "base_url": url, "endpoint": endpoint,
@@ -99,13 +101,13 @@ def test_worker_choice_rates_and_wire_prompt(service, tmp_path, endpoint):
     })
     assert case["status"] == "success", case
     record = raw["samples"][0]["facts"]
-    assert record["prompt_version"] == "ceval-v4"
+    assert "prompt_version" not in record
     assert record["answer_parser"] == "choice"
     assert "prompt_version" not in case["parameters"]
     assert record["prediction"] == "A"
     assert record["format_compliant"] is False
-    path, body = handler.bodies[0]
-    assert path == endpoint
+    actual_path, body = handler.bodies[0]
+    assert actual_path == path
     wire = body.get("prompt") or body["messages"][0]["content"]
     assert wire == record["prompt"]
     quality = case["metrics"]["answer_output_quality"]["values"]
@@ -113,6 +115,7 @@ def test_worker_choice_rates_and_wire_prompt(service, tmp_path, endpoint):
     assert quality["format_compliance_rate"]["value"] == 0
     assert quality["parse_failure_rate"]["value"] == 0
     meta = raw["metadata"]["evaluation"]
+    assert "prompt_version" not in meta
     assert meta["selected_samples"][0]["id"] == "actual-id"
     assert case["metrics"]["choice_accuracy"]["metadata"][
         "evaluation"
@@ -136,7 +139,7 @@ def test_numeric_default_keeps_legacy_prediction(service, tmp_path):
     record = raw["samples"][0]["facts"]
     assert record["status"] == "success"
     assert record["answer_parser"] == "number"
-    assert record["prompt_version"] == "gsm8k-v1"
+    assert record["input_template"] == "numeric_qa"
     assert record["reference"] == 4
     assert record["prediction"] == 12
     assert record["correct"] is False
@@ -154,7 +157,7 @@ def test_custom_template_identity(service, tmp_path):
     _, raw, _ = run(tmp_path, base)
     row = raw["samples"][0]["facts"]
     assert row["prompt"] == "Solve 2+2?"
-    assert row["prompt_version"] is None
+    assert "prompt_version" not in row
     assert row["prompt_source"] == "custom"
     assert row["answer_parser"] == "number"
     assert row["input_format_sha256"]
@@ -186,14 +189,14 @@ def test_few_shot_selection_and_overlap(service, tmp_path):
     assert not handler.bodies
 
 
-@pytest.mark.parametrize(("scenario", "version", "row", "output"), [
-    ("lcsts", "lcsts-v2", {"id": "summary-id", "content": "正文",
+@pytest.mark.parametrize(("scenario", "template", "row", "output"), [
+    ("lcsts", "summarization", {"id": "summary-id", "content": "正文",
                           "abst": "正文"}, "摘要：正文\n第二行"),
-    ("squad", "squad2-gen-v1", {"id": "reading-id", "context": "passage",
+    ("squad", "reading", {"id": "reading-id", "context": "passage",
                               "question": "q", "answers": [],
                               "is_impossible": True}, "unanswerable"),
 ])
-def test_text_task_prompt_identity(service, tmp_path, scenario, version,
+def test_text_task_prompt_identity(service, tmp_path, scenario, template,
                                    row, output):
     url, handler = service
     handler.output = output
@@ -206,7 +209,7 @@ def test_text_task_prompt_identity(service, tmp_path, scenario, version,
     assert case["status"] == "success", case
     assert raw["metadata"]["evaluation"]["selection"]["few_shot"] == 0
     facts = raw["samples"][0]["facts"]
-    assert facts["prompt_version"] == version
+    assert facts["input_template"] == template
     assert facts["raw_output"] == output
     assert ("TARGET_BEGIN" in facts["prompt"]) is (scenario == "lcsts")
     assert facts["parse_diagnostic"]["status"] == "parsed"
@@ -236,7 +239,7 @@ def test_lcsts_effective_renderer_identity(service, tmp_path, override):
     path.write_text(json.dumps(sample) + "\n")
     plan = build_plan({
         "scenario": "lcsts", "model": "mock", "base_url": url,
-        "dataset_path": str(path), "endpoint": "/v1/chat/completions",
+        "dataset_path": str(path), "endpoint": "chat",
         **{k: v for k, v in override.items() if k != "prompt_template"},
     })
     # Exercise the existing domain-level override through collection.
@@ -282,9 +285,7 @@ def test_lcsts_effective_renderer_identity(service, tmp_path, override):
         assert identity["prompt_source"] == (
             "custom" if config_hash else "builtin"
         )
-        assert identity["prompt_version"] == (
-            None if config_hash else "lcsts-v2"
-        )
+        assert "prompt_version" not in identity
         assert identity["input_format_sha256"] == config_hash
         assert identity["answer_parser"] == "text"
     assert record["prediction"] == handler.output
@@ -313,7 +314,7 @@ def test_worker_parse_failure_diagnostics(service, tmp_path, output, reason):
     handler.output = output
     case, raw, _ = run(tmp_path, {
         **dataset(tmp_path), "base_url": url,
-        "endpoint": "/v1/chat/completions",
+        "endpoint": "chat",
     })
     facts = raw["samples"][0]["facts"]
     assert facts["raw_output"] == output

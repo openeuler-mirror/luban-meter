@@ -57,7 +57,6 @@ def resolve_protocol(cls, parameters, config):
         "prompt_source": "custom" if custom else (
             "dataset" if special else "builtin"
         ),
-        "prompt_version": None if custom else config["prompt_version"],
         "answer_parser": parser,
         "parser_revision": PARSER_REVISIONS.get(parser),
         "input_format_sha256": fingerprint(custom_format) if custom else None,
@@ -94,10 +93,10 @@ def _gsm8k_format_compliant(answer, prompt):
 
 
 def _format_compliance(record, sample, protocol):
-    version = protocol["prompt_version"]
+    template = protocol["input_template"]
     text = record.get("final_output")
-    if protocol["prompt_source"] != "builtin" or version not in (
-        "ceval-v4", "cmmlu-v4", "gsm8k-v1", "lcsts-v2", "squad2-gen-v1",
+    if protocol["prompt_source"] != "builtin" or template not in (
+        "choice", "numeric_qa", "summarization", "reading",
     ):
         return None
     if not isinstance(text, str) or not text.strip():
@@ -105,19 +104,17 @@ def _format_compliance(record, sample, protocol):
     answer = text.strip()
     if any(m in answer for m in record.get("boundary_markers", [])):
         return False
-    if version in ("ceval-v4", "cmmlu-v4"):
+    if template == "choice":
         wire = (record.get("raw_output") or "").strip()
         return bool(re.fullmatch(r"答案：[A-D]", wire))
-    if version == "gsm8k-v1":
+    if template == "numeric_qa":
         return _gsm8k_format_compliant(answer, record.get("prompt", ""))
-    if version == "lcsts-v2":
+    if template == "summarization":
         return len(answer.splitlines()) == 1 and not re.match(
             r"(?:摘要\s*[:：]|摘要如下|标题\s*[:：]|[-*] |[0-9]+[.、] )",
             answer,
         )
-    if version.startswith("squad2-gen-"):
-        return answer == "unanswerable" or answer in sample["context"]
-    return None
+    return answer == "unanswerable" or answer in sample["context"]
 
 
 def annotate_record(record, sample, examples, config, rendered):

@@ -34,7 +34,6 @@ from luban_meter.benchmarking.model_service_quality.common.parsers import (
 )
 from luban_meter.benchmarking.model_service_quality.common.prompts import (
     render_squad_prompt,
-    validate_prompt_version,
 )
 from luban_meter.benchmarking.model_service_quality.common.records import (
     scalar,
@@ -192,9 +191,6 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
         "prompt_format": enum_value(
             parameters, "prompt_format", ("chat", "base"), "chat"
         ),
-        "prompt_version": string_value(
-            parameters, "prompt_version", "squad2-gen-v1"
-        ),
         "max_tokens": positive_integer(parameters, "max_tokens", 64),
         "stop": string_list(parameters, "stop", []),
         "max_concurrency": positive_integer(parameters, "max_concurrency", 8),
@@ -203,8 +199,7 @@ def validate_parameters(parameters: Mapping[str, Any]) -> dict[str, Any]:
     if not config["dataset_path"]:
         raise ValueError("dataset_path must not be empty")
     if config["few_shot"] != 0:
-        raise ValueError("squad2-gen-v1 supports only few_shot=0")
-    validate_prompt_version("squad", config["prompt_version"])
+        raise ValueError("SQuAD supports only few_shot=0")
     return config
 
 

@@ -69,7 +69,6 @@ def test_validate_parameters(tmp_path: Path) -> None:
     config = humaneval.validate_parameters(parameters)
     assert config["samples_per_task"] == 1
     assert config["pass_k"] == [1]
-    assert config["prompt_version"] == "humaneval-completion-v1"
     with pytest.raises(ValueError):
         humaneval.validate_parameters({**parameters, "samples_per_task": 2})
     with pytest.raises(ValueError):

@@ -299,10 +299,10 @@ luban-meter run --scenario ceval --model served-model \
 ```
 
 选择题支持`gen`和`ppl`；`ppl`要求completions接口支持echo/logprobs。
-CMMLU 与 C-Eval 默认的 `gen` Prompt 标识分别为 `cmmlu-v4` 和 `ceval-v4`。
-模板区分 Few-shot 示例、待答问题和选项，并要求只输出一行 `答案：D`。
-`ppl` 保留 v1 Prompt 及原有 logprob 评分方式。原始事实中的 `prompt_version`
-记录实际模板标识，新旧模板的得分应分别比较。
+C-Eval与CMMLU共用选择题模板，按评测方式组织输入。`gen`将Few-shot示例、
+待答问题和选项分区，要求只输出一行`答案：X`，其中X为A、B、C或D。
+`ppl`在待答题的`答案：`后依次拼接各候选选项，按续接Token的平均
+logprob选择得分最高的选项。
 
 选择题生成解析先排除完整的`<think>...</think>`块，再匹配独立的A/B/C/D
 或完整答案行，例如`答案：D`、`答案是D`、`最终答案：D`、`Answer: D`。
@@ -1324,21 +1324,13 @@ luban-meter run --scenario offline_vllm_async --model /models/your-model \
 
 ### 默认 Prompt 与结果追踪
 
-CEVAL 和 CMMLU 的生成式评测使用验证过的单行选择题 Prompt，要求输出
-`答案：X`，结果标识分别为 `ceval-v4`、`cmmlu-v4`。
-两者的 `eval_mode=ppl` 保持原 v1 续接输入和 logprob 评分。
-LCSTS 使用 `lcsts-v2`，明确正文范围并要求只返回摘要正文。
-GSM8K、SQuAD、HumanEval 和 WikiText 沿用原有输入与评分方式。
-
-如使用过实验配置，请从命令中移除 `--prompt-version`，并从任务 JSON 中移除
-`prompt_version`。继续传入这些输入会报参数错误。结果中的同名字段是实际内置
-Prompt 的只读标识。对于历史运行，可读取原始结果保存的文本；若需完整复现，
-应使用当时归档的代码、配置、数据和模型环境。历史结果缺少标识时显示“未记录”。
+LCSTS 将待摘要正文单独标出，要求模型只返回一行摘要正文。查看某个样本的输入时，
+可读取原始结果保存的 Prompt 文本，并用其 SHA-256 与其他运行逐样本核对。
 
 选择题与 LCSTS 默认模板分别标记示例和待测输入，保留原有示例选择策略。
 如所选示例与本次测试输入重叠，评测在发送模型请求前报错。
-`format_string` 等自定义模板继续使用原接口。结果标为 `prompt_source=custom`，
-不分配内置 Prompt 标识。内置 `format_string` 不自动插入 Few-shot 示例。
+`format_string` 等自定义模板在结果中标为 `prompt_source=custom`，
+并记录格式配置的哈希。内置 `format_string` 不自动插入 Few-shot 示例。
 
 原始事实保存实际 Prompt 及其哈希、解析结果、生成条件和样本身份。
 生成式问答及摘要的默认指标包含 `answer_output_quality`，区分答案可解析率、
