@@ -15,8 +15,12 @@ from contextlib import nullcontext
 from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
+from luban_meter.core.metric import aggregates_run_throughput
 from luban_meter.core.planning import public_plan
-from luban_meter.core.token_totals import run_throughput
+from luban_meter.core.token_totals import (
+    run_throughput,
+    run_throughput_selected,
+)
 from luban_meter.log import (
     configure_logging,
     console_progress,
@@ -181,6 +185,10 @@ class RunCoordinator:
                         "category": task["category"],
                         "status": "skipped",
                         "cases": [],
+                        "aggregate_run_throughput": any(
+                            aggregates_run_throughput(c["parameters"]["metrics"])
+                            for c in task["cases"]
+                        ),
                     }
                 else:
                     with log_context(task=task["name"]):
@@ -209,8 +217,7 @@ class RunCoordinator:
         result["finished_at"] = time.time()
         result["duration_s"] = time.perf_counter() - started_monotonic
         result["metrics"] = {}
-        if any(task.get("category") == "generation_performance"
-               for task in result["tasks"]):
+        if run_throughput_selected(result["tasks"]):
             result["metrics"]["token_throughput"] = run_throughput(
                 result["tasks"]
             )
@@ -380,6 +387,11 @@ class RunCoordinator:
         if errors or self.interruptions:
             logger.warning("Recovering Case results after worker failure/stop")
             recover_cases(task, directory, outcome, outcome["status"])
+        selected = any(aggregates_run_throughput(c["parameters"]["metrics"])
+                       for c in task["cases"])
+        outcome["aggregate_run_throughput"] = selected
+        for case in outcome["cases"]:
+            case["aggregate_run_throughput"] = selected
         outcome["artifacts"] = str(directory)
         write_json_atomic(
             directory / "raw" / "manifest.json",

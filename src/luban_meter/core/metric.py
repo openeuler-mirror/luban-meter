@@ -16,6 +16,7 @@ class Metric(ABC):
     requires: frozenset[str] = frozenset()
     required_fields: dict = {}
     description = ""
+    aggregate_run_throughput = False
 
     @abstractmethod
     def compute(self, facts: Mapping) -> Mapping:
@@ -23,6 +24,10 @@ class Metric(ABC):
 
 
 metrics = Registry("metric", Metric)
+
+
+def aggregates_run_throughput(names):
+    return any(metrics.get(name).aggregate_run_throughput for name in names)
 
 
 def compute_metrics(names, capabilities, facts):

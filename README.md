@@ -1164,6 +1164,41 @@ luban-meter report --input results/<run_id>/result.json --output report.html
 
 ## 指标口径
 
+在线场景`online_serving`、`multi_turn_serving`和`prefix_cache`支持通过
+`metrics`独立选择已注册的性能指标：
+
+```json
+"metrics": [
+  "ttft", "tpot", "itl", "e2el",
+  "request_throughput", "input_token_throughput",
+  "output_token_throughput", "total_token_throughput"
+]
+```
+
+例如只计算TTFT和服务窗口输出吞吐量：
+
+```bash
+luban-meter run --scenario online_serving --model served-model \
+  --metrics ttft output_token_throughput
+```
+
+显式非空列表替换默认选择；结果JSON、终端和HTML只输出所选指标及必要的请求
+计数、统计窗口等信息。原始请求事实继续完整保存，不增加模型请求。
+需要分时窗口时同时选择 `stability_trends`。在 `search-capacity` 命令中显式
+选择指标时，将 `capacity_search` 与所需指标一起列出以生成容量结论。
+四种吞吐量分别以成功请求数、成功输入Token数、成功输出Token数、成功输入与
+输出Token总数除以Case正式窗口；`output_token_throughput`独立指标表示
+服务窗口吞吐量，不是逐请求速率。缺少usage时，对应Token吞吐量留空并说明原因。
+
+省略`metrics`或设置`[]`仍使用场景默认值；`streaming_performance`继续提供
+完整在线指标组和多轮视图，既有任务无需修改。显式选择单项时不自动附加多轮视图、
+前缀缓存命中率或思考阶段指标，需要时一并选择已有指标组。
+前缀缓存如需命中率及其有效性排名，同时选择`prefix_cache_hit_rate`；仅选
+延迟或吞吐量时保留对应结果，不参与缓存有效性排名。
+只有选择了`total_token_throughput`或包含它的指标组，才生成相应的整轮汇总；
+混合任务只汇总选择了总吞吐量的性能任务，其余任务记入排除台账。
+离线Engine沿用原有指标组，不接受上述客户端在线指标。
+
 完整的时间边界、公式、样本排除、权重及思考Token计数说明见
 [在线性能与思考阶段指标说明](METRICS.md)，图文与计算示例见
 [HTML指标说明](METRICS.html)。

@@ -220,26 +220,31 @@ function isDimension(metric) {
 }
 function summaryMetrics(task) {
   const all = new Map();
-  const providers = new Map(task.cases.map(c => [c, calculatorProviderName(c)]));
+  const providers = new Map(task.cases.map(c => [c, calculatorProviderNames(c)]));
   task.cases.forEach(c => metricsFor(c).forEach(m => {
     // Run-level throughput metrics saved under other providers must not
     // leak into per-Case summary columns.
     const provider = providers.get(c);
     const phase=phasePerformanceViews.some(([view,key])=>
       m.key===key && m.parts.at(-2)===view) || m.parts.at(-2)==='phase_counts';
-    if (provider !== null && m.parts[0] !== provider && !phase && m.parts[0]!=='prefix_cache_hit_rate') return;
+    if (provider.length && !provider.includes(m.parts[0]) && !phase && m.parts[0]!=='prefix_cache_hit_rate') return;
     all.set(JSON.stringify([m.path,m.unit]),m);
   }));
   const available = [...all.values()];
   if (task.category !== 'generation_performance')
     return available.filter(m=>!isDimension(m));
+  const selected=new Set(task.cases.flatMap(c=>c.parameters?.metrics||[]));
   const core = available.filter(m =>
-    /\/request_view\/(ttft|tpot|reasoning_duration|content_duration|first_content_latency|reasoning_ttft|reasoning_tpot|reasoning_itl|reasoning_stream_event_itl)$|\/service_view\/(output_token_throughput|total_token_throughput)$|\/phase_counts\/(truncated_requests|excluded_requests)$/.test(m.path));
-  const order=['ttft','tpot','output_token_throughput','total_token_throughput','reasoning_ttft',
+    /\/request_view\/(ttft|tpot|reasoning_duration|content_duration|first_content_latency|reasoning_ttft|reasoning_tpot|reasoning_itl|reasoning_stream_event_itl)$|\/service_view\/(output_token_throughput|total_token_throughput)$|\/phase_counts\/(truncated_requests|excluded_requests)$/.test(m.path) ||
+    (selected.has(m.key) && corePerformanceViews.some(([view,key])=>
+      m.key===key && m.parts.at(-2)===view)));
+  const order=['ttft','tpot','itl','e2el','request_throughput','input_token_throughput','output_token_throughput','total_token_throughput','reasoning_ttft',
     'reasoning_tpot','reasoning_itl','reasoning_stream_event_itl','reasoning_duration',
     'content_duration','first_content_latency','truncated_requests','excluded_requests'];
   const cache=available.filter(m=>m.parts[0]==='prefix_cache_hit_rate' && cacheSummaryKeys.includes(m.key));
-  return [...cache,...(core.length ? core.sort((a,b)=>
+  const unique=[...new Map(core.map(m=>[
+    JSON.stringify([m.parts.at(-2),m.key,m.unit]),m])).values()];
+  return [...cache,...(unique.length ? unique.sort((a,b)=>
     order.indexOf(a.key)-order.indexOf(b.key)) : available.slice(0,4))];
 }
 // Configured SLO dimensions only; unconfigured ones stay null and are
@@ -475,42 +480,61 @@ const calculatorViews = [
   ['request_view','ttft'], ['request_view','tpot'],
   ['request_view','itl'], ['request_view','e2el'],
   ['service_view','request_throughput'],
-  ['service_view','output_token_throughput']
+  ['service_view','input_token_throughput'],
+  ['service_view','output_token_throughput'],
+  ['service_view','total_token_throughput']
 ];
 // Menu order; total_token_throughput is also saved by the independent
 // run-level token_throughput metric, so its rows are only core when they
 // come from the identified serving calculator provider.
-const corePerformanceViews = [
-  ...calculatorViews, ['service_view','total_token_throughput']
-];
+const corePerformanceViews = calculatorViews;
+function hasSelectivePerformance(c) {
+  return c.aggregate_run_throughput===false ||
+    corePerformanceViews.some(([,key])=>c.parameters?.metrics?.includes(key));
+}
 const phasePerformanceViews = [
   ['request_view','reasoning_ttft'], ['request_view','reasoning_tpot'],
   ['request_view','reasoning_itl'], ['request_view','reasoning_stream_event_itl'],
   ['request_view','reasoning_duration'], ['request_view','content_duration'],
   ['request_view','first_content_latency']
 ];
-function calculatorProviderName(c) {
-  for (const [name, metric] of Object.entries(c?.metrics||{})) {
+function calculatorProviderNames(c) {
+  const providers=Object.entries(c?.metrics||{}).flatMap(([name,metric])=>{
+    if(name==='token_throughput')return [];
     const values=metric?.values;
-    if (calculatorViews.some(([view,key])=>
-        Object.hasOwn(values?.[view]||{},key))) return name;
-  }
-  return null;
+    return calculatorViews.some(([view,key])=>
+      Object.hasOwn(values?.[view]||{},key) &&
+      (!['input_token_throughput','total_token_throughput'].includes(key) ||
+        metric.observation_boundary==='client'))?[name]:[];
+  });
+  const selected=providers.filter(name=>c.parameters?.metrics?.includes(name));
+  return selected.length?selected:providers.slice(0,1);
 }
 function corePerformanceMetrics(c) {
   const available=metricsFor(c);
-  const provider=calculatorProviderName(c);
+  const providers=calculatorProviderNames(c);
   const core=corePerformanceViews.flatMap(([view,key])=>
     available.filter(m=>m.key===key && m.parts.at(-2)===view &&
-      (provider===null || m.parts[0]===provider)));
+      (!providers.length || providers.includes(m.parts[0]))).slice(0,1));
   return core.concat(phasePerformanceViews.flatMap(([view,key])=>
     available.filter(m=>m.key===key && m.parts.at(-2)===view)));
 }
 // Saved request/service fields identify the online calculator independently;
 // missing distributions do not hide available service statistics.
 function servingMetric(c) {
-  const name=calculatorProviderName(c);
-  return name===null?undefined:c?.metrics?.[name];
+  const providers=calculatorProviderNames(c).map(name=>c.metrics[name]);
+  if(providers.length<2)return providers[0];
+  const combined={...providers[0],values:{}};
+  for(const metric of providers) {
+    for(const [view,fields] of Object.entries(metric.values||{})) {
+      if(fields && typeof fields==='object' && !Array.isArray(fields))
+        combined.values[view]={...fields,...combined.values[view]};
+      else if(!Object.hasOwn(combined.values,view))combined.values[view]=fields;
+    }
+    if(['failed','partial_failed'].includes(metric.status))combined.status=metric.status;
+    if(metric.error)combined.error=metric.error;
+  }
+  return combined;
 }
 // Per-turn facts live in turn_view; a metric carrying it is a session metric.
 function sessionValues(c) {
@@ -692,11 +716,17 @@ function updateAnalysisLoadGroups() {
 }
 function updateAnalysisLoadMetricOptions() {
   const select=$('analysis-load-metric'),previous=select.value;
-  const category=$('analysis-load-category').value;
   const group=analysisLoadGroups[Number($('analysis-group').value)];
+  const selected=selectedLoadFields(summaryGroupRecords(group));
+  const category=$('analysis-load-category'),oldCategory=category.value;
+  const categories=[...new Set(loadRelatedMetrics.filter(spec=>!selected || selected.has(spec[2]))
+    .map(spec=>spec[4]))];
+  category.replaceChildren();
+  categories.forEach(name=>option(category,name,name));
+  category.value=categories.includes(oldCategory)?oldCategory:(categories[0]||'');
   select.replaceChildren();
   loadRelatedMetrics.forEach((spec,index)=>{
-    if(spec[4]!==category)return;
+    if(spec[4]!==category.value || (selected && !selected.has(spec[2])))return;
     const available=group && curvePoints(group,spec).some(point=>numeric(point.value));
     option(select,String(index),spec[0]+'（'+displayUnit(spec[1])+'）'+
       (available?'':' · 不可用'));
@@ -881,9 +911,6 @@ function initAnalysis() {
     updateAnalysisLoadMetricOptions();
     renderAnalysis();
   };
-  const categories=[...new Set(loadRelatedMetrics.map(spec=>spec[4]))];
-  categories.forEach(category=>option($('analysis-load-category'),category,category));
-  $('analysis-load-category').value=categories[0];
   $('analysis-load-category').onchange=()=>{
     updateAnalysisLoadMetricOptions();renderAnalysisInPlace();
   };
@@ -930,6 +957,10 @@ const cacheSummaryKeys=['target_rate','theoretical_shared_ratio','actual_hit_rat
   'runtime_deviation','request_coverage','token_coverage'];
 const cacheAnalysisKeys=[...cacheSummaryKeys,'target_deviation'];
 const cacheMetric=c=>c?.metrics?.prefix_cache_hit_rate;
+function cacheMetricSelected(c) {
+  const names=c?.parameters?.metrics;
+  return !names?.length || names.includes('prefix_cache_hit_rate');
+}
 const isPrefixCache=c=>!!cacheMetric(c) || Object.hasOwn(c?.parameters||{},'prefix_cache_target');
 const cacheValue=(c,key)=>c?.status==='discarded'?null:cacheMetric(c)?.values?.[key]?.value;
 const cacheStates={observed_mismatch:'已完成但命中不符',matched:'符合',under_hit:'命中不足',over_hit:'高于预期',missing:'缺失',valid:'有效',partial:'部分覆盖',unavailable:'不可测',invalid:'无效',
@@ -964,14 +995,14 @@ function renderCacheSummary(parent,task,c,ti,ci) {
   function table(title,rows) {
     dataTable(grid,[{title,get:r=>r[0]},{title:'结果',get:r=>r[1]}],rows);
   }
-  table('缓存命中',[
+  const warmup=cacheWarmup(c), metric=cacheMetric(c);
+  if(metric || cacheMetricSelected(c))table('缓存命中',[
     ['目标命中率',quantity(cacheTarget(c),'cache_ratio','%')],
     ...[['实际命中率','actual_hit_rate'],['理论共享比例','theoretical_shared_ratio'],
       ['请求覆盖率','request_coverage'],['Token 覆盖率','token_coverage']].map(
       ([label,key])=>[label,quantity(cacheValue(c,key),'cache_ratio','%')]),
     ['运行偏差',quantity(cacheValue(c,'runtime_deviation'),'ratio_pp',' pp')]
   ]);
-  const warmup=cacheWarmup(c), metric=cacheMetric(c);
   const reasons=metric?.measurement?.reasons||[];
   if(reasons.length)panel.append(el('p',
     '测量诊断：'+reasons.map(r=>r==='formal_observation_incomplete'?
@@ -981,16 +1012,22 @@ function renderCacheSummary(parent,task,c,ti,ci) {
     ['输出上限',quantity(p.output_tokens,'',' token')],
     ['预热',[(warmup.warmup_policy||p.prefix_cache_warmup_policy||'strict'),
       cacheState(warmup.warmup_status||warmup.status).split(' / ')[0]].join(' · ')],
-    ['测量有效性',cacheState(metric?.measurement?.status).split(' / ')[0]],
-    ['目标达标',cacheState(metric?.target_attainment?.status).split(' / ')[0]]
+    ...(metric || cacheMetricSelected(c)?[
+      ['测量有效性',cacheState(metric?.measurement?.status).split(' / ')[0]],
+      ['目标达标',cacheState(metric?.target_attainment?.status).split(' / ')[0]]]:[])
   ]);
   const v=servingMetric(c)?.values||{};
   const rows=[['完成请求',c.coverage?.complete],['失败请求',c.coverage?.failed]];
   for(const [label,node,field] of [
     ['TTFT 均值',v.request_view?.ttft,'mean'],['TPOT 均值',v.request_view?.tpot,'mean'],
     ['输出吞吐',v.service_view?.output_token_throughput,'value'],
-    ['总吞吐',v.service_view?.total_token_throughput,'value']])
-    rows.push([label,quantity(node?.[field],node?.unit,' '+(node?.unit||''))]);
+    ['总吞吐',v.service_view?.total_token_throughput,'value'],
+    ...(hasSelectivePerformance(c)?[
+      ['ITL 均值',v.request_view?.itl,'mean'],['E2EL 均值',v.request_view?.e2el,'mean'],
+      ['请求吞吐',v.service_view?.request_throughput,'value'],
+      ['输入吞吐',v.service_view?.input_token_throughput,'value']]:[])])
+    if(node || !hasSelectivePerformance(c))
+      rows.push([label,quantity(node?.[field],node?.unit,' '+(node?.unit||''))]);
   table('请求与性能',rows);
   panel.append(grid);parent.append(panel);
 }
@@ -1010,15 +1047,18 @@ function cacheStatusColumns() {
 }
 function renderCacheDetails(parent,c) {
   if (!isPrefixCache(c) && !c.setup_diagnostic) return;
+  if(!cacheMetricSelected(c) && !cacheMetric(c) && !c.setup_diagnostic)return;
   const section=el('div',undefined,'analysis-group prefix-cache-details');
-  section.append(el('h3','Prefix Cache · 已保存的正式请求统计'));
+  section.append(el('h3',!cacheMetricSelected(c) && !cacheMetric(c)?
+    'Prefix Cache · 准备阶段诊断':'Prefix Cache · 已保存的正式请求统计'));
   const m=c.status==='discarded'?null:cacheMetric(c);
-  dataTable(section,[{title:'指标',get:r=>cacheLabels[r.key]},
+  if(m || cacheMetricSelected(c))dataTable(section,[{title:'指标',get:r=>cacheLabels[r.key]},
     {title:'保存值',get:r=>valueText(r.node?.value,r.unit)+
       (numeric(r.node?.value)?' '+displayUnit(r.unit):'')}],
     Object.keys(cacheLabels).map(key=>({key,node:m?.values?.[key],
       unit:key.endsWith('_deviation')?'ratio_pp':m?.values?.[key]?.unit==='ratio'?'cache_ratio':m?.values?.[key]?.unit})));
-  dataTable(section,cacheStatusColumns(),[{c}]);
+  dataTable(section,!cacheMetricSelected(c) && !m?
+    cacheStatusColumns().slice(0,-2):cacheStatusColumns(),[{c}]);
   const warmup=cacheWarmup(c);
   const observations=Object.entries(warmup.warmup_summary||{}).flatMap(
     ([phase,rows])=>rows.map(row=>({phase,...row})));
@@ -1060,21 +1100,34 @@ function cacheComparisonGroups(task) {
   }
   return [...groups.values()];
 }
+function cacheComparisonSpecs(cases) {
+  return [['actual_hit_rate','实际缓存命中率','cache_ratio'],
+    ...corePerformanceViews.map(([view,key])=>[key,readable(key),null,view])]
+    .filter(([key,,,view])=>cases.some(c=>key==='actual_hit_rate'?
+      !!cacheMetric(c) || cacheMetricSelected(c):
+      !hasSelectivePerformance(c) || c.parameters?.metrics?.includes(key) ||
+        corePerformanceMetrics(c).some(m=>m.key===key && m.parts.at(-2)===view)));
+}
 function renderCacheComparison(parent,task) {
-  const groups=cacheComparisonGroups(task);
+  const groups=cacheComparisonGroups(task).filter(g=>cacheComparisonSpecs(g.cases).length);
   if (!groups.length) return;
   const section=el('div',undefined,'analysis-group prefix-cache-comparison');
   section.append(el('h3','不同目标命中率的性能对比'),
     el('p','横轴：目标缓存命中率（%）。其余负载与服务配置相同的 Case 才归为一组。'+
-      '预热符合情况与目标达标状态见表格。'+
-      '* 表示正式统计不可用；Case 编号见柱形悬浮提示和明细。异常 Case 保留诊断，不参加最佳结果推荐。','analysis-note'));
+      '测试条件与已保存指标见表格。'+
+      '* 表示所选统计不可用；Case 编号见柱形悬浮提示和明细。异常 Case 保留诊断，不参加最佳结果推荐。','analysis-note'));
   const controls=el('div',undefined,'toolbar'),select=el('select'),metric=el('select');
   select.setAttribute('aria-label','缓存对比条件组');
   metric.setAttribute('aria-label','缓存对比指标');
   groups.forEach((g,i)=>option(select,String(i),'条件组 '+(i+1)+' · '+g.cases.length+' Case'));
-  const specs=[['actual_hit_rate','实际缓存命中率','cache_ratio'],
-    ...corePerformanceViews.map(([view,key])=>[key,readable(key),null,view])];
-  specs.forEach(([key,label])=>option(metric,key,label));
+  let specs=[];
+  function updateMetrics() {
+    const previous=metric.value;
+    specs=cacheComparisonSpecs(groups[Number(select.value)].cases);
+    metric.replaceChildren();
+    specs.forEach(([key,label])=>option(metric,key,label));
+    metric.value=specs.some(([key])=>key===previous)?previous:specs[0][0];
+  }
   controls.append(select,metric);section.append(controls);
   const context=el('details'),chart=el('div'),table=el('div');
   context.append(el('summary','本组完整测试条件'),el('pre'));
@@ -1082,6 +1135,7 @@ function renderCacheComparison(parent,task) {
   function draw() {
     chart.replaceChildren();table.replaceChildren();
     const g=groups[Number(select.value)];
+    const withCache=g.cases.some(c=>cacheMetric(c) || cacheMetricSelected(c));
     context.querySelector('pre').textContent=JSON.stringify(g.parameters,null,2);
     const spec=specs.find(([key])=>key===metric.value);
     const rows=g.cases.map(c=>{
@@ -1092,20 +1146,24 @@ function renderCacheComparison(parent,task) {
         unit:spec[2]||selected?.unit};
     }).sort((a,b)=>(a.target??Infinity)-(b.target??Infinity));
     const units=[...new Set(rows.filter(r=>numeric(r.value)).map(r=>r.unit))];
+    const usable=c=>withCache?cacheEligible(c):c.status==='success' && c.collection_complete===true;
     if (units.length<=1) barChart(chart,rows.map(r=>({
-      label:valueText(r.target,'cache_ratio')+'%'+(cacheEligible(r.c)?'':' *'),
-      detail:r.c.id+(cacheEligible(r.c)?'':' [正式统计不可用]'),value:r.value})),units[0]||spec[2],
+      label:valueText(r.target,'cache_ratio')+'%'+(usable(r.c)?'':' *'),
+      detail:r.c.id+(usable(r.c)?'':' [所选统计不可用]'),value:r.value})),units[0]||spec[2],
       '横轴：目标命中率（%）；纵轴：'+spec[1]+(spec[3]==='request_view'?' Mean':''));
     else chart.append(el('p','保存单位不一致，仅展示明细，不混合绘图。','analysis-note'));
     dataTable(table,[{title:'Case',get:r=>r.c.id},
-      ...['target_rate','theoretical_shared_ratio','actual_hit_rate'].map(key=>({
+      {title:cacheLabels.target_rate+'（%）',numeric:true,unit:'cache_ratio',get:r=>r.target},
+      ...(withCache?['theoretical_shared_ratio','actual_hit_rate']:[]).map(key=>({
         title:cacheLabels[key]+'（%）',numeric:true,unit:'cache_ratio',get:r=>cacheValue(r.c,key)})),
       ...(spec[0]==='actual_hit_rate'?[]:[{title:spec[1],
         get:r=>valueText(r.value,r.unit)+(numeric(r.value)?' '+displayUnit(r.unit):'')}]),
-      ...cacheStatusColumns(),
-      {title:'推荐资格',get:r=>usablePerformanceResult(r.c)?'可参与':'排除（统计或执行不完整）'}],rows);
+      ...(withCache?cacheStatusColumns():cacheStatusColumns().slice(0,-2)),
+      {title:'推荐资格',get:r=>!withCache?'未评估缓存命中率':
+        usablePerformanceResult(r.c)?'可参与':'排除（统计或执行不完整）'}],rows);
   }
-  select.onchange=metric.onchange=draw;draw();parent.append(section);
+  select.onchange=()=>{updateMetrics();draw();};metric.onchange=draw;
+  updateMetrics();draw();parent.append(section);
 }
 function renderCacheRequest(parent,response) {
   const c=response.prefix_cache;

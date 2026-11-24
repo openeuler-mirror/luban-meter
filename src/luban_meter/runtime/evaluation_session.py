@@ -10,7 +10,7 @@ from contextvars import copy_context
 from pathlib import Path
 
 from luban_meter.core.execution_summary import prepared_summary
-from luban_meter.core.metric import compute_metrics
+from luban_meter.core.metric import aggregates_run_throughput, compute_metrics
 from luban_meter.core.parameters import public_parameters
 from luban_meter.core.planning import schema_for
 from luban_meter.core.token_totals import request_total
@@ -230,6 +230,9 @@ def _run_case(
     device_monitor = None
     host_monitor = None
     result = {"id": case["id"], "status": "failed", "metrics": {}}
+    result["aggregate_run_throughput"] = aggregates_run_throughput(
+        p["metrics"]
+    )
     public = public_parameters(p, schema_for(scenario_type, p))
     result["parameters"] = public
     context.emit("case_started", {"parameters": public})

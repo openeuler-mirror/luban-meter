@@ -160,6 +160,7 @@ class StreamingPerformance(Metric):
     """Shared streaming statistics, with views for recorded session turns."""
 
     requires = frozenset({"client_stream_timing"})
+    aggregate_run_throughput = True
 
     def compute(self, facts):
         from .generation_performance.common.lengths import length_summary
@@ -249,6 +250,7 @@ class StabilityTrends(Metric):
 @metrics.register("engine_performance")
 class EnginePerformance(Metric):
     requires = frozenset({"engine_timing"})
+    aggregate_run_throughput = True
 
     def compute(self, facts):
         from .generation_performance.common.lengths import length_summary
@@ -299,6 +301,7 @@ class EnginePerformance(Metric):
 @metrics.register("async_engine_performance")
 class AsyncEnginePerformance(Metric):
     requires = frozenset({"async_engine_timing"})
+    aggregate_run_throughput = True
 
     def compute(self, facts):
         from .generation_performance.common.lengths import length_summary

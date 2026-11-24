@@ -134,6 +134,21 @@ def throughput_result(total, duration, *, reason=None, metadata=None):
     return result
 
 
+def throughput_selected(case):
+    """Read saved selection; historical results retain automatic rollups."""
+    return case.get("aggregate_run_throughput", True)
+
+
+def run_throughput_selected(tasks):
+    return any(
+        not task.get("cases")
+        or any(throughput_selected(case) for case in task["cases"])
+        for task in tasks
+        if task.get("category") == "generation_performance"
+        and throughput_selected(task)
+    )
+
+
 def run_throughput(tasks):
     """Aggregate persisted Case metrics with an explicit inclusion ledger."""
     total, duration = 0, 0.0
@@ -142,6 +157,11 @@ def run_throughput(tasks):
         if task.get("category") != "generation_performance":
             continue
         identity = {"task_index": task_index, "task": task.get("name")}
+        if not throughput_selected(task):
+            skipped.append({
+                **identity, "reason": "total token throughput not selected",
+            })
+            continue
         if task["status"] == "skipped":
             skipped.append({**identity, "reason": "task skipped"})
             continue
@@ -150,6 +170,11 @@ def run_throughput(tasks):
         for case_index, case in enumerate(task.get("cases", [])):
             item = {**identity, "case_index": case_index,
                     "case": case.get("id"), "status": case["status"]}
+            if not throughput_selected(case):
+                skipped.append({
+                    **item, "reason": "total token throughput not selected",
+                })
+                continue
             if case["status"] == "skipped":
                 skipped.append({**item, "reason": "Case skipped"})
                 continue
@@ -191,7 +216,10 @@ def run_throughput(tasks):
         total, duration = None, None
         reason = "no measured Cases"
     return throughput_result(total, duration, reason=reason, metadata={
-        "scope": "generation_performance Cases, independent of report filters",
+        "scope": (
+            "selected generation_performance Cases, "
+            "independent of report filters"
+        ),
         "included_cases": included,
         "skipped_cases": skipped,
         "unavailable_cases": unavailable,

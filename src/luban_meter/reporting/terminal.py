@@ -9,7 +9,11 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 
-from luban_meter.core.token_totals import saved_throughput_metric
+from luban_meter.core.token_totals import (
+    run_throughput_selected,
+    saved_throughput_metric,
+    throughput_selected,
+)
 
 from .best_summary import best_summary_lines
 from .data import format_number as number
@@ -25,7 +29,9 @@ SUMMARY_PATHS = (
     "request_view/ttft", "request_view/itl", "request_view/tpot",
     "request_view/e2el", "request_view/input_tokens",
     "request_view/output_tokens", "service_view/request_throughput",
+    "service_view/input_token_throughput",
     "service_view/output_token_throughput",
+    "service_view/total_token_throughput",
 )
 
 
@@ -417,7 +423,8 @@ def case_lines(task, case, width, verbose=False):
     labels = [heading, *context_lines(case, verbose)]
     if verbose and display_name != task["name"]:
         labels.append("任务 ID: " + safe_text(task["name"]))
-    if task.get("category") == "generation_performance":
+    if (task.get("category") == "generation_performance"
+            and throughput_selected(case)):
         labels.append(label)
     yield from boxed(labels, width)
     if case.get("setup_diagnostic"):
@@ -657,8 +664,7 @@ def render_text(payload, *, tasks=(), cases=(), all_cases=False, width=None,
     ]
     if run:
         lines.append(f"整轮 duration={number(payload.get('duration_s'))} s")
-    if run and any(t.get("category") == "generation_performance"
-                   for t in all_tasks):
+    if run and run_throughput_selected(all_tasks):
         view = saved_token_view(payload)
         total = (view.get("total_tokens") or {}).get("value")
         formal_duration = (view.get("benchmark_duration") or {}).get("value")

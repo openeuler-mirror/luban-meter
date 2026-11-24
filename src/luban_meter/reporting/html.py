@@ -7,6 +7,8 @@ import re
 from html import escape
 from pathlib import Path
 
+from luban_meter.core.token_totals import run_throughput_selected
+
 from .data import format_number, metric_rows, validate_result
 from .data import load_result as load_result
 from .prefix_cache import METRIC, cache_report_metric, redact_cache_salts
@@ -244,8 +246,7 @@ def run_summary_html(payload):
         ("性能评测输入＋输出 Token 总数", view.get("total_tokens") or {}),
         ("total_token_throughput", view.get("total_token_throughput") or {}),
     ]
-    has_performance = any(t.get("category") == "generation_performance"
-                          for t in payload.get("tasks", []))
+    has_performance = run_throughput_selected(payload.get("tasks", []))
     if not has_performance:
         nodes = nodes[:1]
     # Lead with the saved run-level total throughput as a large number;
