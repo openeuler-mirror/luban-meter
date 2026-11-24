@@ -382,7 +382,6 @@ def test_real_cli_pipeline_preserves_saved_results(
             "--output-tokens", "2", "--num-requests", "3",
             "--num-warmups", "1" if mode == "ok" else "0",
             "--profile", "synchronous",
-            # This test asserts both saved metrics. Phase timing is opt-in.
             "--thinking-metrics",
             "--request-timeout", "3", "--task-timeout", "30",
             "--result-dir", str(tmp_path / "runs"),
@@ -437,8 +436,9 @@ def test_real_cli_pipeline_preserves_saved_results(
     raw_before = raw.read_bytes()
     assert len(json.loads(raw_before)["requests"]) == 3
     assert (path.parent / "report.html").is_file()
+    assert case["parameters"]["thinking_metrics"] is True
     assert set(case["metrics"]) == {
-        "streaming_performance", "streaming_phase_timing",
+        "streaming_performance", "stability_trends", "streaming_phase_timing",
     }
     metric = case["metrics"]["streaming_performance"]
     case_path = raw.with_name(raw.stem + ".result.json")
@@ -944,7 +944,8 @@ def test_goodput_block_summarizes_slo_attainment_and_throughputs(result):
         copy.deepcopy(result), rate=0.8, req=5, out=1000
     )
     text = render_text(payload, width=120)
-    assert "SLO 阈值: TTFT≤100ms TPOT≤5ms E2EL≤2000ms" in text
+    normalized = " ".join(text.split())
+    assert "SLO 阈值: TTFT≤100ms TPOT≤5ms E2EL≤2000ms" in normalized
     assert "SLO 达标率: 80%" in text
     assert "满足=8" in text and "违反=1" in text and "失败=1" in text
     assert "无法判定=0" in text and "分母=10" in text

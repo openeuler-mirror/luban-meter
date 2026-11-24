@@ -8,6 +8,7 @@ from luban_meter.benchmarking.generation_performance import (
 from luban_meter.benchmarking.generation_performance.common.prometheus import (
     parse_prometheus_text,
 )
+from luban_meter.log import configure_logging, log_context
 from luban_meter.reporting.data import metric_rows
 
 QUEUE_TYPE = "# TYPE vllm:request_queue_time_seconds histogram"
@@ -40,6 +41,107 @@ def _series_lines(sum_value, count_value, model=None):
         f"vllm:request_queue_time_seconds_sum{labels} {sum_value}",
         f"vllm:request_queue_time_seconds_count{labels} {count_value}",
     ]
+
+
+@pytest.mark.parametrize("metric, field", [
+    ("vllm:prompt_tokens_total", "prompt_token_throughput"),
+    ("vllm:generation_tokens_total", "generation_token_throughput"),
+    ("vllm:request_success_total", "request_throughput"),
+])
+@pytest.mark.parametrize("counts", [[100, 1, 150], [100, 20]])
+def test_counter_reset_makes_service_throughput_unavailable(
+    metric, field, counts,
+):
+    snapshots = [
+        _snapshot(f"# TYPE {metric} counter", f"{metric} {count}")
+        for count in counts
+    ]
+    result = _process(*snapshots)["metrics"]["throughput"][field]
+    assert result["value"] is None
+    assert result["reason"] == "counter reset between snapshots"
+
+
+@pytest.mark.parametrize("values, expected", [
+    ([100, 100], 0),
+    ([100, 120, 150], 5),
+])
+def test_normal_counter_growth_and_real_zero_are_preserved(values, expected):
+    result = _process(*[
+        _snapshot(f"vllm:generation_tokens_total {value}")
+        for value in values
+    ])["metrics"]["throughput"]["generation_token_throughput"]
+    assert result == {"value": expected, "unit": "token/s"}
+
+
+def test_counter_reset_is_not_hidden_by_other_series_growth():
+    snapshots = [
+        _snapshot(
+            f'vllm:generation_tokens_total{{worker="A"}} {a}',
+            f'vllm:generation_tokens_total{{worker="B"}} {b}',
+        )
+        for a, b in [(100, 0), (1, 1000), (150, 1100)]
+    ]
+    result = _process(*snapshots)["metrics"]["throughput"][
+        "generation_token_throughput"
+    ]
+    assert result["value"] is None
+    assert result["reason"] == "counter reset between snapshots"
+
+
+def test_counter_growth_pools_matching_label_series():
+    first = _snapshot(
+        'vllm:generation_tokens_total{worker="A"} 100',
+        'vllm:generation_tokens_total{worker="B"} 200',
+    )
+    last = _snapshot(
+        'vllm:generation_tokens_total{worker="B"} 230',
+        'vllm:generation_tokens_total{worker="A"} 120',
+    )
+    result = _process(first, last)["metrics"]["throughput"][
+        "generation_token_throughput"
+    ]
+    assert result == {"value": 5, "unit": "token/s"}
+
+
+@pytest.mark.parametrize("last", [
+    [],
+    ['vllm:generation_tokens_total{worker="B"} 120'],
+    ['vllm:generation_tokens_total{worker="A"} 120',
+     'vllm:generation_tokens_total{worker="B"} 30'],
+])
+def test_counter_label_changes_do_not_produce_a_false_rate(last):
+    result = _process(
+        _snapshot('vllm:generation_tokens_total{worker="A"} 100'),
+        _snapshot(*last),
+    )["metrics"]["throughput"]["generation_token_throughput"]
+    assert result["value"] is None
+    assert result["reason"] == "counter label series changed between snapshots"
+
+
+def test_service_aggregation_logs_success_and_reset_in_case_context(tmp_path):
+    with configure_logging(tmp_path, filename="instance.log") as path:
+        with log_context(task="monitor", case="case_1", phase="metrics"):
+            _process(_snapshot(
+                'vllm:request_queue_time_seconds_bucket{le="1"} 1',
+                'vllm:request_queue_time_seconds_bucket{le="+Inf"} 1',
+                *_series_lines(0.5, 1),
+            ))
+            _process(
+                _snapshot("vllm:generation_tokens_total 100"),
+                _snapshot("vllm:generation_tokens_total 150"),
+            )
+            _process(
+                _snapshot("vllm:generation_tokens_total 100"),
+                _snapshot("vllm:generation_tokens_total 1"),
+                _snapshot("vllm:generation_tokens_total 150"),
+            )
+    text = path.read_text()
+    assert "Service histogram summarized:" in text
+    assert "scope=last_cumulative" in text
+    assert "Service counter summarized:" in text
+    assert "Service counter unavailable:" in text
+    assert "counter reset between snapshots" in text
+    assert "task=monitor case=case_1 phase=observation" in text
 
 
 def test_window_delta_mean_with_history_baseline():

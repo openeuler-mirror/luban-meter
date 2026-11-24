@@ -61,6 +61,7 @@ def test_overview_export_keeps_original_result_and_offline_pages(tmp_path):
     assert 'id="analysis-group"' in text
     assert "function renderLoadComparison" in text
     assert "__TREND_SCRIPT__" not in text
+    assert '<section id="slo-section" class="report-page"' in text
     overview = text.split('<section id="overview"', 1)[1].split(
         '</section>', 1
     )[0]

@@ -16,6 +16,7 @@ import pytest
 
 EXTENSION = """
 import time
+from pathlib import Path
 from luban_meter.api import (
     ModelServiceQualityBenchmark, Metric, Parameter, benchmarks, metrics,
 )
@@ -38,6 +39,7 @@ class Fixture(ModelServiceQualityBenchmark):
                   "delay": Parameter(float, 0.0, minimum=0),
                   "failure": Parameter(str, "none"),
                   "fixture_secret": Parameter(str, "", secret=True),
+                  "gate_file": Parameter(str, ""),
                   "calls_per_sample": Parameter(int, 1, minimum=1)}
     capabilities = frozenset({"score"})
     default_metrics = ("fixture_score",)
@@ -58,9 +60,16 @@ class Fixture(ModelServiceQualityBenchmark):
                 raise ValueError("fixture request failed "
                                  + context.parameters["fixture_secret"])
             context.request(fail)
+        def send(ticket):
+            gate = context.parameters["gate_file"]
+            while gate and not Path(gate).exists():
+                if context.stopped():
+                    raise InterruptedError("fixture gate interrupted")
+                time.sleep(0.01)
+            time.sleep(context.parameters["delay"])
+
         for _ in range(context.parameters["calls_per_sample"]):
-            context.request(lambda ticket: time.sleep(
-                context.parameters["delay"]))
+            context.request(send)
         return {"score": 1}
     def close(self):
         if self.failure == "stderr":
