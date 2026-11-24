@@ -49,6 +49,18 @@ def trace_parameters(**changes):
     }
 
 
+@pytest.mark.parametrize("skip_invalid", [False, True])
+def test_trace_rejects_unnamed_column(tmp_path, skip_invalid):
+    path = tmp_path / "trace.csv"
+    path.write_text(
+        "timestamp,input_token,output_token,\n0,4,2,extra\n",
+        encoding="utf-8",
+    )
+    loader = DatasetLoader(path, format="burstgpt", skip_invalid=skip_invalid)
+    with pytest.raises(ValueError, match="unique named columns"):
+        loader.load()
+
+
 def test_trace_sort_scale_and_pairing(tmp_path):
     records = DatasetLoader(trace_file(tmp_path), format="burstgpt").load()
     selected = select_trace(records, trace_parameters())
