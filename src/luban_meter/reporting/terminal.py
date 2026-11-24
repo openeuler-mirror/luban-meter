@@ -421,8 +421,8 @@ def case_lines(task, case, width, verbose=False):
                 or {}).get("value")
     label = f"total_token_throughput={number(rate)} tokens/s"
     labels = [heading, *context_lines(case, verbose)]
-    if verbose and display_name != task["name"]:
-        labels.append("任务 ID: " + safe_text(task["name"]))
+    if verbose and ("id" in task or display_name != task["name"]):
+        labels.append("任务 ID: " + safe_text(task.get("id", task["name"])))
     if (task.get("category") == "generation_performance"
             and throughput_selected(case)):
         labels.append(label)

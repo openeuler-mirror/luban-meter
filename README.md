@@ -654,6 +654,47 @@ CLI使用`--base-url`，JSON使用`base_url`；每个参数对应一个选项。
 只有声明允许按Case变化的参数才能进入矩阵；配置路径相对于JSON所在目录，CLI路径相对于工作目录。
 所有选中任务先完成静态预检，再启动执行；预检不代表服务、GPU或Docker已可用。
 
+### 指定任务ID
+
+`run`为每个执行的Task分配独立ID。任务JSON可在`tasks[]`的对象中设置`id`，
+CLI可用`--task-id`为本次选中的单个Task指定ID。两处同时指定时必须一致，
+两处都省略时由`run`生成UUID。ID必须是字符串，首字符为英文字母或数字，
+其余字符可用英文字母、数字、`-`和`_`。ID区分大小写，整份配置中的ID不可重复。
+
+例如，KFA可将每个压测条件写为单独的Task，再从同一份配置中逐项启动。
+`--task`按`name`选择任务，`--task-id`传入本次执行的ID。
+
+```bash
+luban-meter plan --config task.json --task c2-ctx64 --task-id kfa-7821-a1
+luban-meter run --config task.json --task c2-ctx64 --task-id kfa-7821-a1
+```
+
+`plan`校验并显示已指定的ID。`run`完成预检后，于启动任务之前将ID及产物路径登记到
+结果根目录下的`task-index.sqlite3`，并写入运行计划、任务结果和实例日志。同一个根目录
+内已登记的ID不能再提交。中断或失败后使用新ID重跑，KFA可用自己的队列项ID关联多次执行。
+同一Run内的任务名若只差大小写，执行时会先检查结果文件系统能否为它们分别建目录。
+目录冲突在登记ID及发出请求之前报错。
+
+### 按ID删除任务结果
+
+```bash
+luban-meter delete kfa-7821-a1 --result-dir runs
+```
+
+`--result-dir`使用原运行的结果根目录，默认是`runs`。删除针对索引中的一个Task，
+清理`tasks/<task_name>/`下的全部Case、产物和该目录内的日志。同轮的其他Task仍可读取。
+整轮计划、汇总和已有的标准HTML报告根据剩余任务更新，最后一个Task删除后共享结果
+中的任务列表为空。Run实例日志和外置实例日志均保留。
+
+在运行结束后调用，成功、失败和中断的Task均可清理。成功时输出
+`{"id":"kfa-7821-a1","status":"deleted"}`并返回`0`，重复删除也返回成功。
+运行未结束或找不到ID时返回`2`，错误及处理记录进入统一日志。同一ID仍保留在索引，
+再提交时需使用新ID。对于升级前的旧登记，存在产物时需有运行结束的证据，产物已全部
+移除时可以直接登记为已删除。
+
+同一Run内的删除依次更新共享结果。报告生成和文件清理期间，其他Run可以继续登记
+任务和记录完成状态。
+
 ## 定时计划与串行队列
 
 在项目根目录登记计划，不需要修改任务JSON格式：
@@ -1095,6 +1136,7 @@ iowait。内存已用量为总量减MemAvailable；文件系统已用量为size�
 输出目录：
 
 ```text
+runs/task-index.sqlite3      # 手动run的Task ID和产物路径索引
 runs/<run_id>/               # 可用 --result-dir 修改根目录
   plan.json                  # 有效配置，凭据字段脱敏
   result.json                # 运行汇总

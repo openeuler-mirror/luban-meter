@@ -16,7 +16,7 @@ from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.metric import aggregates_run_throughput
-from luban_meter.core.planning import public_plan
+from luban_meter.core.planning import public_plan, validate_task_directories
 from luban_meter.core.token_totals import (
     run_throughput,
     run_throughput_selected,
@@ -144,6 +144,7 @@ class RunCoordinator:
             before_emit=lambda: self._notify("log"),
         )
         with scope, console_progress(lambda: self._notify("log")):
+            validate_task_directories(plan["tasks"], directory)
             logger.info("Run started: id=%s tasks=%s",
                         run_id, len(plan["tasks"]))
             for task in public_plan(plan)["tasks"]:
@@ -176,7 +177,8 @@ class RunCoordinator:
         try:
             for task in plan["tasks"]:
                 if self.interruptions or (failed and fail_fast):
-                    logger.info("Task skipped: %s", task["name"],
+                    logger.info("Task skipped: %s id=%s", task["name"],
+                                task.get("id", "-"),
                                 extra={"task": task["name"]})
                     task_result = {
                         "kind": "task",
@@ -190,6 +192,12 @@ class RunCoordinator:
                             for c in task["cases"]
                         ),
                     }
+                    if "id" in task:
+                        task_result["id"] = task["id"]
+                        write_json_atomic(
+                            directory / "tasks" / task["name"] / "result.json",
+                            task_result,
+                        )
                 else:
                     with log_context(task=task["name"]):
                         task_result = self._run_task(
@@ -232,8 +240,9 @@ class RunCoordinator:
         for name in ("raw", "artifacts"):
             (directory / name).mkdir(parents=True, exist_ok=True)
         self._notify("task_started", task=task, directory=directory)
-        logger.info("Task started: scenario=%s cases=%s directory=%s",
-                    task["scenario"], len(task["cases"]), directory)
+        logger.info("Task started: scenario=%s cases=%s directory=%s id=%s",
+                    task["scenario"], len(task["cases"]), directory,
+                    task.get("id", "-"))
         implementation = benchmarks.get(task["scenario"])
         handles = []
         source = directory / ".worker-input.json"
@@ -384,6 +393,8 @@ class RunCoordinator:
             outcome["errors"] = errors
         if self.interruptions:
             outcome["status"] = "interrupted"
+        if "id" in task:
+            outcome["id"] = task["id"]
         if errors or self.interruptions:
             logger.warning("Recovering Case results after worker failure/stop")
             recover_cases(task, directory, outcome, outcome["status"])

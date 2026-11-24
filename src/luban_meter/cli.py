@@ -10,9 +10,16 @@ from pathlib import Path
 
 from luban_meter.core.benchmark import benchmarks
 from luban_meter.core.metric import metrics
-from luban_meter.core.planning import build_plan, cli_schema, public_plan
+from luban_meter.core.planning import (
+    build_plan,
+    cli_schema,
+    public_plan,
+    validate_task_directories,
+)
 from luban_meter.core.run_coordinator import RunCoordinator
 from luban_meter.core.schedule_commands import add_parser, execute
+from luban_meter.core.task_deletion import delete_task
+from luban_meter.core.task_index import registered_run
 from luban_meter.log import (
     LOG_LEVEL_NAMES,
     add_log_secrets,
@@ -73,6 +80,7 @@ def _build_parser():
             run.add_argument("--scenario", default=argparse.SUPPRESS)
             run.add_argument("--config", type=Path)
             run.add_argument("--task", action="append", default=[])
+            run.add_argument("--task-id", help="为选中的单个任务指定ID")
         run.add_argument("--result-dir", type=Path, default=Path("runs"))
         if command != "search-capacity":
             run.add_argument("--fail-fast", action="store_true")
@@ -133,7 +141,12 @@ def _build_parser():
         "--raw-root", type=Path,
         help="原始运行目录；默认使用输入结果文件所在目录",
     )
-    for child in (listing, metric_list, report, schedule):
+    delete = commands.add_parser("delete", allow_abbrev=False,
+                                 help="按ID删除已结束的评测任务")
+    delete.add_argument("task_id", help="要删除的任务ID")
+    delete.add_argument("--result-dir", type=Path, default=Path("runs"),
+                        help="任务登记使用的结果根目录")
+    for child in (listing, metric_list, report, schedule, delete):
         child.add_argument("--log-level", choices=LOG_LEVEL_NAMES,
                            default=argparse.SUPPRESS)
         child.add_argument("--log-dir", type=Path, default=argparse.SUPPRESS)
@@ -401,6 +414,10 @@ def _execute(args, schema, run_id, log_file):
     try:
         if args.command == "schedule":
             return execute(args)
+        if args.command == "delete":
+            delete_task(args.result_dir, args.task_id)
+            print(json.dumps({"id": args.task_id, "status": "deleted"}))
+            return 0
         if args.command == "benchmarks":
             for name, implementation in benchmarks.items():
                 print(f"{implementation.category}\t{name}")
@@ -490,7 +507,8 @@ def _execute(args, schema, run_id, log_file):
         if args.observe_url and not args.observe:
             raise ValueError("observe-url requires --observe prometheus")
         plan = build_plan(
-            base, args.config, args.task, observe=bool(args.observe)
+            base, args.config, args.task, observe=bool(args.observe),
+            task_id=args.task_id,
         )
         add_log_secrets(task_secrets(plan["tasks"]))
         if args.command == "plan":
@@ -498,47 +516,53 @@ def _execute(args, schema, run_id, log_file):
                         extra={"file_only": True})
             print(json.dumps(public_plan(plan), ensure_ascii=False, indent=2))
             return 0
-        logger.info("Run plan: tasks=%s cases=%s",
-                    len(plan["tasks"]), plan["case_count"])
-        for task in plan["tasks"]:
-            with log_context(task=task["name"]):
-                logger.info("Task plan: scenario=%s cases=%s",
-                            task["scenario"], len(task["cases"]))
-        observation = (
-            {"url": args.observe_url, "interval": args.observe_interval}
-            if args.observe
-            else None
-        )
-        result, directory = RunCoordinator().run(
-            plan,
-            args.result_dir,
-            fail_fast=args.fail_fast,
-            observation=observation,
-            progress=None if args.no_progress else TerminalProgress(plan),
-            log_level=args.log_level,
-            log_dir=args.log_dir, run_id=run_id,
-        )
-        logger.info("HTML report started")
-        report_path = write_html(result, directory / "report.html")
-        logger.info("HTML report saved: %s", report_path)
-        if not args.no_summary:
-            try:
-                print(render_text(
-                    result, result_path=directory / "result.json",
-                ))
-            except Exception:
-                # Display failures do not change the result or exit code.
-                logger.warning("Terminal summary failed", exc_info=True)
-        logger.info("CLI run completed: status=%s result=%s log=%s",
-                    result["status"], directory / "result.json", log_file)
-        return (
-            0
-            if result["status"] == "success"
-            else (130 if result["status"] == "interrupted" else 1)
-        )
+        validate_task_directories(plan["tasks"], args.result_dir)
+        with registered_run(plan["tasks"], args.result_dir, run_id, log_file):
+            return _run_tasks(args, plan, run_id, log_file)
     except (ValueError, TypeError, OSError) as exc:
         logger.exception("CLI command failed: %s", exc)
         return 2
+
+
+def _run_tasks(args, plan, run_id, log_file):
+    logger.info("Run plan: tasks=%s cases=%s",
+                len(plan["tasks"]), plan["case_count"])
+    for task in plan["tasks"]:
+        with log_context(task=task["name"]):
+            logger.info("Task plan: scenario=%s cases=%s",
+                        task["scenario"], len(task["cases"]))
+    observation = (
+        {"url": args.observe_url, "interval": args.observe_interval}
+        if args.observe
+        else None
+    )
+    result, directory = RunCoordinator().run(
+        plan,
+        args.result_dir,
+        fail_fast=args.fail_fast,
+        observation=observation,
+        progress=None if args.no_progress else TerminalProgress(plan),
+        log_level=args.log_level,
+        log_dir=args.log_dir, run_id=run_id,
+    )
+    logger.info("HTML report started")
+    report_path = write_html(result, directory / "report.html")
+    logger.info("HTML report saved: %s", report_path)
+    if not args.no_summary:
+        try:
+            print(render_text(
+                result, result_path=directory / "result.json",
+            ))
+        except Exception:
+            # Display failures do not change the result or exit code.
+            logger.warning("Terminal summary failed", exc_info=True)
+    logger.info("CLI run completed: status=%s result=%s log=%s",
+                result["status"], directory / "result.json", log_file)
+    return (
+        0
+        if result["status"] == "success"
+        else (130 if result["status"] == "interrupted" else 1)
+    )
 
 
 if __name__ == "__main__":
